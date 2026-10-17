@@ -1,0 +1,107 @@
+{
+  "recorded_at_utc": "2026-10-17T16:21:04+00:00",
+  "source_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "source_tree_tracked_status": "clean",
+  "host": {
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "cargo": "1.98.0-nightly (a595d0da2 2026-06-20)",
+    "miri": "0.1.0 (bd08c9e718 2026-06-25)",
+    "host": "aarch64-apple-darwin",
+    "machine": "flux.home.arpa",
+    "os": "Darwin 25.6.0"
+  },
+  "toolchain": {
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "cargo": "1.98.0-nightly (a595d0da2 2026-06-20)",
+    "miri": "0.1.0 (bd08c9e718 2026-06-25)",
+    "host": "aarch64-apple-darwin",
+    "machine": "flux.home.arpa",
+    "os": "Darwin 25.6.0"
+  },
+  "command_template": "nice -n 15 deltic timeout 900 env CARGO_TARGET_DIR=<registered-scratch>/target CARGO_BUILD_JOBS=1 cargo +nightly miri test --locked --offline --package rvp9-core --lib <module>:: -- --test-threads=1 </dev/null",
+  "filters": [
+    "transforms",
+    "intra_pred",
+    "quant",
+    "dsp"
+  ],
+  "results": {
+    "transforms": {
+      "passed": 160,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 1493,
+      "test_seconds": 105.66,
+      "raw": "transforms.raw.txt"
+    },
+    "intra_pred": {
+      "passed": 58,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 1595,
+      "test_seconds": 37.44,
+      "raw": "intra-pred.raw.txt"
+    },
+    "quant": {
+      "passed": 38,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 1615,
+      "test_seconds": 17.74,
+      "raw": "quant.raw.txt"
+    },
+    "dsp": {
+      "passed": 24,
+      "failed": 0,
+      "ignored": 2,
+      "filtered": 1627,
+      "test_seconds": 32.73,
+      "raw": "dsp.raw.txt"
+    }
+  },
+  "totals": {
+    "passed": 280,
+    "failed": 0,
+    "ignored": 2
+  },
+  "all_subset_exit_codes": {
+    "transforms": 0,
+    "intra_pred": 0,
+    "quant": 0,
+    "dsp": 0
+  },
+  "overall_exit_code": 0,
+  "warnings": "Each captured log contains Miri-build warnings for unused/dead-code AArch64 SIMD items and Miri's notice that optimizations are unsupported; no source lint changes were made.",
+  "limits": [
+    "This is only four selected rvp9-core library test subsets, not a full core or workspace Miri run.",
+    "cfg(miri) uses scalar paths and excludes native AArch64 NEON execution.",
+    "Dependent-library Miri, parser/full-frame paths, encoder/decoder/io, native ASan, and fuzz are not covered."
+  ],
+  "raw_integrity_manifest": "raw-integrity.json",
+  "normalized_review_copies": {
+    "transforms.raw.txt": {
+      "review_copy": "transforms.review.txt",
+      "transformation": "removed exactly one final LF; raw capture unchanged",
+      "raw_sha256": "33168edc5742c758b2a68c499f25768516926a68cb4039fd7a5318a6208b0705",
+      "review_sha256": "c024ca1209c6294c61025e0f79bb556f5bfd7e9101b9e542ed96fb88d9c6d283"
+    },
+    "intra-pred.raw.txt": {
+      "review_copy": "intra-pred.review.txt",
+      "transformation": "removed exactly one final LF; raw capture unchanged",
+      "raw_sha256": "0cf986f163687a4214e98039f8bbc3e5df713b880a681e2bda52d1cdd15e6c22",
+      "review_sha256": "3337367b9da41bbd531428fd4ec26fb5c69f184ad9c4d6a9d6a697968b203f39"
+    },
+    "quant.raw.txt": {
+      "review_copy": "quant.review.txt",
+      "transformation": "removed exactly one final LF; raw capture unchanged",
+      "raw_sha256": "4e770eb1c7d7e839f8082089f0a1787de86d06addb469c23484dfe4e70955c9c",
+      "review_sha256": "e063621d72797cf31c734a434989b77317a4a3a8d6b0899fa952b766a5a78e35"
+    },
+    "dsp.raw.txt": {
+      "review_copy": "dsp.review.txt",
+      "transformation": "removed exactly one final LF; raw capture unchanged",
+      "raw_sha256": "68ef163b6e894a12e7fb651c5ce71921a6bdd11b6a922857eab6024854c29c6d",
+      "review_sha256": "5224f0efb35a27335c195cb49f6ed63417ee8dc1112c710a89b6afb314cfb05a"
+    }
+  }
+}

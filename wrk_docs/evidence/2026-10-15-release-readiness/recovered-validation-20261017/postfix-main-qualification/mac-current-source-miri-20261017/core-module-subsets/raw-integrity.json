@@ -1,0 +1,121 @@
+{
+  "algorithm": "SHA-256",
+  "files": [
+    {
+      "path": "dsp.raw.txt",
+      "size_bytes": 14706,
+      "sha256": "68ef163b6e894a12e7fb651c5ce71921a6bdd11b6a922857eab6024854c29c6d"
+    },
+    {
+      "path": "dsp.raw.txt.gz",
+      "size_bytes": 2493,
+      "sha256": "4198db66c0fd70c66e3079cb2d238e6eb85c0839e756dc7c0f0c60b27a94be88"
+    },
+    {
+      "path": "dsp.review.txt",
+      "size_bytes": 14705,
+      "sha256": "5224f0efb35a27335c195cb49f6ed63417ee8dc1112c710a89b6afb314cfb05a"
+    },
+    {
+      "path": "intra-pred.raw.txt",
+      "size_bytes": 17355,
+      "sha256": "0cf986f163687a4214e98039f8bbc3e5df713b880a681e2bda52d1cdd15e6c22"
+    },
+    {
+      "path": "intra-pred.raw.txt.gz",
+      "size_bytes": 2884,
+      "sha256": "6d836eef03cb6703f38bd4614c4463d2e6e355ab197bdb9262d3825a22ce46a5"
+    },
+    {
+      "path": "intra-pred.review.txt",
+      "size_bytes": 17354,
+      "sha256": "3337367b9da41bbd531428fd4ec26fb5c69f184ad9c4d6a9d6a697968b203f39"
+    },
+    {
+      "path": "qualification.json",
+      "size_bytes": 3823,
+      "sha256": "5f9f0e122a0d0431a479e1235d54a6b315a7a2ae68b20cb13eadf258cc571aec"
+    },
+    {
+      "path": "quant.raw.txt",
+      "size_bytes": 15553,
+      "sha256": "4e770eb1c7d7e839f8082089f0a1787de86d06addb469c23484dfe4e70955c9c"
+    },
+    {
+      "path": "quant.raw.txt.gz",
+      "size_bytes": 2583,
+      "sha256": "d0ef429008e343156aec234f1eeba235bffec3798ea35deb85c4ccb570360d9a"
+    },
+    {
+      "path": "quant.review.txt",
+      "size_bytes": 15552,
+      "sha256": "e063621d72797cf31c734a434989b77317a4a3a8d6b0899fa952b766a5a78e35"
+    },
+    {
+      "path": "run.driver.raw.sh",
+      "size_bytes": 1088,
+      "sha256": "ca3549a29d8e4c2aa4d74a06c445be28371e3782f1caaea84a89265461f17ef5"
+    },
+    {
+      "path": "run.exit.txt",
+      "size_bytes": 7,
+      "sha256": "19eaf43821a7660ec323a87c8457bf74823beb296c39f5e01aa8a683aa50f061"
+    },
+    {
+      "path": "run.summary.raw.txt",
+      "size_bytes": 163,
+      "sha256": "efdfdc7716f7e2381777a868e26abcff58098a25639cac44218a25579e610e44"
+    },
+    {
+      "path": "source-identity.raw.txt",
+      "size_bytes": 152,
+      "sha256": "de5183dea04b089577098ee76f5a6f667fe4b4d225f4739df02db513966efdc0"
+    },
+    {
+      "path": "toolchain.raw.txt",
+      "size_bytes": 532,
+      "sha256": "bb630f083451fe0d973191b56d23987a7b7325d256a7f4684c3c89c081f4cf00"
+    },
+    {
+      "path": "transforms.raw.txt",
+      "size_bytes": 25987,
+      "sha256": "33168edc5742c758b2a68c499f25768516926a68cb4039fd7a5318a6208b0705"
+    },
+    {
+      "path": "transforms.raw.txt.gz",
+      "size_bytes": 3944,
+      "sha256": "55feb81c5bf36e506134478d9effd05eea31ef87bb4f695980f6fa696d3aa3ec"
+    },
+    {
+      "path": "transforms.review.txt",
+      "size_bytes": 25986,
+      "sha256": "c024ca1209c6294c61025e0f79bb556f5bfd7e9101b9e542ed96fb88d9c6d283"
+    }
+  ],
+  "review_normalization": {
+    "transforms.raw.txt": {
+      "review_copy": "transforms.review.txt",
+      "transformation": "removed exactly one final LF; raw capture unchanged",
+      "raw_sha256": "33168edc5742c758b2a68c499f25768516926a68cb4039fd7a5318a6208b0705",
+      "review_sha256": "c024ca1209c6294c61025e0f79bb556f5bfd7e9101b9e542ed96fb88d9c6d283"
+    },
+    "intra-pred.raw.txt": {
+      "review_copy": "intra-pred.review.txt",
+      "transformation": "removed exactly one final LF; raw capture unchanged",
+      "raw_sha256": "0cf986f163687a4214e98039f8bbc3e5df713b880a681e2bda52d1cdd15e6c22",
+      "review_sha256": "3337367b9da41bbd531428fd4ec26fb5c69f184ad9c4d6a9d6a697968b203f39"
+    },
+    "quant.raw.txt": {
+      "review_copy": "quant.review.txt",
+      "transformation": "removed exactly one final LF; raw capture unchanged",
+      "raw_sha256": "4e770eb1c7d7e839f8082089f0a1787de86d06addb469c23484dfe4e70955c9c",
+      "review_sha256": "e063621d72797cf31c734a434989b77317a4a3a8d6b0899fa952b766a5a78e35"
+    },
+    "dsp.raw.txt": {
+      "review_copy": "dsp.review.txt",
+      "transformation": "removed exactly one final LF; raw capture unchanged",
+      "raw_sha256": "68ef163b6e894a12e7fb651c5ce71921a6bdd11b6a922857eab6024854c29c6d",
+      "review_sha256": "5224f0efb35a27335c195cb49f6ed63417ee8dc1112c710a89b6afb314cfb05a"
+    }
+  }
+}

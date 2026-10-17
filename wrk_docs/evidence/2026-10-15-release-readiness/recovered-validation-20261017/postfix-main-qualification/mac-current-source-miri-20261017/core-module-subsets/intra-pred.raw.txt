@@ -1,0 +1,385 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-core-miri-subsets-20261017-e10cc2d3/target/miri/aarch64-apple-darwin/debug/deps/rvp9_core-661fdbeb4d5c532d)
+warning: unused imports: `int_pro_64x64_fused_neon`, `vpx_int_pro_col_neon`, `vpx_int_pro_row_clamped_neon`, `vpx_int_pro_row_neon`, and `vpx_vector_var_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:30:5
+   |
+30 |     int_pro_64x64_fused_neon, vpx_int_pro_col_neon, vpx_int_pro_row_clamped_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+31 |     vpx_int_pro_row_neon, vpx_vector_var_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `minmax_neon::minmax_8x8_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:40:9
+   |
+40 | pub use minmax_neon::minmax_8x8_neon;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `vp9_quantize_b_32x32_neon`, `vp9_quantize_b_neon`, `vp9_quantize_fp_32x32_i16_metrics_neon`, `vp9_quantize_fp_32x32_i16_rate_metrics_neon`, `vp9_quantize_fp_32x32_neon`, `vp9_quantize_fp_i16_metrics_neon`, `vp9_quantize_fp_i16_rate_metrics_neon`, and `vp9_quantize_fp_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:42:5
+   |
+42 |     vp9_quantize_b_32x32_neon, vp9_quantize_b_neon, vp9_quantize_fp_32x32_i16_metrics_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+43 |     vp9_quantize_fp_32x32_i16_rate_metrics_neon, vp9_quantize_fp_32x32_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+44 |     vp9_quantize_fp_all_zero_neon, vp9_quantize_fp_i16_metrics_neon,
+   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+45 |     vp9_quantize_fp_i16_rate_metrics_neon, vp9_quantize_fp_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `vbp_neon::avg_diff_8x8_grid_64x64_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:85:9
+   |
+85 | pub use vbp_neon::avg_diff_8x8_grid_64x64_neon;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `int_pro_64x64_fused_neon_inner` is never used
+  --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:10:11
+   |
+10 | unsafe fn int_pro_64x64_fused_neon_inner(
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `int_pro_64x64_fused_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:148:8
+    |
+148 | pub fn int_pro_64x64_fused_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:189:11
+    |
+189 | unsafe fn vpx_int_pro_row_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:222:8
+    |
+222 | pub fn vpx_int_pro_row_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_clamped_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:247:11
+    |
+247 | unsafe fn vpx_int_pro_row_clamped_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_clamped_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:280:8
+    |
+280 | pub fn vpx_int_pro_row_clamped_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_col_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:308:11
+    |
+308 | unsafe fn vpx_int_pro_col_neon_inner(reference: *const u8, width: usize) -> i32 {
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_col_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:319:8
+    |
+319 | pub fn vpx_int_pro_col_neon(reference: &[u8], width: usize) -> i32 {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_vector_var_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:329:11
+    |
+329 | unsafe fn vpx_vector_var_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_vector_var_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:356:8
+    |
+356 | pub fn vpx_vector_var_neon(reference: &[i16], source: &[i16], bwl: u32) -> i32 {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `minmax_8x8_neon_inner` is never used
+ --> crates/rvp9-core/src/dsp/aarch64/minmax_neon.rs:9:11
+  |
+9 | unsafe fn minmax_8x8_neon_inner(
+  |           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `minmax_8x8_neon` is never used
+  --> crates/rvp9-core/src/dsp/aarch64/minmax_neon.rs:56:8
+   |
+56 | pub fn minmax_8x8_neon(
+   |        ^^^^^^^^^^^^^^^
+
+warning: struct `HadamardQuantMetrics` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:12:12
+   |
+12 | pub struct HadamardQuantMetrics {
+   |            ^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `HadamardQuantRateMetrics` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:23:12
+   |
+23 | pub struct HadamardQuantRateMetrics {
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `HadamardMetricAccumulator` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:30:8
+   |
+30 | struct HadamardMetricAccumulator {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `HadamardRateAccumulator` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:38:8
+   |
+38 | struct HadamardRateAccumulator {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `add_abs`, and `finish` are never used
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:45:15
+   |
+42 | impl HadamardRateAccumulator {
+   | ---------------------------- associated items in this implementation
+...
+45 |     unsafe fn new() -> Self {
+   |               ^^^
+...
+53 |     unsafe fn add_abs(&mut self, abs_q: int16x8_t) {
+   |               ^^^^^^^
+...
+60 |     unsafe fn finish(self) -> HadamardQuantRateMetrics {
+   |               ^^^^^^
+
+warning: associated items `new`, `add`, and `finish` are never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:72:15
+    |
+ 69 | impl HadamardMetricAccumulator {
+    | ------------------------------ associated items in this implementation
+...
+ 72 |     unsafe fn new() -> Self {
+    |               ^^^
+...
+ 84 |     unsafe fn add(
+    |               ^^^
+...
+103 |     unsafe fn finish(self) -> HadamardQuantMetrics {
+    |               ^^^^^^
+
+warning: function `quantize_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:119:11
+    |
+119 | unsafe fn quantize_8(
+    |           ^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:222:11
+    |
+222 | unsafe fn vp9_quantize_fp_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:286:8
+    |
+286 | pub fn vp9_quantize_fp_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_i16_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:330:11
+    |
+330 | unsafe fn quantize_i16_8(
+    |           ^^^^^^^^^^^^^^
+
+warning: function `quantize_i16_8_rate` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:357:11
+    |
+357 | unsafe fn quantize_i16_8_rate(
+    |           ^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:371:11
+    |
+371 | unsafe fn vp9_quantize_fp_i16_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_rate_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:418:11
+    |
+418 | unsafe fn vp9_quantize_fp_i16_rate_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:450:8
+    |
+450 | pub fn vp9_quantize_fp_i16_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_rate_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:469:8
+    |
+469 | pub fn vp9_quantize_fp_i16_rate_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_fp_32x32_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:487:11
+    |
+487 | unsafe fn quantize_fp_32x32_8(
+    |           ^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:527:11
+    |
+527 | unsafe fn vp9_quantize_fp_32x32_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:588:8
+    |
+588 | pub fn vp9_quantize_fp_32x32_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_fp_32x32_i16_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:629:11
+    |
+629 | unsafe fn quantize_fp_32x32_i16_8(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_fp_32x32_i16_8_rate` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:670:11
+    |
+670 | unsafe fn quantize_fp_32x32_i16_8_rate(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:687:11
+    |
+687 | unsafe fn vp9_quantize_fp_32x32_i16_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_rate_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:739:11
+    |
+739 | unsafe fn vp9_quantize_fp_32x32_i16_rate_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:775:8
+    |
+775 | pub fn vp9_quantize_fp_32x32_i16_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_rate_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:790:8
+    |
+790 | pub fn vp9_quantize_fp_32x32_i16_rate_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_b_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:810:11
+    |
+810 | unsafe fn quantize_b_8(
+    |           ^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:870:11
+    |
+870 | unsafe fn vp9_quantize_b_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:950:8
+    |
+950 | pub fn vp9_quantize_b_neon(
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_b_32x32_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:997:11
+    |
+997 | unsafe fn quantize_b_32x32_8(
+    |           ^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_32x32_neon_inner` is never used
+    --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:1061:11
+     |
+1061 | unsafe fn vp9_quantize_b_32x32_neon_inner(
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_32x32_neon` is never used
+    --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:1138:8
+     |
+1138 | pub fn vp9_quantize_b_32x32_neon(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `avg_diff_8x8_grid_64x64_neon_inner` is never used
+ --> crates/rvp9-core/src/dsp/aarch64/vbp_neon.rs:6:11
+  |
+6 | unsafe fn avg_diff_8x8_grid_64x64_neon_inner(
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `avg_diff_8x8_grid_64x64_neon` is never used
+  --> crates/rvp9-core/src/dsp/aarch64/vbp_neon.rs:55:8
+   |
+55 | pub fn avg_diff_8x8_grid_64x64_neon(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+
+running 58 tests
+test intra_pred::tests::avg2_avg3_helpers ... ok
+test intra_pred::tests::build_intra_predictors_d207_bottom_clipped ... ok
+test intra_pred::tests::build_intra_predictors_d45_4x4_fewer_than_bs_pixels_in_frame ... ok
+test intra_pred::tests::build_intra_predictors_d45_4x4_have_right_no_clip ... ok
+test intra_pred::tests::build_intra_predictors_d45_8x8_fewer_than_bs_in_frame_slow_path ... ok
+test intra_pred::tests::build_intra_predictors_d45_8x8_fewer_than_bs_pixels_in_frame ... ok
+test intra_pred::tests::build_intra_predictors_d45_fast_path_no_have_right_replicates ... ok
+test intra_pred::tests::build_intra_predictors_d45_have_left_false_uses_129 ... ok
+test intra_pred::tests::build_intra_predictors_d63_4x4_parent_block_right_clipped ... ok
+test intra_pred::tests::build_intra_predictors_extend_mask_sweep_all_modes_unavailable_neighbours ... ok
+test intra_pred::tests::build_intra_predictors_h_have_left_false ... ok
+test intra_pred::tests::build_intra_predictors_v_right_clipped_with_have_left ... ok
+test intra_pred::tests::build_predictors_all_unavailable_yields_127_129 ... ok
+test intra_pred::tests::build_predictors_both_available_above_left_from_plane ... ok
+test intra_pred::tests::build_predictors_bottom_clipped_replicates_last_left_sample ... ok
+test intra_pred::tests::build_predictors_d45_4x4_have_right_reads_above_right_pixels ... ok
+test intra_pred::tests::build_predictors_d45_above_right_replicated_without_have_right ... ok
+test intra_pred::tests::build_predictors_left_only_left_from_plane_above_is_127 ... ok
+test intra_pred::tests::build_predictors_left_unavailable_above_left_falls_to_129 ... ok
+test intra_pred::tests::build_predictors_right_clipped_replicates_last_in_frame_sample ... ok
+test intra_pred::tests::build_predictors_then_intra_predict_round_trip ... ok
+test intra_pred::tests::build_predictors_top_only_above_from_plane_left_is_129 ... ok
+test intra_pred::tests::build_predictors_tx16x16_full_in_frame ... ok
+test intra_pred::tests::d117_predictor_4x4_coincides_with_libvpx_spec ... ok
+test intra_pred::tests::d117_predictor_4x4_hand_traced_row_0_and_col_0 ... ok
+test intra_pred::tests::d117_predictor_constant_input_is_constant ... ok
+test intra_pred::tests::d135_predictor_4x4_diagonal_property ... ok
+test intra_pred::tests::d135_predictor_4x4_matches_libvpx_spec_m18_resize_sub0 ... ok
+test intra_pred::tests::d135_predictor_4x4_matches_libvpx_spec_m18_resize_sub1 ... ok
+test intra_pred::tests::d135_predictor_constant_input_is_constant ... ok
+test intra_pred::tests::d153_predictor_4x4_coincides_with_libvpx_spec ... ok
+test intra_pred::tests::d153_predictor_4x4_col_0_and_col_1_hand_traced ... ok
+test intra_pred::tests::d153_predictor_constant_input_is_constant ... ok
+test intra_pred::tests::d207_predictor_4x4_hand_traced ... ok
+test intra_pred::tests::d207_predictor_4x4_libvpx_specialization ... ok
+test intra_pred::tests::d45_predictor_4x4_hand_traced ... ok
+test intra_pred::tests::d45_predictor_4x4_libvpx_specialization ... ok
+test intra_pred::tests::d63_predictor_4x4_hand_traced ... ok
+test intra_pred::tests::d63_predictor_4x4_m15_smoking_gun ... ok
+test intra_pred::tests::dc_128_predictor_writes_128 ... ok
+test intra_pred::tests::dc_left_predictor_averages_left_only ... ok
+test intra_pred::tests::dc_predict_with_availability_picks_right_kernel ... ok
+test intra_pred::tests::dc_predict_with_availability_sweep_all_sizes ... ok
+test intra_pred::tests::dc_predictor_rounded_average ... ok
+test intra_pred::tests::dc_top_predictor_averages_above_only ... ok
+test intra_pred::tests::h_predictor_broadcasts_left_per_row ... ok
+test intra_pred::tests::intra_mode_discriminants_match_libvpx ... ok
+test intra_pred::tests::intra_mode_from_u8_round_trip ... ok
+test intra_pred::tests::intra_mode_tx_type_lookup_matches_libvpx ... ok
+test intra_pred::tests::intra_predict_dc_routes_via_availability ... ok
+test intra_pred::tests::intra_predict_dispatch_matches_direct_call_all_modes ... ok
+test intra_pred::tests::intra_predict_dispatch_sweep_all_modes_all_sizes ... ok
+test intra_pred::tests::num_intra_modes_constant ... ok
+test intra_pred::tests::predctx_from_libvpx_style_extracts_corner ... ok
+test intra_pred::tests::predictors_work_at_bs_8_and_16 ... ok
+test intra_pred::tests::tm_predictor_clips_high_and_low ... ok
+test intra_pred::tests::tm_predictor_hand_computed ... ok
+test intra_pred::tests::v_predictor_copies_above_each_row ... ok
+
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 1595 filtered out; finished in 37.44s
+

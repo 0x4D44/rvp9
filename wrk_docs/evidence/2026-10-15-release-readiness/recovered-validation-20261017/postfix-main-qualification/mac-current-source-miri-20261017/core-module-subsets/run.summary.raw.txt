@@ -1,0 +1,9 @@
+RUN_START=transforms
+RUN_EXIT=transforms:0
+RUN_START=intra_pred
+RUN_EXIT=intra_pred:0
+RUN_START=quant
+RUN_EXIT=quant:0
+RUN_START=dsp
+RUN_EXIT=dsp:0
+OVERALL_EXIT=0
