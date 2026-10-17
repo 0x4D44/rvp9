@@ -1,0 +1,29 @@
+#< CLIXML
+{
+    "started_utc":  "2026-10-17T11:20:49.4164017Z",
+    "completed_utc":  "2026-10-17T11:21:54.9387147Z",
+    "counter":  "\\Processor(_Total)\\% Processor Time",
+    "requested_samples":  13,
+    "initial_sample_skipped":  1,
+    "retained_samples":  12,
+    "logical_processors":  28,
+    "percent_samples":  [
+                            21.330924421797949,
+                            25.621774462688464,
+                            27.645275540180812,
+                            19.929541218445102,
+                            29.801451999543882,
+                            24.335812027232151,
+                            23.681640597719579,
+                            15.550689685324004,
+                            13.704287873983279,
+                            13.232141015721199,
+                            10.275973065738587,
+                            23.497054319577305
+                        ],
+    "mean_percent":  20.717213852329362,
+    "busy_logical_cores":  5.8008198786522209,
+    "maximum_allowed_busy_logical_cores":  0.75,
+    "decision":  "guard not met; do not start timing"
+}
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>

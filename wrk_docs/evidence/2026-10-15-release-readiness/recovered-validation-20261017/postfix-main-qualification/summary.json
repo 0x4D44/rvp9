@@ -159,6 +159,40 @@
         "bytes": 12222,
         "sha256": "0c91a4ca04281eb983451f3a2ba467d81abf61988a40a8b5079a83afff21aedf"
       }
+    },
+    {
+      "command": "deltic timeout 300 bash scripts/qualify-spatial-svc.sh --self-test",
+      "exit_code": 0,
+      "status": "pass; no-I/O stub self-test",
+      "assertions_passed": 46,
+      "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+      "log": {
+        "path": "mac-current-source-spatial-selftest.raw.txt",
+        "bytes": 1906,
+        "sha256": "06d704c9212a6265863da5e65cc82f0182b3e7b5d1a30abeb070c08645772dd9",
+        "normalization": "see selftest raw integrity manifest"
+      }
+    },
+    {
+      "command": "deltic timeout 300 bash scripts/qualify-production-encoder.sh --self-test",
+      "exit_code": 0,
+      "status": "pass; no-I/O stub self-test, clean direct-to-file capture",
+      "assertions_passed": 329,
+      "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+      "capture_note": "The initial streamed/tee capture also exited 0 and printed self-test passed but emitted one printf Interrupted system call diagnostic. The direct-to-file retry passed without that diagnostic.",
+      "log": {
+        "path": "mac-current-source-production-selftest-retry.raw.txt",
+        "bytes": 20744,
+        "sha256": "324c32332440a26975c03feeeef1220a5e2ce2565734deeb33a914c80cb6f467",
+        "normalization": "see selftest raw integrity manifest"
+      },
+      "initial_capture_log": {
+        "path": "mac-current-source-production-selftest.raw.txt",
+        "bytes": 20838,
+        "sha256": "1f6d379baa0fb5167cd63131765060c77f5fc2a04ab34c4a79a89cc3976d54b4",
+        "diagnostic": "one printf Interrupted system call",
+        "normalization": "see selftest raw integrity manifest"
+      }
     }
   ],
   "limits": [
@@ -166,5 +200,9 @@
     "No full workspace test ran on macOS. Across this exact source, this record does not establish an official conformance matrix, encoder32/reverse24 campaign, BD-rate, throughput, frame-latency, sanitizer, Miri, fuzz or package archive-test gate; see the separate Windows record for its encoder-suite and PGO results.",
     "No source files were modified."
   ],
-  "stored_log_note": "Hashes cover the committed text files. Six Cargo test outputs had one trailing blank separator removed for git diff --check; no output content lines changed."
+  "stored_log_note": "Hashes cover the committed text files. Six Cargo test outputs had one trailing blank separator removed for git diff --check; no output content lines changed.",
+  "additional_checks_recorded_at_utc": "2026-10-17 11:30:26Z",
+  "selftest_raw_originals_archive": "mac-current-source-selftests-originals-20261017.tar.gz",
+  "selftest_raw_integrity_manifest": "mac-current-source-selftest-raw-integrity.json",
+  "selftest_normalization_note": "The exact original self-test captures are retained in the named archive. Linked text review copies remove trailing spaces/tabs at line ends only; assertion output content is unchanged."
 }

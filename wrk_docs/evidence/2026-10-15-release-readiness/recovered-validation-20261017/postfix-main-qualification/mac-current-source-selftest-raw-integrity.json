@@ -1,0 +1,39 @@
+{
+  "schema": "rvp9.mac-current-source-selftest-raw-integrity.v1",
+  "archive": {
+    "path": "mac-current-source-selftests-originals-20261017.tar.gz",
+    "bytes": 6557,
+    "sha256": "52e2901c08db6e4b51dd6a84d1b5ba4c21aef999d8deb1668047990cfb1504a8",
+    "entries": 3
+  },
+  "normalization_note": "Review copies remove trailing spaces and tabs at line ends only. The archive preserves the original output bytes exactly.",
+  "files": [
+    {
+      "original_archive_entry": "mac-current-source-production-selftest.raw.txt",
+      "original_bytes": 20845,
+      "original_sha256": "fe5975bf5eb6f6c4b083158320b05fd5d83a2104fb40b1b98dbff4f7867fbdb9",
+      "review_copy": "mac-current-source-production-selftest.raw.txt",
+      "review_bytes": 20838,
+      "review_sha256": "1f6d379baa0fb5167cd63131765060c77f5fc2a04ab34c4a79a89cc3976d54b4",
+      "normalization": "trailing spaces/tabs at line ends removed"
+    },
+    {
+      "original_archive_entry": "mac-current-source-production-selftest-retry.raw.txt",
+      "original_bytes": 20751,
+      "original_sha256": "3d595c960ca9149d1e12acdd062386908a0522dc2f9b3ac88e987b6cfe521d97",
+      "review_copy": "mac-current-source-production-selftest-retry.raw.txt",
+      "review_bytes": 20744,
+      "review_sha256": "324c32332440a26975c03feeeef1220a5e2ce2565734deeb33a914c80cb6f467",
+      "normalization": "trailing spaces/tabs at line ends removed"
+    },
+    {
+      "original_archive_entry": "mac-current-source-spatial-selftest.raw.txt",
+      "original_bytes": 1906,
+      "original_sha256": "06d704c9212a6265863da5e65cc82f0182b3e7b5d1a30abeb070c08645772dd9",
+      "review_copy": "mac-current-source-spatial-selftest.raw.txt",
+      "review_bytes": 1906,
+      "review_sha256": "06d704c9212a6265863da5e65cc82f0182b3e7b5d1a30abeb070c08645772dd9",
+      "normalization": "none; exact text retained"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+quiet window: open.
+next grant no earlier than 12:32 (local).
+0 heavy workload processes still running.
+4 more heavy workload processes run at low priority (not counted).

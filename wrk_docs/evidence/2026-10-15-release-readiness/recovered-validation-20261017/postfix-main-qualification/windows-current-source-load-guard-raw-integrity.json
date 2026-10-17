@@ -1,0 +1,46 @@
+{
+  "schema": "rvp9.windows-current-source-load-guard-raw-integrity.v1",
+  "archive": {
+    "path": "windows-current-source-load-guard-originals-20261017.tar.gz",
+    "bytes": 1534,
+    "sha256": "03871cf83b9dbdd54b8da8374f749a61856a3e1b0b68897e33b0b52e34ed7f4b",
+    "entries": 5
+  },
+  "files": [
+    {
+      "original_path": "windows-current-source-quiet-start.raw.txt",
+      "archive_entry": "windows-current-source-quiet-start.raw.txt",
+      "bytes": 485,
+      "sha256": "e9ce1551e92c0156df5a17f18d928195e76c9bdb5a007d8604ec2fcddd9c2029"
+    },
+    {
+      "original_path": "windows-current-source-quiet-before.raw.txt",
+      "archive_entry": "windows-current-source-quiet-before.raw.txt",
+      "bytes": 180,
+      "sha256": "978df3481dda3b861442cb5d4727c98590b7c5acec7efa31756a4e5a65b43749"
+    },
+    {
+      "original_path": "windows-current-source-load-samples.raw.json",
+      "archive_entry": "windows-current-source-load-samples.raw.json",
+      "bytes": 1753,
+      "sha256": "222c33d6ae741917742cb7c6bd28d720b03ced30bc7f75335cd2c244da0a267d",
+      "review_copy": "windows-current-source-load-samples.raw.json",
+      "review_bytes": 1725,
+      "review_sha256": "36a834acfac452542a44c17929738b1dd88326ee4635b1944cb2994af3b504a6",
+      "normalization": "CRLF line endings normalized to LF; values and content unchanged"
+    },
+    {
+      "original_path": "windows-current-source-quiet-end.raw.txt",
+      "archive_entry": "windows-current-source-quiet-end.raw.txt",
+      "bytes": 69,
+      "sha256": "ff9a7da76efd056c3af50b3fe49f2ff006a05a0d9542d130bdabeb75f0742bb2"
+    },
+    {
+      "original_path": "windows-current-source-quiet-after.raw.txt",
+      "archive_entry": "windows-current-source-quiet-after.raw.txt",
+      "bytes": 171,
+      "sha256": "29cc42c88c99eaf24c44b6be9284c837b80fcee47a639fa2ce7ca0ee100e7ed6"
+    }
+  ],
+  "normalization_note": "The archive preserves original bytes. The checked-in review copy of the PowerShell sample output normalizes CRLF to LF; JSON values and CLIXML content are unchanged."
+}
