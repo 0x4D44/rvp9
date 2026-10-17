@@ -1,0 +1,17 @@
+{
+  "working_directory": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+  "argv": [
+    "deltic",
+    "timeout",
+    "120",
+    "./build/libvpx/vpxdec",
+    "--codec=vp9",
+    "--i420",
+    "--limit=60",
+    "-o",
+    "<registered-scratch>/pinned.i420",
+    "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-pgo-20261017/functional-smoke-20261017/mac-pgo-smoke.ivf"
+  ],
+  "stdin": "closed (/dev/null)",
+  "stdout_stderr": "decode.raw.txt"
+}

@@ -1,0 +1,70 @@
+{
+  "schema": "rvp9.pgo-smoke-pinned-decoder.v1",
+  "recorded_at_utc": "2026-10-17T17:53:24+00:00",
+  "candidate_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "candidate_worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+  "candidate_tree_status_at_build": "clean (per exact-source PGO and encoder-correctness records)",
+  "host": {
+    "name": "flux.home.arpa",
+    "os": "Darwin 25.6.0",
+    "architecture": "arm64",
+    "cpu": "Apple M5 Max"
+  },
+  "encoder": {
+    "path": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/target/encoder-pgo/optimized/release/rvp9enc",
+    "sha256": "c5330411c2ff738ef515a9e293702d1312dd47cfad4675285ab7772d2e3c2daf"
+  },
+  "input": {
+    "path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/in_to_tree_420_720p50.y4m",
+    "bytes": 691203035,
+    "sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74"
+  },
+  "encoded_stream": {
+    "path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-pgo-20261017/functional-smoke-20261017/mac-pgo-smoke.ivf",
+    "bytes": 477126,
+    "sha256": "772db4df880d056b8eb6f19ca7e5f10931b68e2c98b5b4bf70b2c2db2bf7234d",
+    "encoded_frames": 60
+  },
+  "decoder": {
+    "name": "WebM Project VP9 Decoder",
+    "version": "1.14.1",
+    "libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+    "path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec",
+    "bytes": 2397592,
+    "sha256": "08d8e3c7390b066bd9c0cceb1b84c9d6c27351ade85c6d0a7c741931d3fb1117"
+  },
+  "command": [
+    "deltic",
+    "timeout",
+    "120",
+    "./build/libvpx/vpxdec",
+    "--codec=vp9",
+    "--i420",
+    "--limit=60",
+    "-o",
+    "<registered-scratch>/pinned.i420",
+    "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-pgo-20261017/functional-smoke-20261017/mac-pgo-smoke.ivf"
+  ],
+  "command_record": "command.txt",
+  "decoder_help": "decoder-help.raw.txt",
+  "decoder_identity_capture": "decoder-identity.raw.txt",
+  "exit_code": 0,
+  "decoded_frames": 60,
+  "decoded_output": {
+    "bytes": 82944000,
+    "sha256": "65c9b2b5bbd548f8fc09b007f3b122456352c53b454253e88e220aae60473faf",
+    "retained": false,
+    "observation": "output-observation.raw.txt"
+  },
+  "comparison_to_original_local_decoders": {
+    "matched": true,
+    "same_bytes_and_sha256": true,
+    "original_decoder_count": 3,
+    "total_decoder_count_including_pinned": 4
+  },
+  "limits": [
+    "This adds decode compatibility evidence for the exact-source PGO stream only.",
+    "It is not a pinned libvpx encoder-quality or BD-rate comparison, performance result, or complete release qualification.",
+    "The 82,944,000-byte raw YUV output was hashed in registered scratch and is not retained."
+  ]
+}

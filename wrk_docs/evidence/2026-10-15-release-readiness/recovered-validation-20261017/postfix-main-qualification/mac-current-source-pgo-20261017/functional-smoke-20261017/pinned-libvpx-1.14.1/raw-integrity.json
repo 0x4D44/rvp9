@@ -1,0 +1,45 @@
+{
+  "algorithm": "SHA-256",
+  "files": [
+    {
+      "path": "command.txt",
+      "size_bytes": 638,
+      "sha256": "fe8e7ae6c64ca3ee93c06a788e3fe2a2ab84ce021246f0e73d060a11c3c33fe6"
+    },
+    {
+      "path": "decode.raw.txt",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "decoder-help.exit.txt",
+      "size_bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "decoder-help.raw.txt",
+      "size_bytes": 2539,
+      "sha256": "05056034c9addc40fbd3c526ac6b612a752a93fbd93c8b6b48ec9a2a4445b3a8"
+    },
+    {
+      "path": "decoder-identity.raw.txt",
+      "size_bytes": 86,
+      "sha256": "28fc09ff74d07926100447a7bc2a10783965c72adc909a5b353537272718567c"
+    },
+    {
+      "path": "exit.txt",
+      "size_bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "output-observation.raw.txt",
+      "size_bytes": 197,
+      "sha256": "08bf1d7b38842d29e75f9604902a8ce9781ab58d1959d4b2579a17a5a963a93c"
+    },
+    {
+      "path": "qualification.json",
+      "size_bytes": 3144,
+      "sha256": "b135f110c90bfe97fc36b6a3780c47d43a225d4e2d19fd27647cf1917fa28e46"
+    }
+  ]
+}
