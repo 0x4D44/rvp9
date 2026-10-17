@@ -30,3 +30,8 @@ On 64-bit AArch64 release builds, the public safe `convolve8_horiz_neon` wrapper
 <unfixed — raised only>
 
 ## Notes
+
+
+### Related unchecked span guards found in source audit (2026-10-17)
+
+The exact-candidate AArch64 SIMD review found the same unchecked span-arithmetic pattern in sibling wrappers: unscaled convolution, copy, IDCT8, integer projection row kernels, loopfilter, minmax, SAD/SAD4D, subpixel variance, subtraction, variance, VBP, forward/inverse transforms, and Hadamard. A representative release counterexample is `minmax_neon.rs`: `7 * stride + 8` wraps to 6 for `stride = usize::MAX / 7` on 64-bit targets, so a 64-byte source passes the apparent span assertion before row-one pointer construction leaves the allocation. This is static evidence only; normal encoder geometry and runtime reproduction are not claimed. The existing observation above remains the original concrete `convolve8_horiz_neon` case; no separate record was minted for the repeated span-arithmetic pattern.
