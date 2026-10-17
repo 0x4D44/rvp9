@@ -1,0 +1,84 @@
+{
+  "schema": "rvp9.mac-current-source-miri-decoder-panic-safety.v1",
+  "recorded_at_utc": "2026-10-17T19:54:46.905720Z",
+  "candidate": {
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tracked_tree_clean": true,
+    "test_file": "crates/rvp9-decoder/tests/panic_safety.rs",
+    "test_file_git_blob": "7658a27e22404dfef03cbe53871ba864bc1a59a6"
+  },
+  "host": {
+    "os": "macOS 26.6.2 (25G83)",
+    "model": "Mac17,6",
+    "cpu": "Apple M5 Max",
+    "host_triple": "aarch64-apple-darwin"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "rustc_commit": "bd08c9e71874a81670fe3938dbf85148e42c2b96",
+    "cargo": "cargo 1.98.0-nightly (a595d0da2 2026-06-20)",
+    "miri": "miri 0.1.0 (bd08c9e718 2026-06-25)"
+  },
+  "command": "deltic timeout 1500 cargo +nightly miri test --locked --offline -p rvp9-decoder --test panic_safety -- --test-threads=1 </dev/null",
+  "environment": {
+    "CARGO_NET_OFFLINE": "true",
+    "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-miri-decoder-safety-e6a47023/target",
+    "CARGO_BUILD_JOBS": "1"
+  },
+  "result": {
+    "exit_status": 101,
+    "status": "compile_failed_before_test_execution",
+    "tests_started": false,
+    "compiler_errors": 8,
+    "error_code": "E0425",
+    "missing_symbols": [
+      "fdct4x4_scalar",
+      "fht4x4_scalar",
+      "fht8x8_scalar",
+      "fht16x16_scalar",
+      "fdct32x32_scalar",
+      "idct16x16_add_scalar"
+    ],
+    "compile_failed_crate": "rvp9-core",
+    "test_names_not_executed": [
+      "early_error_then_valid_keyframe_decodes",
+      "mid_tile_failure_then_valid_keyframe_decodes"
+    ]
+  },
+  "raw_log": {
+    "path": "run-confirmed.raw.txt",
+    "bytes": 6203,
+    "sha256": "3f862fbb5e1da49e88901369771ca9c8d0baa721ea5062d727950c0b553b91a0"
+  },
+  "exit_record": {
+    "path": "exit-confirmed.txt",
+    "bytes": 4,
+    "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+  },
+  "initial_capture_attempt": {
+    "raw_log": {
+      "path": "run.raw.txt",
+      "bytes": 6279,
+      "sha256": "b08dc4f41a791b9d386105ab88aeabade6c2886566121842399ec607a97296b4"
+    },
+    "exit_status_from_exec_runner": 1,
+    "note": "The first shell wrapper used the reserved read-only zsh variable status and did not write an exit record. Its compiler output is retained but is not the authoritative exit capture. The same test was rerun with a nonreserved variable; the corrected wrapper captured exit 101."
+  },
+  "limits": [
+    "Neither decoder panic-safety test ran.",
+    "This records a Miri compilation limitation in the dependency path; it does not prove or disprove decoder runtime safety.",
+    "The compile failure overlaps the missing scalar-transform helper class already seen in the dependent-io Miri recheck; no new source defect is asserted."
+  ],
+  "command_file": {
+    "path": "command.txt",
+    "bytes": 131,
+    "sha256": "74e008064472b5c825fe322032842171ae164fc84f5b13a238d080f601e5445e"
+  },
+  "environment_file": {
+    "path": "environment.txt",
+    "bytes": 772,
+    "sha256": "f63bffcd6715e0c46cbfb8d80014dc7fb75aece1c14db4fd8d33872ef0940507"
+  }
+}

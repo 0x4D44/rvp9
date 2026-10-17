@@ -1,0 +1,1 @@
+deltic timeout 1500 cargo +nightly miri test --locked --offline -p rvp9-decoder --test panic_safety -- --test-threads=1 </dev/null

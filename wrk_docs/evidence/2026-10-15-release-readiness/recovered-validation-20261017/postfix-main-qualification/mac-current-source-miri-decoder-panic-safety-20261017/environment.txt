@@ -1,0 +1,16 @@
+candidate_worktree=/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate
+candidate_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+candidate_tracked_tree=clean
+candidate_test_file=crates/rvp9-decoder/tests/panic_safety.rs
+candidate_test_file_blob=7658a27e22404dfef03cbe53871ba864bc1a59a6
+host_os=macOS 26.6.2 (25G83)
+host_model=Mac17,6
+host_cpu=Apple M5 Max
+host_arch=aarch64-apple-darwin
+rustc=rustc 1.98.0-nightly (bd08c9e71 2026-06-25)
+rustc_commit=bd08c9e71874a81670fe3938dbf85148e42c2b96
+cargo=cargo 1.98.0-nightly (a595d0da2 2026-06-20)
+miri=miri 0.1.0 (bd08c9e718 2026-06-25)
+CARGO_NET_OFFLINE=true
+CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-miri-decoder-safety-e6a47023/target
+CARGO_BUILD_JOBS=1
