@@ -1,0 +1,10 @@
+error: checksum for `rvp9-core v0.2.0-alpha.4` changed between lock files
+
+this could be indicative of a few possible errors:
+
+    * the lock file is corrupt
+    * a replacement source in use (e.g., a mirror) returned a different checksum
+    * the source itself may be corrupt in one way or another
+
+unable to verify that `rvp9-core v0.2.0-alpha.4` is the same as when the lockfile was generated
+

@@ -38,12 +38,12 @@
     }
   },
   "extracted_archive_tests": {
-    "status": "not qualified; prescribed external-scratch attempts stopped at offline dependency resolution before compilation",
-    "reason": "Both prescribed external-scratch attempts stopped before compilation: the offline crates.io index offered rvp9-core 0.2.0-alpha.3 while the alpha.4 archive lock required 0.2.0-alpha.4. The runs used a separate CARGO_TARGET_DIR and did not inherit the source worktree .cargo configuration. They are offline prerequisite failures, not FLU38 reproductions or code failures. The earlier attempts from the source worktree are retained separately and are non-qualifying.",
+    "status": "not qualified; all correctly isolated attempts stopped before test compilation (offline resolver mismatch or registry checksum mismatch)",
+    "reason": "The two offline external-scratch attempts stopped before compilation because the index offered rvp9-core alpha.3 while the alpha.4 archive lock required alpha.4. A later registry-backed, locked attempt updated the crates.io index but also stopped before compilation: Cargo reported that the checksum for rvp9-core v0.2.0-alpha.4 changed between lock files. All four correctly isolated runs used a separate CARGO_TARGET_DIR and did not inherit the source worktree .cargo configuration. These are resolver/integrity prerequisites, not FLU38 reproductions or test results. The earlier source-worktree attempts are preserved separately as non-qualifying.",
     "historical_bug_dependency": {
       "id": "RVP9-BUG-FLU-00038",
       "state": "Open",
-      "note": "Prior extracted-archive evidence reproduces missing decoder/encoder test dependencies on an earlier source. This current-source attempt neither confirms nor refutes that defect."
+      "note": "Prior extracted-archive evidence reproduces missing decoder/encoder test dependencies on an earlier source. None of the current-source attempts reached test compilation, so they neither confirm nor refute FLU38."
     },
     "non_qualifying_source_worktree_attempts": [
       {
@@ -92,7 +92,9 @@
           "path": "windows-current-source-external-scratch-decoder-archive-test.exit.raw.txt",
           "bytes": 22,
           "sha256": "ed3483a70a1165ff7a2ca826fece392d845acb67351f495ff42af0b283b1e1bc"
-        }
+        },
+        "scratch_id": "rvp9-archive-tests-c8dbdc4a",
+        "registry_access": "offline"
       },
       {
         "crate": "rvp9-encoder",
@@ -108,11 +110,52 @@
           "path": "windows-current-source-external-scratch-encoder-archive-test.exit.raw.txt",
           "bytes": 22,
           "sha256": "9be60db4fe50f4c20d94fb14216ef657e5005130914ee2a2b7449f29b78d63b1"
+        },
+        "scratch_id": "rvp9-archive-tests-c8dbdc4a",
+        "registry_access": "offline"
+      },
+      {
+        "crate": "rvp9-decoder",
+        "command": "deltic timeout 900 cargo test --locked --manifest-path <external scratch>\\rvp9-decoder-0.2.0-alpha.4\\Cargo.toml --test panic_safety --jobs 4",
+        "working_directory": "registered external scratch; CARGO_TARGET_DIR set to a separate target under that scratch",
+        "scratch_id": "rvp9-archive-online-96fefd8c",
+        "registry_access": "online; Cargo updated the crates.io index",
+        "exit_code": 101,
+        "failure": "Cargo checksum for rvp9-core v0.2.0-alpha.4 changed between lock files; test compilation did not start",
+        "raw_log": {
+          "path": "windows-current-source-online-decoder-archive-test.raw.txt",
+          "bytes": 427,
+          "sha256": "01a5120523416396a9b79b8bb349913adf899e5ba0b21cdacffd7744927809ef"
+        },
+        "raw_exit_capture": {
+          "path": "windows-current-source-online-decoder-archive-test.exit.raw.txt",
+          "bytes": 22,
+          "sha256": "ed3483a70a1165ff7a2ca826fece392d845acb67351f495ff42af0b283b1e1bc"
+        }
+      },
+      {
+        "crate": "rvp9-encoder",
+        "command": "deltic timeout 900 cargo test --locked --manifest-path <external scratch>\\rvp9-encoder-0.2.0-alpha.4\\Cargo.toml --test quality_gate --jobs 4",
+        "working_directory": "registered external scratch; CARGO_TARGET_DIR set to a separate target under that scratch",
+        "scratch_id": "rvp9-archive-online-96fefd8c",
+        "registry_access": "online; Cargo updated the crates.io index",
+        "exit_code": 101,
+        "failure": "Cargo checksum for rvp9-core v0.2.0-alpha.4 changed between lock files; test compilation did not start",
+        "raw_log": {
+          "path": "windows-current-source-online-encoder-archive-test.raw.txt",
+          "bytes": 398,
+          "sha256": "6420fbe87d7e943d36a287e0332f0c5a8cbf4122d4cfcf5e6ba07c5fda3689c1"
+        },
+        "raw_exit_capture": {
+          "path": "windows-current-source-online-encoder-archive-test.exit.raw.txt",
+          "bytes": 22,
+          "sha256": "9be60db4fe50f4c20d94fb14216ef657e5005130914ee2a2b7449f29b78d63b1"
         }
       }
     ],
     "external_scratch": {
-      "id": "rvp9-archive-tests-c8dbdc4a",
+      "offline_id": "rvp9-archive-tests-c8dbdc4a",
+      "registry_backed_id": "rvp9-archive-online-96fefd8c",
       "removed_after_attempts": true,
       "source_package_directories": "copied from the exact-source Cargo target/package staging output",
       "source_worktree_unchanged": true
@@ -121,8 +164,8 @@
   "limits": [
     "Cargo package verification compiles the assembled package graph but does not run tests embedded in extracted archives.",
     "This record covers Windows only and does not establish exact-source macOS package verification.",
-    "The two offline resolver failures are prerequisite failures, not FLU38 evidence. No online retry, dependency override, manifest patch or source change was attempted.",
+    "The two offline resolver failures and two registry-backed checksum failures are prerequisite/integrity failures, not FLU38 evidence. No lockfile change, dependency override, manifest patch or retry without --locked was attempted.",
     "No exact-source macOS cargo package verification was run; historical native macOS package evidence used source 33378791eace3bda2f927e629c30b805b54b56e1 and does not qualify source fb5c0c917038db6c640b3dbc7c2b84b567233333."
   ],
-  "updated_at_utc": "2026-10-17T12:34:55Z"
+  "updated_at_utc": "2026-10-17T12:41:05Z"
 }

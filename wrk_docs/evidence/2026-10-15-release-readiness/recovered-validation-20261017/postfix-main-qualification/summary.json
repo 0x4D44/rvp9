@@ -909,7 +909,7 @@
       "rvp9-cli"
     ],
     "log_sha256": "fb291215223ad27392d14da6186ccc563b07b3290bd80fe77e852b227146af6b",
-    "archive_test_status": "not qualified; prescribed external-scratch attempts stopped at offline dependency resolution before compilation",
+    "archive_test_status": "not qualified; all correctly isolated attempts stopped before test compilation (offline resolver mismatch or registry checksum mismatch)",
     "external_scratch_archive_tests": {
       "recorded_at_utc": "2026-10-17T12:34:55Z",
       "status": "not qualified; prescribed external-scratch attempts stopped at offline dependency resolution before compilation",
@@ -921,6 +921,16 @@
       "reason": "offline index contained rvp9-core alpha.3; extracted alpha.4 archives require alpha.4",
       "record": "windows-current-source-package-verification.json"
     },
-    "macos_exact_source_status": "not verified; historical native package evidence is source 33378791eace3bda2f927e629c30b805b54b56e1"
+    "macos_exact_source_status": "not verified; historical native package evidence is source 33378791eace3bda2f927e629c30b805b54b56e1",
+    "registry_backed_archive_tests": {
+      "recorded_at_utc": "2026-10-17T12:41:05Z",
+      "status": "both locked runs exited 101 before compilation on a Cargo checksum mismatch for rvp9-core alpha.4",
+      "scratch_id": "rvp9-archive-online-96fefd8c",
+      "exit_codes": {
+        "decoder_panic_safety": 101,
+        "encoder_quality_gate": 101
+      },
+      "record": "windows-current-source-package-verification.json"
+    }
   }
 }
