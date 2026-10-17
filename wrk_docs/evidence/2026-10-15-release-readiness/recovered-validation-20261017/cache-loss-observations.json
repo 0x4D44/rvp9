@@ -1,0 +1,21 @@
+{
+  "observed_utc": "2026-10-17T05:13:56.763194+00:00",
+  "source_candidate": "ebca64b0d3c7359e96caf1e6250c921c18d30a3f",
+  "current_head": "5d0cf1e6f7cd362ee42585aefa630b71408f5e2e",
+  "local_state": {
+    "task_scratch": "empty at current inspection",
+    "target": "absent",
+    "corpus": "present,2.0G",
+    "official_vectors": "present,26M",
+    "reference_build": "present"
+  },
+  "prior_terminal_tool_observations_not_raw_log_archive": {
+    "workspace_release_exit": 101,
+    "workspace_failure": "tests::external_encoder_timeout in realtime, missing fake stderr diagnostic before 1s child deadline",
+    "focused_selected_retry": "1 passed,0failed,13filtered,exit0; prior wrong exact filter selected0 and is excluded",
+    "correctness_driver": "tool output records candidate-tools-build0,native conformance1=0,native conformance2=0,alpha32=0,reverse24=0; raw logs were not preserved before scratch removal",
+    "windows": "worker had observed all4 conformance/32encoder/24reverse andPGO28x60/31profiles; remote raw task scratch was also removed, recovery now inspecting retained external records"
+  },
+  "acceptance_limit": "These observations do not recreate missing raw logs. Recovered or freshly rerun gate evidence must be inspected before final acceptance.",
+  "next": "One bounded full workspace release rerun in registered external scratch, with4test threads; recover nativeWindows external evidence before rebuilding."
+}

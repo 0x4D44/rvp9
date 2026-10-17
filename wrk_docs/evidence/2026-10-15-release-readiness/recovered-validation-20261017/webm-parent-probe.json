@@ -1,0 +1,43 @@
+{
+  "source_sha256": "eae865227444d019cbf3650a46cb3f725b2a471725defa06c1b86f4c5f02b689",
+  "bug": "RVP9-BUG-FLU-00044",
+  "results": [
+    {
+      "mode": "overflow-checked",
+      "command": [
+        "deltic",
+        "timeout",
+        "60",
+        "rustc",
+        "--edition=2024",
+        "--crate-name",
+        "webm_parent_probe",
+        "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/webm-parent-probe.rs",
+        "-o",
+        "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/diagnostics/overflow-checked"
+      ],
+      "exit": 0,
+      "output": "input=[18, 53, 80, 67, 81, 18, 53, 80, 67, ff]\n\nthread 'main' (222536341) panicked at /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:1077:13:\nattempt to subtract with overflow\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nmemory=Err(Any { .. })\n"
+    },
+    {
+      "mode": "release-default",
+      "command": [
+        "deltic",
+        "timeout",
+        "60",
+        "rustc",
+        "--edition=2024",
+        "--crate-name",
+        "webm_parent_probe",
+        "-O",
+        "-C",
+        "panic=abort",
+        "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/webm-parent-probe.rs",
+        "-o",
+        "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/diagnostics/release-default"
+      ],
+      "exit": 0,
+      "output": "input=[18, 53, 80, 67, 81, 18, 53, 80, 67, ff]\nmemory=Ok(Err(BadEbml(\"payload size overflow\")))\n"
+    }
+  ]
+}

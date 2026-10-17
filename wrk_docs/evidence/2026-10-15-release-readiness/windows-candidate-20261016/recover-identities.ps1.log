@@ -1,0 +1,81 @@
+#< CLIXML
+2026-10-17T06:12:26.6907257+01:00
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\manifest.txt|bytes=143899|sha256=3cdf91afb85d5915ffe5b2f014ee015d4c801d04e8c5783e7f30ba70496b17f0
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\vpxenc.exe|bytes=4431431|sha256=88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\vpxdec.exe|bytes=4268881|sha256=91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\vpx_temporal_svc_reference.exe|bytes=3425483|sha256=32e59085ad9e81f199475eb3df3278632e02c8e5e52ec287b334f89340d193be
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\libvpx.a|bytes=4216700|sha256=15bbe22695adfdb8b89865b7e76eca037b664fd3b40d098f343f1caffbe2e8ef
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\vpx_config.h|bytes=3164|sha256=c8349fce8cb4db0cb8bd7b07fe45396e8eab7ef542ad17f46d9c6049cf5ef1dc
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\config.mk|bytes=1131|sha256=41bd763bd83bbab5e1eacb191aab130a23833ec274e25f1a3a6565bd3439a7fa
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\scripts\build-encoder-pgo.sh|bytes=11537|sha256=2d335a8b02c41a3dc370238add4b894d2f9d27900ee9e657dcc3b9e7ba2d54e5
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\scripts\qualify-production-encoder.sh|bytes=250119|sha256=3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c
+prepared_input_count=16
+group_summary_count=0
+headtohead_runs_csv_count=0
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-pc-windows-msvc
+release: 1.95.0
+LLVM version: 22.1.2
+cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+release: 1.95.0
+commit-hash: f2d3ce0bd7f24a49f8f72d9000448f8838c4e850
+commit-date: 2026-03-21
+host: x86_64-pc-windows-msvc
+libgit2: 1.9.2 (sys:0.20.4 vendored)
+libcurl: 8.15.0-DEV (sys:0.4.83+curl-8.15.0 vendored ssl:Schannel)
+os: Windows 10.0.26200 (Windows 11 Professional) [64-bit]
+LLVM (http://llvm.org/):
+  LLVM version 22.1.2-rust-1.95.0-stable
+  Optimized build.
+rustc 1.97.0-nightly (67bcaa9c4 2026-05-01)
+binary: rustc
+commit-hash: 67bcaa9c4b1b1015efae3d591155c79760b1e0a5
+commit-date: 2026-05-01
+host: x86_64-pc-windows-msvc
+release: 1.97.0-nightly
+LLVM version: 22.1.4
+cargo-x86_64-pc-windows-msvc
+clippy-x86_64-pc-windows-msvc
+llvm-tools-x86_64-pc-windows-msvc
+rust-docs-x86_64-pc-windows-msvc
+rust-src
+rust-std-x86_64-pc-windows-msvc
+rustc-x86_64-pc-windows-msvc
+rustfmt-x86_64-pc-windows-msvc
+cargo-fuzz 0.13.1
+
+
+FullName : C:\Users\marti\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib\libr
+           ustc-nightly_rt.asan.a
+Length   : 22265486
+
+
+
+
+
+FullName : C:\Program Files\Microsoft Visual 
+           Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\bin\Hostx64\x64\clang_rt.asan_dynamic-x86_64.dll
+Length   : 1205320
+
+
+
+
+
+Name   : gcc.exe
+Source : C:\Strawberry\c\bin\gcc.exe
+
+Name   : cargo-fuzz.exe
+Source : C:\Users\marti\.cargo\bin\cargo-fuzz.exe
+
+
+
+
+
+Name : AMD Ryzen 9 9950X3D 16-Core Processor          
+
+
+
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="2"><TNRef RefId="0" /><MS><I64 N="SourceId">2</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="3"><TNRef RefId="0" /><MS><I64 N="SourceId">2</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="4"><TNRef RefId="0" /><MS><I64 N="SourceId">2</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="5"><TNRef RefId="0" /><MS><I64 N="SourceId">2</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="6"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>

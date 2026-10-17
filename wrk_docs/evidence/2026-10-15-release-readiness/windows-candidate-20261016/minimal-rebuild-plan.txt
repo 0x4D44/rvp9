@@ -1,0 +1,51 @@
+Recovery is complete to the extent surviving artifacts permit.
+No builds/restarts have occurred. Source is clean exact474dfd99.
+
+Retained usable reference prerequisites:
+- pinned libvpx vpxenc/vpxdec, archive/configs, and current temporal adapter
+- all reference hashes independently re-read in recover-identities.ps1.log
+- pinned Rust1.95.0 and bundled LLVM22.1.2 llvm-profdata still installed
+- canonical source/corpus/vectors must be freshly verified before replay
+
+Minimal needed rebuild into NEW deltic-registered external scratch:
+1. Allocate task-associated root via deltic scratch new --label rvp9-native-replay474.
+   Put cargo targets, PGO root, and ALL log/manifest roots there, not task .scratch.
+   Copy completed compact raw logs immediately into this durable evidence dir.
+2. RUSTUP_TOOLCHAIN=1.95.0 CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=<root>/cargo-target
+   cargo build --release --locked -p rvp9-harness --bin conformance
+     -p rvp9-cli --bin rvp9enc --bin rvp9dec
+     -p rvp9-bench --bin bdrate --bin bdrate-svc
+     --bin encode-headtohead --bin realtime
+   This excludes unrelated harness binaries. Existing temporal adapter/reference
+   need no rebuild unless a fresh prerequisite check finds drift.
+3. Compile core and encoder library regression test binaries in that same
+   external cargo target; rerun lost native scalar/AVX2 regressions.
+4. Canonical production PGO: existing unchanged script,
+   --build-root <root>/pgo --training-dir <task>/tests/corpus, default28rows60frames,
+   pinned1.95/jobs4, documented corrected shasum adapter; regenerate31profiles
+   rather than referring to vanished old image. Record actual new profile count.
+5. All fresh correctness gates must replace missing candidate proof:
+   four conformance modes; alpha32; reverse24 with independent retained outputs;
+   native scalar-routing/Laplacian and selected actualAVX2 tests.
+   Canonical alpha/reverse scripts hardcode task/target/release despite Cargo
+   target override. A generated task/target junction to external cargo-target
+   can satisfy this interface while preserving actual artifacts externally;
+   verify canonical paths/junction safety before creating it. No source edits.
+
+Existing canonical production script explicit tool paths for eventual speed:
+--test-encoder <root>/pgo/optimized/release/rvp9enc.exe
+--pgo-manifest <root>/pgo/runs/<new-observed-run-id>/manifest.txt
+--bdrate <root>/cargo-target/release/bdrate.exe
+--bdrate-svc <root>/cargo-target/release/bdrate-svc.exe
+--encode-headtohead <root>/cargo-target/release/encode-headtohead.exe
+--realtime <root>/cargo-target/release/realtime.exe
+--rvp9dec <root>/cargo-target/release/rvp9dec.exe
+--vpxenc <task>/build/libvpx/vpxenc.exe
+--vpxdec <task>/build/libvpx/vpxdec.exe
+--temporal-anchor <task>/build/libvpx/vpx_temporal_svc_reference.exe
+--work-dir <registered-fresh-speed-root>
+
+Corrected shasum file+stdin probe already passed. No further policy ask needed
+for routine adapter forwarding or natural quiet-lease expiry. No measured
+attempt resume/splicing, guard or timing changes. Full75speed groups still
+unmeasured;200latency rows/spatial36/96 and supplemental Ducks1080p60 remain.

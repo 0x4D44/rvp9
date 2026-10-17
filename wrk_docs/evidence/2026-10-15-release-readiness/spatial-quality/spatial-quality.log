@@ -1,0 +1,109 @@
+Preparing acceptance inputs in /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/inputs
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/inputs/in_to_tree_720p30.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/inputs/ducks_take_off_720p30.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/inputs/old_town_cross_720p30.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/inputs/in_to_tree_1080p30.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/inputs/ducks_take_off_1080p30.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/inputs/old_town_cross_1080p30.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/inputs/in_to_tree_1080p60.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/inputs/old_town_cross_1080p60.y4m
+[quality   1/96] cbr-720p30-in_to_tree-cpu6-s2
+[quality   2/96] cbr-720p30-ducks_take_off-cpu6-s2
+[quality   3/96] cbr-720p30-old_town_cross-cpu6-s2
+[quality   4/96] cbr-720p30-in_to_tree-cpu6-s3
+[quality   5/96] cbr-720p30-ducks_take_off-cpu6-s3
+[quality   6/96] cbr-720p30-old_town_cross-cpu6-s3
+[quality   7/96] cbr-720p30-in_to_tree-cpu7-s2
+[quality   8/96] cbr-720p30-ducks_take_off-cpu7-s2
+[quality   9/96] cbr-720p30-old_town_cross-cpu7-s2
+[quality  10/96] cbr-720p30-in_to_tree-cpu7-s3
+[quality  11/96] cbr-720p30-ducks_take_off-cpu7-s3
+[quality  12/96] cbr-720p30-old_town_cross-cpu7-s3
+[quality  13/96] cbr-720p30-in_to_tree-cpu8-s2
+[quality  14/96] cbr-720p30-ducks_take_off-cpu8-s2
+[quality  15/96] cbr-720p30-old_town_cross-cpu8-s2
+[quality  16/96] cbr-720p30-in_to_tree-cpu8-s3
+[quality  17/96] cbr-720p30-ducks_take_off-cpu8-s3
+[quality  18/96] cbr-720p30-old_town_cross-cpu8-s3
+[quality  19/96] cbr-1080p30-in_to_tree-cpu6-s2
+[quality  20/96] cbr-1080p30-ducks_take_off-cpu6-s2
+[quality  21/96] cbr-1080p30-old_town_cross-cpu6-s2
+[quality  22/96] cbr-1080p30-in_to_tree-cpu6-s3
+[quality  23/96] cbr-1080p30-ducks_take_off-cpu6-s3
+[quality  24/96] cbr-1080p30-old_town_cross-cpu6-s3
+[quality  25/96] cbr-1080p30-in_to_tree-cpu7-s2
+[quality  26/96] cbr-1080p30-ducks_take_off-cpu7-s2
+[quality  27/96] cbr-1080p30-old_town_cross-cpu7-s2
+[quality  28/96] cbr-1080p30-in_to_tree-cpu7-s3
+[quality  29/96] cbr-1080p30-ducks_take_off-cpu7-s3
+[quality  30/96] cbr-1080p30-old_town_cross-cpu7-s3
+[quality  31/96] cbr-1080p30-in_to_tree-cpu8-s2
+[quality  32/96] cbr-1080p30-ducks_take_off-cpu8-s2
+[quality  33/96] cbr-1080p30-old_town_cross-cpu8-s2
+[quality  34/96] cbr-1080p30-in_to_tree-cpu8-s3
+[quality  35/96] cbr-1080p30-ducks_take_off-cpu8-s3
+[quality  36/96] cbr-1080p30-old_town_cross-cpu8-s3
+[quality  37/96] cbr-1080p60-in_to_tree-cpu6-s2
+[quality  38/96] cbr-1080p60-old_town_cross-cpu6-s2
+[quality  39/96] cbr-1080p60-in_to_tree-cpu6-s3
+[quality  40/96] cbr-1080p60-old_town_cross-cpu6-s3
+[quality  41/96] cbr-1080p60-in_to_tree-cpu7-s2
+[quality  42/96] cbr-1080p60-old_town_cross-cpu7-s2
+[quality  43/96] cbr-1080p60-in_to_tree-cpu7-s3
+[quality  44/96] cbr-1080p60-old_town_cross-cpu7-s3
+[quality  45/96] cbr-1080p60-in_to_tree-cpu8-s2
+[quality  46/96] cbr-1080p60-old_town_cross-cpu8-s2
+[quality  47/96] cbr-1080p60-in_to_tree-cpu8-s3
+[quality  48/96] cbr-1080p60-old_town_cross-cpu8-s3
+[quality  49/96] vbr-720p30-in_to_tree-cpu6-s2
+[quality  50/96] vbr-720p30-ducks_take_off-cpu6-s2
+[quality  51/96] vbr-720p30-old_town_cross-cpu6-s2
+[quality  52/96] vbr-720p30-in_to_tree-cpu6-s3
+[quality  53/96] vbr-720p30-ducks_take_off-cpu6-s3
+[quality  54/96] vbr-720p30-old_town_cross-cpu6-s3
+[quality  55/96] vbr-720p30-in_to_tree-cpu7-s2
+[quality  56/96] vbr-720p30-ducks_take_off-cpu7-s2
+[quality  57/96] vbr-720p30-old_town_cross-cpu7-s2
+[quality  58/96] vbr-720p30-in_to_tree-cpu7-s3
+[quality  59/96] vbr-720p30-ducks_take_off-cpu7-s3
+[quality  60/96] vbr-720p30-old_town_cross-cpu7-s3
+[quality  61/96] vbr-720p30-in_to_tree-cpu8-s2
+[quality  62/96] vbr-720p30-ducks_take_off-cpu8-s2
+[quality  63/96] vbr-720p30-old_town_cross-cpu8-s2
+[quality  64/96] vbr-720p30-in_to_tree-cpu8-s3
+[quality  65/96] vbr-720p30-ducks_take_off-cpu8-s3
+[quality  66/96] vbr-720p30-old_town_cross-cpu8-s3
+[quality  67/96] vbr-1080p30-in_to_tree-cpu6-s2
+[quality  68/96] vbr-1080p30-ducks_take_off-cpu6-s2
+[quality  69/96] vbr-1080p30-old_town_cross-cpu6-s2
+[quality  70/96] vbr-1080p30-in_to_tree-cpu6-s3
+[quality  71/96] vbr-1080p30-ducks_take_off-cpu6-s3
+[quality  72/96] vbr-1080p30-old_town_cross-cpu6-s3
+[quality  73/96] vbr-1080p30-in_to_tree-cpu7-s2
+[quality  74/96] vbr-1080p30-ducks_take_off-cpu7-s2
+[quality  75/96] vbr-1080p30-old_town_cross-cpu7-s2
+[quality  76/96] vbr-1080p30-in_to_tree-cpu7-s3
+[quality  77/96] vbr-1080p30-ducks_take_off-cpu7-s3
+[quality  78/96] vbr-1080p30-old_town_cross-cpu7-s3
+[quality  79/96] vbr-1080p30-in_to_tree-cpu8-s2
+[quality  80/96] vbr-1080p30-ducks_take_off-cpu8-s2
+[quality  81/96] vbr-1080p30-old_town_cross-cpu8-s2
+[quality  82/96] vbr-1080p30-in_to_tree-cpu8-s3
+[quality  83/96] vbr-1080p30-ducks_take_off-cpu8-s3
+[quality  84/96] vbr-1080p30-old_town_cross-cpu8-s3
+[quality  85/96] vbr-1080p60-in_to_tree-cpu6-s2
+[quality  86/96] vbr-1080p60-old_town_cross-cpu6-s2
+[quality  87/96] vbr-1080p60-in_to_tree-cpu6-s3
+[quality  88/96] vbr-1080p60-old_town_cross-cpu6-s3
+[quality  89/96] vbr-1080p60-in_to_tree-cpu7-s2
+[quality  90/96] vbr-1080p60-old_town_cross-cpu7-s2
+[quality  91/96] vbr-1080p60-in_to_tree-cpu7-s3
+[quality  92/96] vbr-1080p60-old_town_cross-cpu7-s3
+[quality  93/96] vbr-1080p60-in_to_tree-cpu8-s2
+[quality  94/96] vbr-1080p60-old_town_cross-cpu8-s2
+[quality  95/96] vbr-1080p60-in_to_tree-cpu8-s3
+[quality  96/96] vbr-1080p60-old_town_cross-cpu8-s3
+Quality phase passed: 96 curves, 240 layer gates, 2016 streams, 6048 decoder runs.
+
+Stage 4e spatial-SVC acceptance phase "quality" passed.
+Evidence: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/manifest.txt

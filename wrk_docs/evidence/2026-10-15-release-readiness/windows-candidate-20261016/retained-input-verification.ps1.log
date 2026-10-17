@@ -1,0 +1,36 @@
+#< CLIXML
+2026-10-17T06:13:32.2273360+01:00
+in_to_tree_720p30_clean.y4m|bytes=82944419|sha256=3053ddad95a66bb970685412d58ee807813319668a57cd5f8a6d00c07415a895|manifest_match=True
+in_to_tree_720p30_noisy.y4m|bytes=82944419|sha256=a42044988c85b512fbd64ab807039ba728e71a63f581694895a3ba0e107db507|manifest_match=True
+ducks_take_off_720p30_clean.y4m|bytes=82944419|sha256=42235814fd03ffba9144d915bda7844902ccd9076bef7143e373fc6de0df170a|manifest_match=True
+ducks_take_off_720p30_noisy.y4m|bytes=82944419|sha256=dbd6de4f4c03a33105537fd2843eded5e6268d3c828b7f564526976b4f35fa1d|manifest_match=True
+old_town_cross_720p30_clean.y4m|bytes=82944419|sha256=752413cb08a572c5c571ac93903bcac961ed30a53ece26dcbc18d5fa3cbbc4d8|manifest_match=True
+old_town_cross_720p30_noisy.y4m|bytes=82944419|sha256=1ba3c54a7621f54aaeedfc968e35d57e9fa2ea706c5c6357c308384a3fc23434|manifest_match=True
+in_to_tree_1080p30_clean.y4m|bytes=186624420|sha256=ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791|manifest_match=True
+in_to_tree_1080p30_noisy.y4m|bytes=186624420|sha256=1369167ad2fb046d05a7b29466397710446ad9d07ecd43358bbbed9db78d6c77|manifest_match=True
+ducks_take_off_1080p30_clean.y4m|bytes=186624420|sha256=6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7|manifest_match=True
+ducks_take_off_1080p30_noisy.y4m|bytes=186624420|sha256=bab500d3b4a20764865610e609d1118d49e0f94fdfd8230fefa303553491e7eb|manifest_match=True
+old_town_cross_1080p30_clean.y4m|bytes=186624420|sha256=b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909|manifest_match=True
+old_town_cross_1080p30_noisy.y4m|bytes=186624420|sha256=942fbc88cda7da4f46a30147181c77026f0c20945a6fa0fd218e3855382b18a6|manifest_match=True
+in_to_tree_1080p60_clean.y4m|bytes=186624420|sha256=8171e02e42f685fae33f6712805f9b1af7a6f6dfa0a1ad0af11fb01a51b31d0a|manifest_match=True
+in_to_tree_1080p60_noisy.y4m|bytes=186624420|sha256=825716678fb4f5556e4bc41c43d1867422c1f7b469a34efcf8952aaaa7ed1c16|manifest_match=True
+old_town_cross_1080p60_clean.y4m|bytes=186624420|sha256=2f3f89a4542bdc36623cafe1f08cbc68765694b7ca8df9404dff2d631a1131ef|manifest_match=True
+old_town_cross_1080p60_noisy.y4m|bytes=186624420|sha256=528e3fa484eecf6c63609fcf608d13b9300d155bf6f1bddc5f81e673c36a2279|manifest_match=True
+verified_input_count=16
+actual_artifact=D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-refresh-pgo/build/runs/20261016T142333Z-1801/manifest.txt exists=False
+actual_artifact=D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-refresh-pgo/build/runs/20261016T142333Z-1801/encoder.profdata exists=False
+actual_artifact=D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-refresh-pgo/build/optimized/release/rvp9enc.exe exists=False
+actual_artifact=D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/target/release/conformance.exe exists=False
+actual_artifact=D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/target/release/encode-headtohead.exe exists=False
+actual_head=474dfd99a673df85f750136f7552ac156b7a24e9
+actual_status=
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1792173746,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_processes_low_priority": 0,
+  "own_measurements": 0
+}
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="2"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>

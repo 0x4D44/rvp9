@@ -1,0 +1,57 @@
+{
+  "observed_date": "2026-10-17",
+  "purpose": "Recovery and fresh read-only state audit; no campaign replay or build",
+  "current_source": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "current_task_clean": true,
+  "current_own_processes": 0,
+  "current_quiet_live": false,
+  "current_quiet_queue": 0,
+  "current_heavy_processes": 0,
+  "current_low_priority_heavy_processes": 0,
+  "current_raw_observation_files": [
+    "current-state.ps1.log",
+    "recover-identities.ps1.log",
+    "retained-input-verification.ps1.log"
+  ],
+  "recovered": {
+    "speed_manifest": {
+      "file": "recovered-speed-manifest.txt",
+      "bytes": 143899,
+      "sha256_remote_and_download": "3cdf91afb85d5915ffe5b2f014ee015d4c801d04e8c5783e7f30ba70496b17f0",
+      "state": "partial, unsealed, no run_end, no load observations, no measured groups"
+    },
+    "external_prepared_inputs": {
+      "count": 16,
+      "current_all_sha256_match_recovered_manifest": true,
+      "downloaded": false
+    },
+    "registered_external_root": "C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-speed474-cb58beec",
+    "current_group_summaries": 0,
+    "current_headtohead_runs_csv": 0
+  },
+  "lost_confirmed_absent_now": [
+    "remote task .scratch/windows-refresh and all correctness logs/artifacts",
+    "remote task .scratch/windows-refresh-pgo and PGO binary,manifest,profile,rawprofiles",
+    "remote task .scratch/windows-performance and prior attempt logs/summaries",
+    "remote task target and all Rust release/test tools",
+    "local task .scratch and target (lead audit; independently .scratch empty observed)"
+  ],
+  "pgo_identity_recorded_in_surviving_manifest_only": {
+    "pgo_source_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+    "pgo_manifest_path": "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-refresh-pgo/build/runs/20261016T142333Z-1801/manifest.txt",
+    "pgo_manifest_sha256": "1af8ca8be52afc72c9a57d1b4a8a66003a3e1167a963891ae57973f4f4f1236a",
+    "pgo_optimized_binary": "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-refresh-pgo/build/optimized/release/rvp9enc.exe",
+    "pgo_optimized_binary_sha256": "3fcc94b1741f50d5619907bed77cc744dc2736d9e99fe632e7655cb9497a1d95",
+    "pgo_optimized_binary_is_test_encoder": "yes"
+  },
+  "pgo_limits": "Original PGO manifest/binary/profile missing. Recorded identity fields survive only in partial speed manifest. No fresh PGO byte/hash/profile-count verification possible. Historical conversation reports are not raw evidence.",
+  "correctness_limits": "Candidate correctness logs/manifests missing. No candidate pass counts reconstructed or reasserted as recovered proof. Earlier committed pre-candidate evidence remains separate.",
+  "installed_safety_tooling": "Fresh raw inventory recover-identities.ps1.log confirms nightly1.97.0,rust-src,ASan archive,MSVC18 ASan DLL,cargo-fuzz0.13.1; no sanitizer/fuzz builds/runs",
+  "adapter_probe": {
+    "corrected_function": "shasum() { shift 2; command sha256sum \"$@\"; }",
+    "file_and_stdin": "both PASS, exit0; adapter-probe-corrected.log",
+    "initial_probe": "Expected GNU text marker differed from native binary marker; first probe exit1 retained. Corrected check compares whole native output and independent known abc digest."
+  },
+  "quiet_policy_correction": "Reread quiet.md: no explicit requirement to abort ongoing campaign when fixed lease expires; previous1100s self-imposed bound was not required. Future run may continue under unchanged actual load guards after lease naturally expires; never force-break,extend,or bypass guards.",
+  "next_action_gate": "No builds or measurement until lead independently verifies recovery and directs replay."
+}

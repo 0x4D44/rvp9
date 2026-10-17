@@ -1,0 +1,135 @@
+#< CLIXML
+2026-10-17T06:12:11.4582718+01:00
+crucible
+actual_head=474dfd99a673df85f750136f7552ac156b7a24e9
+actual_status=
+
+
+ProcessId       : 50744
+ParentProcessId : 22580
+Name            : delticw.exe
+CommandLine     : "C:\Users\marti\AppData\Local\Programs\Deltic\delticw.exe"
+
+
+
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1792173746,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_processes_low_priority": 0,
+  "own_measurements": 0
+}
+path=D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch exists=True
+
+
+FullName      : D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\.scratch
+LastWriteTime : 16/10/2026 18:40:16
+
+
+
+path=D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/target exists=False
+path=D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-refresh exists=False
+path=D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-refresh-pgo exists=False
+path=D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-performance exists=False
+path=C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-speed474-cb58beec exists=True
+
+
+FullName      : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec
+LastWriteTime : 16/10/2026 18:51:55
+
+
+
+
+Name  LastWriteTime       Length
+----  -------------       ------
+speed 16/10/2026 18:52:26       
+
+
+build reference files:
+
+Name                           Length 
+----                           ------ 
+examples                              
+config.mk                      1131   
+libvpx.a                       4216700
+vpxdec.exe                     4268881
+vpxenc.exe                     4431431
+vpx_config.h                   3164   
+vpx_temporal_svc_reference.exe 3425483
+
+
+External retained evidence inventory:
+
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\manifest.txt
+Length   : 143899
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\ducks_take_off_1
+           080p30_clean.y4m
+Length   : 186624420
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\ducks_take_off_1
+           080p30_noisy.y4m
+Length   : 186624420
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\ducks_take_off_7
+           20p30_clean.y4m
+Length   : 82944419
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\ducks_take_off_7
+           20p30_noisy.y4m
+Length   : 82944419
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\in_to_tree_1080p
+           30_clean.y4m
+Length   : 186624420
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\in_to_tree_1080p
+           30_noisy.y4m
+Length   : 186624420
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\in_to_tree_1080p
+           60_clean.y4m
+Length   : 186624420
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\in_to_tree_1080p
+           60_noisy.y4m
+Length   : 186624420
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\in_to_tree_720p3
+           0_clean.y4m
+Length   : 82944419
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\in_to_tree_720p3
+           0_noisy.y4m
+Length   : 82944419
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\old_town_cross_1
+           080p30_clean.y4m
+Length   : 186624420
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\old_town_cross_1
+           080p30_noisy.y4m
+Length   : 186624420
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\old_town_cross_1
+           080p60_clean.y4m
+Length   : 186624420
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\old_town_cross_1
+           080p60_noisy.y4m
+Length   : 186624420
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\old_town_cross_7
+           20p30_clean.y4m
+Length   : 82944419
+
+FullName : C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-speed474-cb58beec\speed\inputs\old_town_cross_7
+           20p30_noisy.y4m
+Length   : 82944419
+
+
+
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="2"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>

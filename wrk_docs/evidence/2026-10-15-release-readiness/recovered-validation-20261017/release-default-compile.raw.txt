@@ -1,0 +1,224 @@
+warning: variants `UnknownExtension`, `Truncated`, and `BadIvfMagic` are never constructed
+  --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:38:5
+   |
+34 | pub enum ContainerError {
+   |          -------------- variants in this enum
+...
+38 |     UnknownExtension(String),
+   |     ^^^^^^^^^^^^^^^^
+39 |     /// File too short to contain the expected fixed-size header.
+40 |     Truncated {
+   |     ^^^^^^^^^
+...
+47 |     BadIvfMagic,
+   |     ^^^^^^^^^^^
+   |
+   = note: `ContainerError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `start` and `end` are never read
+  --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:93:9
+   |
+91 | pub struct PacketRange {
+   |            ----------- fields in this struct
+92 |     /// Offset of the first byte (inclusive).
+93 |     pub start: usize,
+   |         ^^^^^
+94 |     /// Offset just past the last byte (exclusive).
+95 |     pub end: usize,
+   |         ^^^
+   |
+   = note: `PacketRange` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: methods `slice`, `len`, and `is_empty` are never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:101:12
+    |
+ 98 | impl PacketRange {
+    | ---------------- methods in this implementation
+...
+101 |     pub fn slice<'a>(&self, data: &'a [u8]) -> &'a [u8] {
+    |            ^^^^^
+...
+107 |     pub fn len(&self) -> usize {
+    |            ^^^
+...
+113 |     pub fn is_empty(&self) -> bool {
+    |            ^^^^^^^^
+
+warning: function `read_packets` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:130:8
+    |
+130 | pub fn read_packets(path: &Path) -> Result<(Vec<u8>, Vec<PacketRange>), ContainerError> {
+    |        ^^^^^^^^^^^^
+
+warning: struct `PacketReader` is never constructed
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:152:12
+    |
+152 | pub struct PacketReader {
+    |            ^^^^^^^^^^^^
+
+warning: enum `PacketReaderInner` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:157:6
+    |
+157 | enum PacketReaderInner {
+    |      ^^^^^^^^^^^^^^^^^
+
+warning: struct `IvfPacketReader` is never constructed
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:162:8
+    |
+162 | struct IvfPacketReader {
+    |        ^^^^^^^^^^^^^^^
+
+warning: struct `WebmLevel` is never constructed
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:169:8
+    |
+169 | struct WebmLevel {
+    |        ^^^^^^^^^
+
+warning: struct `WebmPacketReader` is never constructed
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:223:8
+    |
+223 | struct WebmPacketReader {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: associated items `open`, `open_ivf`, `open_webm`, `framerate`, and `next_packet` are never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:238:12
+    |
+230 | impl PacketReader {
+    | ----------------- associated items in this implementation
+...
+238 |     pub fn open(path: &Path) -> Result<Self, ContainerError> {
+    |            ^^^^
+...
+251 |     fn open_ivf(path: &Path) -> Result<Self, ContainerError> {
+    |        ^^^^^^^^
+...
+279 |     fn open_webm(path: &Path) -> Result<Self, ContainerError> {
+    |        ^^^^^^^^^
+...
+309 |     pub fn framerate(&self) -> Option<(u32, u32)> {
+    |            ^^^^^^^^^
+...
+319 |     pub fn next_packet(&mut self) -> Result<Option<Vec<u8>>, ContainerError> {
+    |            ^^^^^^^^^^^
+
+warning: method `next_packet` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:328:8
+    |
+327 | impl IvfPacketReader {
+    | -------------------- method in this implementation
+328 |     fn next_packet(&mut self) -> Result<Option<Vec<u8>>, ContainerError> {
+    |        ^^^^^^^^^^^
+
+warning: function `read_ivf_packets` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:388:8
+    |
+388 | pub fn read_ivf_packets(data: &[u8]) -> Result<Vec<PacketRange>, ContainerError> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: struct `IvfHeader` is never constructed
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:453:12
+    |
+453 | pub struct IvfHeader {
+    |            ^^^^^^^^^
+
+warning: associated items `FOURCC_VP9` and `vp9` are never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:468:15
+    |
+466 | impl IvfHeader {
+    | -------------- associated items in this implementation
+467 |     /// VP9 FourCC (`VP90`).
+468 |     pub const FOURCC_VP9: [u8; 4] = *b"VP90";
+    |               ^^^^^^^^^^
+...
+473 |     pub const fn vp9(width: u16, height: u16, framerate_num: u32, framerate_den: u32) -> Self {
+    |                  ^^^
+
+warning: struct `IvfStreamWriter` is never constructed
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:485:12
+    |
+485 | pub struct IvfStreamWriter<W: Write + Seek> {
+    |            ^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `write_packet`, `finish`, and `packet_count` are never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:499:12
+    |
+491 | impl<W: Write + Seek> IvfStreamWriter<W> {
+    | ---------------------------------------- associated items in this implementation
+...
+499 |     pub fn new(mut out: W, header: &IvfHeader) -> io::Result<Self> {
+    |            ^^^
+...
+522 |     pub fn write_packet(&mut self, packet: &[u8]) -> io::Result<()> {
+    |            ^^^^^^^^^^^^
+...
+549 |     pub fn finish(mut self) -> io::Result<W> {
+    |            ^^^^^^
+...
+559 |     pub const fn packet_count(&self) -> u32 {
+    |                  ^^^^^^^^^^^^
+
+warning: function `write_ivf_header` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:564:4
+    |
+564 | fn write_ivf_header<W: Write>(out: &mut W, header: &IvfHeader, num_frames: u32) -> io::Result<()> {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: function `write_ivf` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:592:8
+    |
+592 | pub fn write_ivf<W: Write>(out: &mut W, header: &IvfHeader, packets: &[&[u8]]) -> io::Result<()> {
+    |        ^^^^^^^^^
+
+warning: function `read_stream_ebml_id` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:656:4
+    |
+656 | fn read_stream_ebml_id<R: Read>(reader: &mut R) -> Result<u32, ContainerError> {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `read_stream_ebml_vint` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:679:4
+    |
+679 | fn read_stream_ebml_vint<R: Read>(reader: &mut R) -> Result<(u64, usize), ContainerError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `stream_header_error` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:702:4
+    |
+702 | fn stream_header_error(error: io::Error, eof_message: &'static str) -> ContainerError {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `stream_payload_end` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:710:4
+    |
+710 | fn stream_payload_end(
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `find_vp9_video_track_stream` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:731:4
+    |
+731 | fn find_vp9_video_track_stream(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `scan_vp9_track_entry` is never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:786:4
+    |
+786 | fn scan_vp9_track_entry(
+    |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `next_packet`, `push_level`, and `read_block` are never used
+   --> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io/src/container.rs:845:8
+    |
+844 | impl WebmPacketReader {
+    | --------------------- methods in this implementation
+845 |     fn next_packet(&mut self) -> Result<Option<Vec<u8>>, ContainerError> {
+    |        ^^^^^^^^^^^
+...
+899 |     fn push_level(
+    |        ^^^^^^^^^^
+...
+918 |     fn read_block(&mut self, block_end: u64) -> Result<Option<Vec<u8>>, ContainerError> {
+    |        ^^^^^^^^^^
+
+warning: 25 warnings emitted
+
