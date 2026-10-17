@@ -1,0 +1,81 @@
+{
+  "test": "read-only origin/main refresh and candidate source-scope comparison",
+  "observed_utc": "2026-10-17T10:31:58Z",
+  "observer_worktree_head": "06b21eb0d13560b8515798be267a7ae208eb302c",
+  "previous_origin_snapshot": "14d338fbc6548d99864cd0515d876f5cb24faab6",
+  "existing_candidate": {
+    "readiness_candidate_commit": "ebca64b0d3c7359e96caf1e6250c921c18d30a3f",
+    "product_source_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+    "evidence_scope": "Existing release-readiness tests and PGO identities refer to product source commit 474dfd99a673df85f750136f7552ac156b7a24e9."
+  },
+  "current_origin_main": {
+    "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "commit_time": "2026-10-17T06:38:14+01:00",
+    "title": "fixed(RVP9-BUG-KILN-00073): manual land",
+    "commits_since_candidate_source": [
+      {
+        "commit": "b74adaddb222c644d7532ff970b4da5f3133f5ac",
+        "title": "fix(cli): defer output creation until first packet (KILN-00065)"
+      },
+      {
+        "commit": "ae19661e3c230b600ad74257f8e3785f195a4ff4",
+        "title": "fix(enc): follow adaptive temporal denoising (KILN-00073)"
+      }
+    ],
+    "crate_tree_diff_from_candidate": {
+      "files_changed": 7,
+      "rust_files_changed": 6,
+      "readme_files_changed": 1,
+      "insertions": 1345,
+      "deletions": 179,
+      "paths": [
+        "crates/rvp9-cli/README.md",
+        "crates/rvp9-cli/src/bin/rvp9enc.rs",
+        "crates/rvp9-cli/tests/cli_roundtrip.rs",
+        "crates/rvp9-encoder/src/denoiser.rs",
+        "crates/rvp9-encoder/src/frame_loop.rs",
+        "crates/rvp9-encoder/src/lib.rs",
+        "crates/rvp9-encoder/src/pre_analysis.rs"
+      ]
+    }
+  },
+  "origin_bug_records": {
+    "RVP9-BUG-KILN-00065": "Fixed in origin/main at b74adadd; defer destination creation until first ready packet.",
+    "RVP9-BUG-KILN-00073": "Fixed in origin/main at ae19661e; follow pinned libvpx adaptive temporal denoising and validate the configured range."
+  },
+  "fix_journal_reported_validation": {
+    "KILN-00065": {
+      "journal": "wrk_journals/2026.10.17 - BUG - Defer output until first encoded packet.md at origin/main",
+      "reported_checks": "Old-source lag2 assertions reversed; flush and spatial output mutants reversed; 19 CLI roundtrip tests passed independently by worker and root; scoped CLI Clippy and rustfmt passed.",
+      "limits": "Focused CLI behavior proof, not a full release qualification."
+    },
+    "KILN-00073": {
+      "journal": "wrk_journals/2026.10.17 - BUG - Follow pinned adaptive temporal denoising.md at origin/main",
+      "reported_checks": "34 denoiser tests passed; root also passed seven GOP, ALTREF and temporal-SVC integration tests; four ignored external-oracle cases were not counted as passes; scoped Clippy and formatting passed.",
+      "limits": "Focused behavior proof; the journal explicitly claims no new BD-rate or performance result."
+    }
+  },
+  "scope_recheck": {
+    "rate_control_source_diff_from_candidate": false,
+    "external_rate_control_symbols_found_in_origin_crates": false,
+    "frame_drop_status_in_origin_rate_control_source": "Still documented as stubbed; drop_count remains present only for field-shape compatibility and is not used.",
+    "plan_still_lists_frame_drop_and_ext_ratectrl": true,
+    "evidence": "git diff 474dfd99..origin/main -- crates/rvp9-encoder/src/rate_control was empty; origin/main rate_control/mod.rs and state.rs still describe the stubs; git grep found no EXT_RATECTRL/ExternalRateCtrl/ext_ratectrl symbols under crates."
+  },
+  "qualification_implication": "Candidate 474 remains the source revision for existing performance, PGO, conformance and quality evidence. Current origin/main fb5c0c91 includes fixes in CLI and encoder paths and has not been built or qualified as a new cross-platform release candidate. Do not carry affected behavior or artifact claims forward without a source-diff justification and new candidate identity.",
+  "commands": [
+    "git fetch --no-tags origin",
+    "git rev-parse origin/main 474dfd99a673df85f750136f7552ac156b7a24e9",
+    "git diff --stat 474dfd99a673df85f750136f7552ac156b7a24e9..origin/main -- crates",
+    "git show origin/main:bugs/RVP9-BUG-KILN-00065.md",
+    "git show origin/main:bugs/RVP9-BUG-KILN-00073.md",
+    "git show origin/main:<both KILN implementation journals>",
+    "git diff 474dfd99a673df85f750136f7552ac156b7a24e9..origin/main -- crates/rvp9-encoder/src/rate_control",
+    "git grep -n -E 'EXT_RATECTRL|ExternalRateCtrl|ext_ratectrl|external rate control' origin/main -- crates"
+  ],
+  "limits": [
+    "No merge, rebase, push, integration, source edit, build or qualification run occurred during this refresh.",
+    "The focused fix validations are reported by the committed fix journals on origin/main; they do not replace the final release matrix.",
+    "No PGO, performance, quality, sanitizer, conformance or package artifact for source commit fb5c0c917038db6c640b3dbc7c2b84b567233333 was built or verified in this task."
+  ]
+}
