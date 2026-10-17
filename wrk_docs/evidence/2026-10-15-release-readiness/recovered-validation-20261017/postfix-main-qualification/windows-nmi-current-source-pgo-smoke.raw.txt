@@ -1,0 +1,11 @@
+source_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+tracked_tree_clean=true
+encoder_sha256=5085b07969e1f4aaabb874c935f3a760d18410049854b8817725b1cdbe529736
+input_sha256=81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74
+encoder_command=rvp9enc.exe --codec=vp9 --ivf --passes=1 --rt --cpu-used=7 --target-bitrate=1500 --end-usage=vbr --fps=30/1 --threads=4 --tile-columns=2 --lag-in-frames=0 --tune-content=default --limit=60 --quiet -o nmi-smoke.ivf in_to_tree_420_720p50.y4m
+encode_exit_status=0
+ivf_bytes=477126
+ivf_sha256=772db4df880d056b8eb6f19ca7e5f10931b68e2c98b5b4bf70b2c2db2bf7234d
+decode_command=ffmpeg -v error -i nmi-smoke.ivf -f null -
+ffmpeg_decode_exit_status=0
+ffmpeg_diagnostics_bytes=0
