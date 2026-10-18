@@ -1,0 +1,49 @@
+RVP9-BUG-FLU-00032 verification evidence
+Date: 2026-10-18
+Worktree: /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00032-checked-span-fix
+Claim run: verify-20261018T172040Z-895c46bc (role=verify; left active for root's verdict)
+Claim base/HEAD: 595bc8401af588246db7988962825e2c09143c01
+Fix: 65fd7a30561c7b2bf065e48141e6a0b1e0d90ae8
+Fix provenance: `git merge-base --is-ancestor 65fd7a30561c7b2bf065e48141e6a0b1e0d90ae8 origin/main` -> exit 0 at final check. `git show -s --format='%H %s' origin/main` observed `2855952de3bd15f6c1b8f4293bb5c54fe7d9b55c claim(RVP9-BUG-FLU-00033): verify owner`.
+
+Environment and test selection
+------------------------------
+Host: `uname -m` -> `arm64`. Rosetta check: `arch -x86_64 /usr/bin/uname -m` -> `x86_64`, exit 0. `rustup target list --installed` included `x86_64-apple-darwin`.
+The retained module tests are cfg-gated to x86_64. A standalone Rust test harness used `#[path]` to compile the exact claimed-HEAD source file `crates/rvp9-core/src/dsp/x86_64/subtract_sse2.rs`; its only stub was `crate::dsp::force_scalar_tests::record`, a test instrumentation no-op. The source SHA before mutation was `ba04ee38616d6382079fbe7cf4da18b9e8703683ab34a32686f15c2a2371c018`.
+
+Cargo attempts (not test evidence)
+----------------------------------
+1. `deltic timeout 120 cargo test -p rvp9-core rejects_overflowing_input_spans -- --nocapture </dev/null` -> exit 124. It compiled dependencies/core while other RVP9 builds were active, then `deltic timeout` reported its deadline elapsed. No test runner/result was reached.
+2. `deltic timeout 240 cargo test --offline -j 2 -p rvp9-core rejects_overflowing_input_spans -- --nocapture </dev/null` -> exit 124. `rustc` was still compiling `rvp9-core` at the deadline; no test runner/result was reached.
+
+Standalone baseline and reversal
+--------------------------------
+Compile command, exit 0:
+`deltic timeout 60 rustc --edition=2024 --test --target x86_64-apple-darwin -C target-cpu=x86-64 -C opt-level=0 -C overflow-checks=off .scratch/flu32-harness.rs -o .scratch/flu32-test`
+
+Focused baseline command, exit 0:
+`deltic timeout 60 arch -x86_64 .scratch/flu32-test rejects_overflowing_input_spans </dev/null`
+Observed output: `running 1 test`; `dsp::subtract_sse2::tests::rejects_overflowing_input_spans ... ok`; `test result: ok. 1 passed; 0 failed; 0 ignored; 2 filtered out`.
+For these overflow inputs, the helper panics before the wrapper's unsafe block, so no unsafe load/store executed in this focused baseline test.
+
+Mutant SHA-256: `70d72da4e352139b0032981501e3b8840f02378e9f53851400b372257d83aaa8`.
+Mutation: reversed only checked addition in `square_input_span`, changing `offset.checked_add(side)` to `offset.wrapping_add(side)`. A `#[cfg(test)]` pre-unsafe sentinel panicked with `mutation sentinel before unsafe load` when checked addition overflowed; it existed solely to prevent the mutant test from entering the invalid raw-pointer SSE2 loop. The regression test caught that panic, rejected its text as not the explicit `square input span overflow` panic, collected the affected tuples, and failed its own assertion `input span overflow was not rejected explicitly`. No unsafe operation ran in the focused mutant run; the sentinel panic was caught by the test.
+
+Mutant command:
+`deltic timeout 60 arch -x86_64 .scratch/flu32-test rejects_overflowing_input_spans </dev/null`
+Observed: `running 1 test`; selected test `FAILED`; final assertion was `input span overflow was not rejected explicitly`, with mismatches including `(8, 2635249153387078802, true, true)` and the other source/pred and tracking variants; `test result: FAILED. 0 passed; 1 failed; 2 filtered out`; exit 101.
+This failure came from the retained test's final mismatch assertion after it caught the sentinel panic. The sentinel itself was not an uncaught test failure.
+
+Restore and final baseline
+--------------------------
+Restored exact source bytes with:
+`cp .scratch/flu32-source-before.rs crates/rvp9-core/src/dsp/x86_64/subtract_sse2.rs`
+Restored source SHA-256: `ba04ee38616d6382079fbe7cf4da18b9e8703683ab34a32686f15c2a2371c018` (matches both pre-mutation source and the saved byte snapshot). `git diff --exit-code -- crates/rvp9-core/src/dsp/x86_64/subtract_sse2.rs` -> exit 0.
+Recompiled with the same `rustc` command above -> exit 0.
+Final command:
+`deltic timeout 60 arch -x86_64 .scratch/flu32-test </dev/null`
+Observed: all 3 module tests passed (`differential_extreme_values_and_zero_detection`, `rejects_overflowing_input_spans`, `differential_random_all_sizes_and_strides`); `test result: ok. 3 passed; 0 failed; 0 ignored`; exit 0. The two differential tests execute SSE2 unsafe loads/stores on valid allocated test buffers.
+
+Scope and final state
+---------------------
+This proves the retained source module's tests on an x86_64 Rosetta process, using the exact claimed-HEAD source and one instrumentation stub. Full Cargo test execution could not be completed within 120/240 seconds because core compilation did not finish; no Cargo test result is claimed. No ledger/verdict was written. Source diff is empty; `git diff --check` passed; tracked `git status --short --branch` was clean (the branch was 14 commits behind `origin/main` at final status check). The verify claim remains active for root's review.
