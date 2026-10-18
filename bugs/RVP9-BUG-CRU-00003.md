@@ -6,15 +6,15 @@
 - **Area:** core/mv_search int_pro
 - **Raised:** 2026-08-23T17:09:45Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T174640Z-f144e8fc
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-CRU-00003-run-verify-20261018T174640Z-f144e8fc
+- **Owner base:** c3534368d339ecded2e6128911827deaf3bd56ed
+- **Owner fingerprint:** sha256:20ce8501f743d9c132b155e55ad1d2c865b858f44270da2a0996b9d325507d2c
+- **Owner since:** 2026-10-18T17:46:40Z
+- **Owner until:** 2026-10-18T21:46:40Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
