@@ -6,15 +6,15 @@
 - **Area:** cli/rvp9enc two-pass temporal SVC
 - **Raised:** 2026-08-22T20:44:03Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T180234Z-c4e1f69f
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00122-run-verify-20261018T180234Z-c4e1f69f
+- **Owner base:** 7c7d0b13d93b9a89f0fc729a502ae563e20559ed
+- **Owner fingerprint:** sha256:324c6a9f17792e66b8ef8cde8d65b4dcc198f3658c0c57b1d7e5b1c8105ce08f
+- **Owner since:** 2026-10-18T18:02:34Z
+- **Owner until:** 2026-10-18T22:02:34Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
