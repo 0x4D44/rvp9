@@ -1,0 +1,83 @@
+{
+  "schema": "rvp9.macos-aarch64-scalar-env-recheck.v1",
+  "recorded_at_utc": "2026-10-18 02:42:56Z",
+  "source": {
+    "commit": "d5947f2eccba2c1dd75e2f235df095d75d7af9fb",
+    "worktree": "/Users/md/worktrees/rvp9/20261018-TSK-HUM-qualify-mac-forced-scalar-conformance",
+    "tracked_tree_clean_before_evidence": true,
+    "host": "flux, macOS 26.6.2 (25G83), arm64",
+    "host_triple": "aarch64-apple-darwin",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "cargo": "1.95.0 (f2d3ce0bd 2026-03-21)"
+  },
+  "fixtures": {
+    "libvpx_commit": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+    "vectors": 307,
+    "md5_ledgers": 307,
+    "fetch_exit_code": 0,
+    "fetch_log": {
+      "path": "fetch-vectors.raw.txt",
+      "bytes": 26627,
+      "sha256": "8b858906fe128dd8d2b8d8bc1044bf265f4d5410cf4f7aa4e07b4a07e74f90b0"
+    }
+  },
+  "runner": {
+    "build_command": "deltic timeout 1800 cargo build --release --locked --bin conformance",
+    "build_exit_code": 0,
+    "build_log": {
+      "path": "build.raw.txt",
+      "bytes": 1218,
+      "sha256": "6d68e92cc0caa9f6a757db80166f3da24b3a968cf22cca67d17a46d9752183f5"
+    },
+    "path": "target/release/conformance",
+    "bytes": 1031184,
+    "sha256": "c2debbb05ea251baed2cc77fc8856e22702eff550410bd725f4dc704dccfd98f",
+    "semantics": "Checks the 307 pinned official VP9 vectors against their decoded-output MD5 ledgers; it does not invoke vpxdec."
+  },
+  "dispatch_observation": {
+    "requested_environment": {
+      "RVP9_FORCE_SCALAR": "1"
+    },
+    "actual_dispatch": "Native AArch64 dispatch; this did not exercise scalar-only routing.",
+    "source_basis": "In crates/rvp9-core/src/dsp/caps.rs, force_scalar_env is cfg-gated to x86_64 (lines 85-92); AArch64Caps::detect reads the native NEON and dotprod feature predicates (lines 109-123)."
+  },
+  "runs": [
+    {
+      "threads": 1,
+      "command": "deltic timeout 1800 env RVP9_FORCE_SCALAR=1 target/release/conformance --vectors-dir tests/conformance/vectors --official --strict --threads 1",
+      "exit_code": 0,
+      "vectors": 307,
+      "frames_passed": 4816,
+      "mismatched": 0,
+      "skipped": 0,
+      "vector_failures": 0,
+      "dispatch": "native AArch64; not scalar",
+      "log": {
+        "path": "scalar-one-thread.raw.txt",
+        "bytes": 28738,
+        "sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+      }
+    },
+    {
+      "threads": 2,
+      "command": "deltic timeout 1800 env RVP9_FORCE_SCALAR=1 target/release/conformance --vectors-dir tests/conformance/vectors --official --strict --threads 2",
+      "exit_code": 0,
+      "vectors": 307,
+      "frames_passed": 4816,
+      "mismatched": 0,
+      "skipped": 0,
+      "vector_failures": 0,
+      "dispatch": "native AArch64; not scalar",
+      "log": {
+        "path": "scalar-two-thread.raw.txt",
+        "bytes": 28738,
+        "sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+      }
+    }
+  ],
+  "limits": [
+    "These exact-revision runs add current macOS native-dispatch conformance evidence; they do not meet the Mac scalar-dispatch gate.",
+    "The result reproduces the dispatch limitation tracked by RVP9-BUG-FLU-00043; the bug remains Open.",
+    "These conformance results do not establish external-decoder parity, production corpus coverage, compression quality, throughput, or frame latency."
+  ]
+}

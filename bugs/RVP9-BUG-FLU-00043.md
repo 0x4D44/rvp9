@@ -30,3 +30,5 @@ At native Apple M5 Max candidate ebca64b0, scripts/qualify-conformance.sh labels
 <unfixed — raised only>
 
 ## Notes
+
+At exact revision d5947f2eccba2c1dd75e2f235df095d75d7af9fb on flux (macOS 26.6.2, arm64), the official 307-vector conformance runner was rebuilt and invoked with RVP9_FORCE_SCALAR=1 at one and two threads. Both runs passed 4,816 frames with zero mismatches, but the source confirms force_scalar_env is cfg-gated to x86_64 while AArch64Caps::detect uses native feature detection. These are native-dispatch results and do not provide scalar coverage. Runner SHA-256 and raw logs are recorded in [the exact-revision reproduction](../wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/macos-current-source-forced-scalar-conformance-20261018/qualification.json). The bug remains Open; no fix or status transition occurred.
