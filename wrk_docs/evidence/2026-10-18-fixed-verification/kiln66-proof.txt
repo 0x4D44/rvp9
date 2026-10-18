@@ -1,0 +1,125 @@
+PROVENANCE git rev-parse HEAD
+d7cf0fb03de8514507837d5696551f3188180841
+EXIT: 0
+PROVENANCE git merge-base --is-ancestor a40334ca6e256b7f2ba651a3fc01097bc3e2e881 HEAD
+EXIT: 0
+INITIAL mixed+complete default sweep COMMAND: deltic timeout 300 cargo test -p rvp9-bench --test decode_throughput_cli default_sweep </dev/null
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling crossbeam-utils v0.8.21
+   Compiling proc-macro2 v1.0.106
+   Compiling version_check v0.9.5
+   Compiling unicode-ident v1.0.24
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling quote v1.0.45
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling libc v0.2.186
+   Compiling zmij v1.0.21
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling memchr v2.8.0
+   Compiling static_assertions v1.1.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling itoa v1.0.18
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling cpufeatures v0.2.17
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 35s
+     Running tests/decode_throughput_cli.rs (target/debug/deps/decode_throughput_cli-bea7463e09a70563)
+
+running 2 tests
+test default_sweep_with_failed_fixtures_exits_nonzero_and_keeps_success_row ... ok
+test successful_default_sweep_records_all_four_fixtures ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 1.65s
+
+
+EXIT: 0
+MUTANT remove failure return after partial sweep COMMAND: deltic timeout 300 cargo test -p rvp9-bench --test decode_throughput_cli default_sweep_with_failed_fixtures_exits_nonzero_and_keeps_success_row -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 21.93s
+     Running tests/decode_throughput_cli.rs (target/debug/deps/decode_throughput_cli-bea7463e09a70563)
+
+running 1 test
+test default_sweep_with_failed_fixtures_exits_nonzero_and_keeps_success_row ... FAILED
+
+failures:
+
+---- default_sweep_with_failed_fixtures_exits_nonzero_and_keeps_success_row stdout ----
+
+thread 'default_sweep_with_failed_fixtures_exits_nonzero_and_keeps_success_row' (287670985) panicked at crates/rvp9-bench/tests/decode_throughput_cli.rs:231:5:
+partial default sweep unexpectedly exited successfully
+stdout:
+decode-throughput benchmark
+  host:        macos-aarch64
+  pinned:      false
+  build hash:  165cc9a2912ede3f
+  csv:         /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-decode-throughput-cli-313-0/partial.csv
+  warmup:      30 frames/fixture
+  min timed:   1000 frames/fixture
+  fixtures:    4
+
+  vp90-2-00-quantizer-00.webm              64x64     n= 1000  p50=   12.1 us  p95=   27.1 us  p99=  922.0 us
+
+wrote 1 row(s) to /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-decode-throughput-cli-313-0/partial.csv
+
+stderr:
+[run] vp90-2-00-quantizer-00.webm
+[run] vp90-2-08-tile_1x2.webm
+  ERROR: container parse error: ebml/matroska parse error: element id with no length marker
+[run] vp90-2-08-tile_1x4.webm
+  ERROR: missing fixture: /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-decode-throughput-cli-313-0/vp90-2-08-tile_1x4.webm
+[run] vp90-2-08-tile_1x8.webm
+  ERROR: missing fixture: /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-decode-throughput-cli-313-0/vp90-2-08-tile_1x8.webm
+(one or more fixtures failed; see ERROR lines above)
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    default_sweep_with_failed_fixtures_exits_nonzero_and_keeps_success_row
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.68s
+
+error: test failed, to rerun pass `-p rvp9-bench --test decode_throughput_cli`
+
+EXIT: 101
+RESTORED mixed+complete default sweep COMMAND: deltic timeout 300 cargo test -p rvp9-bench --test decode_throughput_cli default_sweep </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 16.12s
+     Running tests/decode_throughput_cli.rs (target/debug/deps/decode_throughput_cli-bea7463e09a70563)
+
+running 2 tests
+test default_sweep_with_failed_fixtures_exits_nonzero_and_keeps_success_row ... ok
+test successful_default_sweep_records_all_four_fixtures ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 1.14s
+
+
+EXIT: 0
+
+Claim: verify-20261018T165854Z-8724175c
+Closure tool exit0: Verified RVP9-BUG-KILN-00066 — Fixed -> Closed, verify claim cleared
+Post-restoration checks: git diff --exit-code -- crates/rvp9-bench/src/bin/decode-throughput.rs exit0; git status --short empty.

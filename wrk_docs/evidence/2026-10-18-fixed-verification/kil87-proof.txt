@@ -1,0 +1,98 @@
+CLAIM verify-20261018T165858Z-f3876347; fix e61bd7e2 ancestor of HEAD; HEAD=06e93811c6ea1a52386395d1d6ad42de8865f421
+ORIGINAL SHA256=0d94020529c3a1f971fed53d1821181b1371200b846001321d2b074023b4797b
+BASELINE_PSNRS COMMAND: deltic timeout 180 cargo test -p rvp9-harness --lib bdrate::tests::psnr_ -- --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 17.94s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-7e54978862a5f5cd)
+
+running 12 tests
+test bdrate::tests::psnr_at_bitrate_log_midpoint ... ok
+test bdrate::tests::psnr_at_bitrate_out_of_range_returns_none ... ok
+test bdrate::tests::psnr_at_bitrate_endpoints_exact ... ok
+test bdrate::tests::psnr_at_bitrate_unsorted_input_handled ... ok
+test bdrate::tests::psnr_delta_summary_all_in_range ... ok
+test bdrate::tests::psnr_delta_summary_libvpx_below_rvp9 ... ok
+test bdrate::tests::psnr_delta_summary_none_in_range ... ok
+test bdrate::tests::psnr_delta_summary_partial_out_of_range ... ok
+test bdrate::tests::psnr_delta_summary_rejects_invalid_rvp9_bitrates ... ok
+test bdrate::tests::psnr_delta_summary_rejects_invalid_rvp9_samples ... ok
+test bdrate::tests::psnr_delta_summary_rejects_non_finite_arithmetic ... ok
+test bdrate::tests::psnr_delta_summary_single_in_range ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.00s
+
+BASELINE_PSNRS EXIT=0
+ROOT REVERSAL: exact pre-e61bd7e2 psnr_delta_summary implementation only; remove its new sample/arithmetic guards; retain tests, shared reference validation and all cubic-fit code.
+PRE_FIX_SUMMARY COMMAND: deltic timeout 180 cargo test -p rvp9-harness --lib bdrate::tests::psnr_delta_summary_ -- --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 24.47s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-7e54978862a5f5cd)
+
+running 8 tests
+
+thread 'bdrate::tests::psnr_delta_summary_rejects_invalid_rvp9_bitrates' (287663479) panicked at crates/rvp9-harness/src/bdrate.rs:828:17:
+expected None for invalid bitrate curve, got Some(PsnrDeltaSummary { mean_delta_db: 0.16992500144231215, min_delta_db: 0.0, max_delta_db: 0.3398500028846243, count_in_range: 2, count_out_of_range: 1 }) from [(100.0, 30.0), (0.0, 32.0), (300.0, 34.0)]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test bdrate::tests::psnr_delta_summary_none_in_range ... ok
+test bdrate::tests::psnr_delta_summary_all_in_range ... ok
+test bdrate::tests::psnr_delta_summary_partial_out_of_range ... ok
+test bdrate::tests::psnr_delta_summary_libvpx_below_rvp9 ... ok
+test bdrate::tests::psnr_delta_summary_rejects_invalid_rvp9_bitrates ... FAILED
+
+thread 'bdrate::tests::psnr_delta_summary_rejects_non_finite_arithmetic' (287663481) panicked at crates/rvp9-harness/src/bdrate.rs:853:13:
+expected None for overflowing delta, got Some(PsnrDeltaSummary { mean_delta_db: inf, min_delta_db: inf, max_delta_db: inf, count_in_range: 1, count_out_of_range: 0 })
+
+thread 'bdrate::tests::psnr_delta_summary_rejects_invalid_rvp9_samples' (287663480) panicked at crates/rvp9-harness/src/bdrate.rs:801:13:
+expected None for invalid PSNR curve, got Some(PsnrDeltaSummary { mean_delta_db: NaN, min_delta_db: 0.3398500028846243, max_delta_db: 0.3398500028846243, count_in_range: 2, count_out_of_range: 0 }) from [(200.0, NaN), (300.0, 34.0)]
+test bdrate::tests::psnr_delta_summary_single_in_range ... ok
+test bdrate::tests::psnr_delta_summary_rejects_non_finite_arithmetic ... FAILED
+test bdrate::tests::psnr_delta_summary_rejects_invalid_rvp9_samples ... FAILED
+
+failures:
+
+failures:
+    bdrate::tests::psnr_delta_summary_rejects_invalid_rvp9_bitrates
+    bdrate::tests::psnr_delta_summary_rejects_invalid_rvp9_samples
+    bdrate::tests::psnr_delta_summary_rejects_non_finite_arithmetic
+
+test result: FAILED. 5 passed; 3 failed; 0 ignored; 0 measured; 58 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-harness --lib`
+PRE_FIX_SUMMARY EXIT=101
+RESTORED SHA256=0d94020529c3a1f971fed53d1821181b1371200b846001321d2b074023b4797b
+RESTORED_PSNRS COMMAND: deltic timeout 180 cargo test -p rvp9-harness --lib bdrate::tests::psnr_ -- --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+    Blocking waiting for file lock on package cache
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.50s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-7e54978862a5f5cd)
+
+running 12 tests
+test bdrate::tests::psnr_at_bitrate_endpoints_exact ... ok
+test bdrate::tests::psnr_at_bitrate_log_midpoint ... ok
+test bdrate::tests::psnr_at_bitrate_out_of_range_returns_none ... ok
+test bdrate::tests::psnr_at_bitrate_unsorted_input_handled ... ok
+test bdrate::tests::psnr_delta_summary_none_in_range ... ok
+test bdrate::tests::psnr_delta_summary_partial_out_of_range ... ok
+test bdrate::tests::psnr_delta_summary_rejects_invalid_rvp9_bitrates ... ok
+test bdrate::tests::psnr_delta_summary_rejects_invalid_rvp9_samples ... ok
+test bdrate::tests::psnr_delta_summary_rejects_non_finite_arithmetic ... ok
+test bdrate::tests::psnr_delta_summary_single_in_range ... ok
+test bdrate::tests::psnr_delta_summary_all_in_range ... ok
+test bdrate::tests::psnr_delta_summary_libvpx_below_rvp9 ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.00s
+
+RESTORED_PSNRS EXIT=0
+FINAL_SOURCE_DIFF_EXIT=0
