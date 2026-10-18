@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00035 — AVX2 horizontal-16 mask filters edges scalar path rejects at blimit 255
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** core/loopfilter
 - **Raised:** 2026-09-27T19:23:02Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T215507Z-4c570064
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00035-run-verify-20261018T215507Z-4c570064
-- **Owner base:** e48f0b4a7bf96a89809a32f4ff2f80406f7c9dd9
-- **Owner fingerprint:** sha256:57ada6b00ac5d41bc61442546e4daa8b2264c205b8e46fc1cc5e149c1aaa880d
-- **Owner since:** 2026-10-18T21:55:07Z
-- **Owner until:** 2026-10-19T01:55:07Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-09-27T19:23:02Z, raised via `deltic bugs new --land`) -> Fixed (2026-10-16T05:40:36Z, deltic:auto role=fix run=fix-20261016T053336Z-d0e38b83 branch=task/bug-RVP9-BUG-FLU-00035-run-fix-20261016T053336Z-d0e38b83 code=769561ad6be45d5c105d6e6e754f53268ad44b14 gate=manual)
+- **State history:** Open (2026-09-27T19:23:02Z, raised via `deltic bugs new --land`) -> Fixed (2026-10-16T05:40:36Z, deltic:auto role=fix run=fix-20261016T053336Z-d0e38b83 branch=task/bug-RVP9-BUG-FLU-00035-run-fix-20261016T053336Z-d0e38b83 code=769561ad6be45d5c105d6e6e754f53268ad44b14 gate=manual) -> Closed (2026-10-18T22:04:41Z, deltic:manual role=verify run=verify-20261018T215507Z-4c570064 verified_fix_run=fix-20261016T053336Z-d0e38b83 verdict=close)
 
 ## Observation
 
@@ -31,5 +31,9 @@ Evidence fingerprint: `manual:v1:core-avx2-horizontal16-blimit255-saturation`
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T22:04:41Z, deltic:auto run=verify-20261018T215507Z-4c570064 verified_fix_run=fix-20261016T053336Z-d0e38b83 verdict=close)
+
+Verifier note: Manual verify: Independent native Windows x86-64 Crucible verification at a3113bd40d0e7efd1d962f532bc6d893ba3ee243 with both fix ancestors confirmed. Explicit CPU probe establishes AVX2 available. cargo test -p rvp9-core --lib dsp::x86_64::lpf_horizontal_16_avx2::tests::blimit_255_saturation_matches_scalar -- --exact --nocapture selects one test and passes. Includes original p0=246/q0=3 metric607 plus threshold controls. Reversing only the special blimit255 mask comparison selects one test and fails scalar/full-buffer equality at pitch=8 blimit=255; original bytes restored, one test passes aga...
 
 ## Notes
