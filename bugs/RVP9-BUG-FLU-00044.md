@@ -6,15 +6,15 @@
 - **Area:** io/webm
 - **Raised:** 2026-10-16T14:24:03Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T214323Z-e80970c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00044-run-verify-20261018T214323Z-e80970c1
+- **Owner base:** 20b5d703d1aa866d65f4abf54e5af64d44bb7fcf
+- **Owner fingerprint:** sha256:265eb7ad4ca6bb1abf1d8a15532cebe66f343df62a3b707fcd0effd2e1e8d1fa
+- **Owner since:** 2026-10-18T21:43:23Z
+- **Owner until:** 2026-10-19T01:43:23Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
