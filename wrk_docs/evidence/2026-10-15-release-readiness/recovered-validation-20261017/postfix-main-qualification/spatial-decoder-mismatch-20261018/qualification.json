@@ -1,0 +1,200 @@
+{
+  "schema": 1,
+  "captured_at_utc": "2026-10-18T02:17:15Z",
+  "host": {
+    "name": "flux.home.arpa",
+    "os": "macOS-26.6.2-arm64-arm-64bit",
+    "architecture": "arm64"
+  },
+  "candidate": {
+    "origin_main_revision": "74b8edbb9a6caeeab9dbafa3ea5aa1b536177b58",
+    "runner_revision": "74b8edbb9a6caeeab9dbafa3ea5aa1b536177b58",
+    "product_source_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "script_path": "scripts/qualify-spatial-svc.sh",
+    "script_git_blob": "9a09cb6604dd507cb273cae61d31744732d51ec9",
+    "script_sha256": "6453cd72adedbe82c1c719a728873f419543170819111a1139dba5303d47c3de",
+    "script_matches_product_source": true
+  },
+  "probe": {
+    "purpose": "Verify the exact spatial cross-decoder helper fails on a decoder-output mismatch.",
+    "functions_extracted_verbatim": [
+      "fail",
+      "sha256_file",
+      "decode_sha_rvp9",
+      "decode_sha_vpx",
+      "cross_check_stream",
+      "cross_check_curve"
+    ],
+    "constants_copied_from_script": [
+      "BITRATE_POINTS",
+      "DECODERS_PER_STREAM",
+      "EMPTY_SHA256",
+      "DECODE_TIMEOUT"
+    ],
+    "command": "bash harness.sh stub-rvp9dec.sh stub-vpxdec.sh stub-ffmpeg.sh streams decode.log cross-decoder.csv",
+    "stdin": "closed",
+    "synthetic_curve": {
+      "layers": 2,
+      "bitrates_kbps": [
+        "420",
+        "630",
+        "840",
+        "1260",
+        "2100",
+        "3360"
+      ],
+      "expected_ivf_count": 18
+    },
+    "decoder_outputs": {
+      "rvp9dec": "rvp9 synthetic decoded bytes",
+      "vpxdec": "vpx synthetic decoded bytes",
+      "ffmpeg": "exit 0"
+    },
+    "exit_code": 1,
+    "observed_diagnostic": "synthetic-spatial-2layer: cross-decoder mismatch on test_420k_full.ivf",
+    "cross_decoder_csv_row": "synthetic-spatial-2layer,test_420k_full.ivf,full,41,8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228,247b839e074a3ce8e1f6607d9a8467ce2a7376b475313e809b67b84af262fa0b,a4098ba0264f77d0074a667e7b6c010f7935a86318d050b7a0683ce5fd36025c,no,ok,FAIL",
+    "result": "PASS: unequal nonempty decoded outputs were written as FAIL and caused exit 1 before the helper could continue."
+  },
+  "limits": [
+    "This directly executes the extracted exact-source cross_check_curve/cross_check_stream helper, not the full spatial quality phase or its publication path.",
+    "Inputs and decoder outputs are synthetic; this is orchestration evidence only and makes no claim about codec correctness, quality, or performance.",
+    "The existing FLU-00041 spatial-summary and FLU-00042 numerical-tool defects remain separate blockers."
+  ],
+  "artifacts": [
+    {
+      "path": "cross-decoder.csv",
+      "bytes": 368,
+      "sha256": "375a6f241f308ed710beb43a6c2445760e1b18b1ddd5bc12da61a6228c9b7c92"
+    },
+    {
+      "path": "decode.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "harness.sh",
+      "bytes": 3491,
+      "sha256": "ac1600453696ad33a37e6a0e99192e80496c4362f61c2c40d1e8c45e597ab5a3"
+    },
+    {
+      "path": "runner.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "runner.raw.txt",
+      "bytes": 228,
+      "sha256": "b3f7adb71d3385324d8faddb9d50eb38174657ab17a60b6fd061bca3e9e31cf3"
+    },
+    {
+      "path": "streams/test_1260k_full.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_1260k_sl0.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_1260k_sl1.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_2100k_full.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_2100k_sl0.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_2100k_sl1.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_3360k_full.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_3360k_sl0.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_3360k_sl1.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_420k_full.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_420k_sl0.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_420k_sl1.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_630k_full.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_630k_sl0.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_630k_sl1.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_840k_full.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_840k_sl0.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "streams/test_840k_sl1.ivf",
+      "bytes": 41,
+      "sha256": "8449c73902d52a040b16b72093f0b7767aebab43d8ab0d404600415ca0b24228"
+    },
+    {
+      "path": "stub-ffmpeg.sh",
+      "bytes": 17,
+      "sha256": "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb"
+    },
+    {
+      "path": "stub-rvp9dec.sh",
+      "bytes": 50,
+      "sha256": "dc631a6a480e429b6d816e85e2b6f7da53c758edf4e4ef7d73857392ed94e2c1"
+    },
+    {
+      "path": "stub-vpxdec.sh",
+      "bytes": 49,
+      "sha256": "6d41579b062596d18af2baaf6835b6108079077fd577c4f4be715c86b7698585"
+    }
+  ],
+  "registered_scratch": {
+    "id": "spatial-decoder-mismatch-04b4acb5",
+    "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/spatial-decoder-mismatch-04b4acb5",
+    "disposition": "Deltic-registered scratch; task integration will remove it after the durable copy is verified."
+  }
+}
