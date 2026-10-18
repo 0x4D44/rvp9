@@ -1,0 +1,197 @@
+CLAIM verify-20261018T165508Z-31a19242; fix45238e97 ancestor; HEAD=06e93811c6ea1a52386395d1d6ad42de8865f421
+ORIGINAL SHA256=cc91a9d3bb70ed9d50b22950b41ebd376c60a8efec5d7425c7e03719cb4368a8
+BASELINE_UNIT COMMAND: deltic timeout 180 cargo test -p rvp9-cli --bin rvp9enc noise_sensitivity -- --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.00s
+     Running unittests src/bin/rvp9enc.rs (target/debug/deps/rvp9enc-201213c865fb7bb4)
+
+running 2 tests
+test tests::noise_sensitivity_rejects_out_of_range_values_in_both_cli_forms ... ok
+test tests::w5_1_noise_sensitivity_plumbs_into_encoder_config ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+BASELINE_UNIT EXIT=0
+BASELINE_INTEGRATION COMMAND: deltic timeout 180 cargo test -p rvp9-cli --test cli_arg_coverage enc_rejects_out_of_range_noise_sensitivity_before_input_io -- --exact --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.04s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-e24326a8d5d3592c)
+
+running 1 test
+test enc_rejects_out_of_range_noise_sensitivity_before_input_io ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.46s
+
+BASELINE_INTEGRATION EXIT=0
+BASELINE_HELP COMMAND: deltic timeout 30 target/debug/rvp9enc --help < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+rvp9enc
+
+Usage: rvp9enc [options] -o <out.ivf> <input.y4m|input.yuv>
+
+Options:
+  --help                     [supported]  show this help and exit
+  --version                  [supported]  print version and exit
+  --codec <arg>              [supported]  codec to use (vp9)
+  --output, -o <arg>         [supported]  output IVF file
+  --width, -w <arg>          [supported]  coded width (mult of 64)
+  --height, -h <arg>         [supported]  coded height (positive and even)
+  --fps <arg>                [supported]  frame rate num/den (e.g. 30/1)
+  --target-bitrate <arg>     [supported]  target bitrate in kbps
+  --end-usage <arg>          [supported]  rate control mode (cbr/vbr/cq/q)
+  --passes, -p <arg>         [supported]  number of passes (1 or 2; two-pass uses one thread/tile, no delayed scheduling; --lag-in-frames/--auto-alt-ref must be omitted or 0)
+  --kf-max-dist <arg>        [supported]  max keyframe interval
+  --aq-mode <arg>            [supported]  adaptive quant (0=off, 3=cyclic)
+  --limit <arg>              [supported]  stop after N frames
+  --ivf                      [supported]  output IVF (the only container)
+  --verbose, -v              [supported]  verbose progress
+  --profile <arg>            [not yet]    bitstream profile (0..=3)
+  --rt                       [supported]  real-time deadline
+  --good                     [supported]  good-quality deadline
+  --best                     [supported]  best-quality deadline
+  --cpu-used <arg>           [supported]  speed/quality tradeoff (-9..=9)
+  --threads, -t <arg>        [supported]  encode threads (two-pass accepts 0 or 1)
+  --tile-columns <arg>       [supported]  log2 tile columns (0..=6; two-pass accepts 0)
+  --tile-rows <arg>          [not yet]    log2 tile rows (0..=2)
+  --kf-min-dist <arg>        [not yet]    min keyframe interval
+  --disable-kf               [not yet]    disable keyframes
+  --min-q <arg>              [supported]  minimum quantizer
+  --max-q <arg>              [supported]  maximum quantizer
+  --cq-level <arg>           [supported]  constant/constrained quality level
+  --buf-sz <arg>             [not yet]    client buffer size (ms)
+  --buf-initial-sz <arg>     [not yet]    initial buffer size (ms)
+  --buf-optimal-sz <arg>     [not yet]    optimal buffer size (ms)
+  --undershoot-pct <arg>     [not yet]    datarate undershoot %
+  --overshoot-pct <arg>      [not yet]    datarate overshoot %
+  --lossless <arg>           [not yet]    lossless coding (0/1)
+  --frame-parallel <arg>     [not yet]    frame-parallel decoding (0/1)
+  --error-resilient <arg>    [not yet]    error resilient mode
+  --tune <arg>               [not yet]    distortion metric to tune (psnr/ssim)
+  --tune-content <arg>       [supported]  content type to tune (default)
+  --noise-sensitivity <arg>  [supported]  denoiser strength (0..=6)
+  --svc                      [not yet]    scalable video coding
+  --temporal-layers <arg>    [supported]  temporal SVC layers (1..=3)
+  --spatial-layers <arg>     [supported]  spatial SVC layers (1..=3)
+  --inter-layer-pred <arg>   [supported]  spatial prediction (0=on, 3=constrained)
+  --bit-depth <arg>          [not yet]    bit depth (8/10/12)
+  --psnr                     [not yet]    report PSNR
+  --webm                     [not yet]    WebM output (not supported yet)
+  --auto-alt-ref <arg>       [supported]  auto alt-ref frames (0..=6; two-pass requires omitted or 0)
+  --arnr-maxframes <arg>     [not yet]    AltRef max frames (0..=15)
+  --arnr-strength <arg>      [not yet]    AltRef filter strength (0..=6)
+  --pass <arg>               [not yet]    pass to execute (1 or 2)
+  --fpf <arg>                [not yet]    first-pass statistics file
+  --rate-hist <arg>          [not yet]    rate histogram bucket count
+  --q-hist <arg>             [not yet]    quantizer histogram bucket count
+  --test-decode <arg>        [not yet]    encode/decode mismatch test (off/warn/fatal)
+  --enable-tpl <arg>         [supported]  enable temporal dependency model (0/1)
+  --frame-boost <arg>        [not yet]    frame periodic boost (0/1)
+  --max-inter-rate <arg>     [not yet]    max P-frame bitrate (pct)
+  --min-gf-interval <arg>    [not yet]    min gf/arf frame interval
+  --max-gf-interval <arg>    [not yet]    max gf/arf frame interval
+  --color-space <arg>        [not yet]    color space of input content
+  --alt-ref-aq <arg>         [not yet]    adaptive quant for alt-ref (0/1)
+  --input-bit-depth <arg>    [not yet]    input bit depth (8/10/12)
+  --lag-in-frames <arg>      [supported]  max frames to lag (two-pass requires omitted or 0)
+  --frame-time-csv <arg>     [supported]  benchmark diagnostic: per-frame encode times CSV
+  --target-level <arg>       [not yet]    target level (0/255 + 10..=62)
+  --row-mt <arg>             [not yet]    row-based MT in VP9 (0/1)
+  --resize-allowed <arg>     [not yet]    spatial resampling (0/1)
+  --resize-width <arg>       [not yet]    resized encoded width
+  --resize-height <arg>      [not yet]    resized encoded height
+  --quiet, -q                [supported]  do not print encode progress
+BASELINE_HELP EXIT=0
+ROOT REVERSAL: replace only noise-sensitivity handler range parse with old unsigned parse; retain builder clamp, help, tests and neighboring validation.
+MUTANT_UNIT COMMAND: deltic timeout 180 cargo test -p rvp9-cli --bin rvp9enc noise_sensitivity -- --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.85s
+     Running unittests src/bin/rvp9enc.rs (target/debug/deps/rvp9enc-201213c865fb7bb4)
+
+running 2 tests
+
+thread 'tests::noise_sensitivity_rejects_out_of_range_values_in_both_cli_forms' (287412678) panicked at crates/rvp9-cli/src/bin/rvp9enc.rs:2154:9:
+--noise-sensitivity must reject every value above 6 in both forms: inline value 7 was accepted; separate value 7 was accepted; inline value 99 was accepted; separate value 99 was accepted; inline value 4294967295 was accepted; separate value 4294967295 was accepted
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::w5_1_noise_sensitivity_plumbs_into_encoder_config ... ok
+test tests::noise_sensitivity_rejects_out_of_range_values_in_both_cli_forms ... FAILED
+
+failures:
+
+failures:
+    tests::noise_sensitivity_rejects_out_of_range_values_in_both_cli_forms
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-cli --bin rvp9enc`
+MUTANT_UNIT EXIT=101
+MUTANT_INTEGRATION COMMAND: deltic timeout 180 cargo test -p rvp9-cli --test cli_arg_coverage enc_rejects_out_of_range_noise_sensitivity_before_input_io -- --exact --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.19s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-e24326a8d5d3592c)
+
+running 1 test
+
+thread 'enc_rejects_out_of_range_noise_sensitivity_before_input_io' (287426453) panicked at crates/rvp9-cli/tests/cli_arg_coverage.rs:1125:5:
+stderr must report the supported sensitivity range before input I/O, got: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9cli_argcov_90617_0_noise_sensitivity_missing_input.yuv: No such file or directory (os error 2)
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test enc_rejects_out_of_range_noise_sensitivity_before_input_io ... FAILED
+
+failures:
+
+failures:
+    enc_rejects_out_of_range_noise_sensitivity_before_input_io
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.45s
+
+error: test failed, to rerun pass `-p rvp9-cli --test cli_arg_coverage`
+MUTANT_INTEGRATION EXIT=101
+RESTORED SHA256=cc91a9d3bb70ed9d50b22950b41ebd376c60a8efec5d7425c7e03719cb4368a8
+RESTORED_UNIT COMMAND: deltic timeout 180 cargo test -p rvp9-cli --bin rvp9enc noise_sensitivity -- --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.58s
+     Running unittests src/bin/rvp9enc.rs (target/debug/deps/rvp9enc-201213c865fb7bb4)
+
+running 2 tests
+test tests::noise_sensitivity_rejects_out_of_range_values_in_both_cli_forms ... ok
+test tests::w5_1_noise_sensitivity_plumbs_into_encoder_config ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+RESTORED_UNIT EXIT=0
+RESTORED_INTEGRATION COMMAND: deltic timeout 180 cargo test -p rvp9-cli --test cli_arg_coverage enc_rejects_out_of_range_noise_sensitivity_before_input_io -- --exact --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.48s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-e24326a8d5d3592c)
+
+running 1 test
+test enc_rejects_out_of_range_noise_sensitivity_before_input_io ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.44s
+
+RESTORED_INTEGRATION EXIT=0
+FINAL_DIFF COMMAND: git diff --exit-code < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+FINAL_DIFF EXIT=0

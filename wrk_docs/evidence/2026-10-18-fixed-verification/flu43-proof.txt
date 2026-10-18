@@ -1,0 +1,248 @@
+Native arm64; claim verify-20261018T164749Z-c620903f; fix76481914 ancestor confirmed; HEAD=06e93811c6ea1a52386395d1d6ad42de8865f421
+Functional test/build profile: CARGO_PROFILE_DEV_OPT_LEVEL=0; no performance or full-corpus acceptance claim.
+ORIGINAL crates/rvp9-core/src/dsp/caps.rs SHA256=c77739455f059af3b265452347a39ceb8845d9a2541898a5533b83d59e06cc8f
+ORIGINAL crates/rvp9-core/src/transforms/inverse.rs SHA256=918bc120fc6d3b476784ee66a122e24e73f068293f39abfb1d7d3caf8f2d1710
+BASELINE_ROUTE_PARENTS COMMAND: deltic timeout 240 cargo test -p rvp9-core --lib --locked subprocess_routes -- --nocapture < /dev/null
+   Compiling libc v0.2.186
+   Compiling cfg-if v1.0.4
+   Compiling getrandom v0.3.4
+   Compiling zerocopy v0.8.48
+   Compiling getrandom v0.4.2
+   Compiling rustix v1.1.4
+   Compiling autocfg v1.5.0
+   Compiling bitflags v2.11.1
+   Compiling once_cell v1.21.4
+   Compiling crossbeam-utils v0.8.21
+   Compiling fastrand v2.4.1
+   Compiling bit-vec v0.8.0
+   Compiling quick-error v1.2.3
+   Compiling fnv v1.0.7
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling regex-syntax v0.8.10
+   Compiling unarray v0.1.4
+   Compiling bit-set v0.8.0
+   Compiling num-traits v0.2.19
+   Compiling crossbeam-channel v0.5.15
+   Compiling errno v0.3.14
+   Compiling wait-timeout v0.2.1
+   Compiling rand_core v0.9.5
+   Compiling rand v0.9.4
+   Compiling rand_xorshift v0.4.0
+   Compiling tempfile v3.27.0
+   Compiling rusty-fork v0.3.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling proptest v1.11.0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 06s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-08a9cecbbb70e4ce)
+
+running 2 tests
+test dsp::aarch64_force_scalar_tests::idct16x16_neon_trace_subprocess_routes ... ok
+test dsp::aarch64_force_scalar_tests::force_scalar_aarch64_subprocess_routes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1730 filtered out; finished in 0.02s
+
+BASELINE_ROUTE_PARENTS EXIT=0
+BASELINE_NEON_SCALAR_PARITY COMMAND: deltic timeout 240 cargo test -p rvp9-core --lib --locked transforms::inverse::tests::idct16x16_neon_matches_scalar_for_all_eob_buckets -- --exact --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.22s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-08a9cecbbb70e4ce)
+
+running 1 test
+test transforms::inverse::tests::idct16x16_neon_matches_scalar_for_all_eob_buckets ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1731 filtered out; finished in 0.02s
+
+BASELINE_NEON_SCALAR_PARITY EXIT=0
+ROOT REVERSAL1: disable only Arm exact-env capability mask; x86 detection and regression tests retained.
+CAP_MASK_REVERSED COMMAND: deltic timeout 240 cargo test -p rvp9-core --lib --locked dsp::aarch64_force_scalar_tests::force_scalar_aarch64_subprocess_routes -- --exact --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.15s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-08a9cecbbb70e4ce)
+
+running 1 test
+
+thread 'dsp::aarch64_force_scalar_tests::force_scalar_aarch64_subprocess_routes' (287231404) panicked at crates/rvp9-core/src/dsp/aarch64_force_scalar_tests.rs:26:5:
+RVP9_FORCE_SCALAR=Some("1"): child failed
+stdout: 
+running 1 test
+test dsp::aarch64_force_scalar_tests::force_scalar_aarch64_subprocess_child ... FAILED
+
+failures:
+
+---- dsp::aarch64_force_scalar_tests::force_scalar_aarch64_subprocess_child stdout ----
+
+thread 'dsp::aarch64_force_scalar_tests::force_scalar_aarch64_subprocess_child' (287231408) panicked at crates/rvp9-core/src/dsp/aarch64_force_scalar_tests.rs:55:5:
+assertion `left == right` failed: AArch64Caps::detect must honor only the exact value 1
+  left: AArch64Caps { neon: true, dotprod: true }
+ right: AArch64Caps { neon: false, dotprod: false }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dsp::aarch64_force_scalar_tests::force_scalar_aarch64_subprocess_child
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1731 filtered out; finished in 0.00s
+
+
+stderr: 
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test dsp::aarch64_force_scalar_tests::force_scalar_aarch64_subprocess_routes ... FAILED
+
+failures:
+
+failures:
+    dsp::aarch64_force_scalar_tests::force_scalar_aarch64_subprocess_routes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1731 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p rvp9-core --lib`
+CAP_MASK_REVERSED EXIT=101
+ROOT REVERSAL2: all three public IDCT16 wrappers enter NEON unconditionally again; retain caps mask, scalar helper and trace tests.
+IDCT16_ROUTING_REVERSED COMMAND: deltic timeout 240 cargo test -p rvp9-core --lib --locked dsp::aarch64_force_scalar_tests::idct16x16_neon_trace_subprocess_routes -- --exact --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.23s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-08a9cecbbb70e4ce)
+
+running 1 test
+
+thread 'dsp::aarch64_force_scalar_tests::idct16x16_neon_trace_subprocess_routes' (287238043) panicked at crates/rvp9-core/src/dsp/aarch64_force_scalar_tests.rs:26:5:
+RVP9_FORCE_SCALAR=Some("1"): child failed
+stdout: 
+running 1 test
+test dsp::aarch64_force_scalar_tests::idct16x16_neon_trace_subprocess_child ... FAILED
+
+failures:
+
+---- dsp::aarch64_force_scalar_tests::idct16x16_neon_trace_subprocess_child stdout ----
+
+thread 'dsp::aarch64_force_scalar_tests::idct16x16_neon_trace_subprocess_child' (287238049) panicked at crates/rvp9-core/src/dsp/aarch64_force_scalar_tests.rs:162:5:
+assertion `left == right` failed: direct and dispatch IDCT16 EOB buckets must use NEON iff force-scalar is off
+  left: [2, 2, 2]
+ right: [0, 0, 0]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dsp::aarch64_force_scalar_tests::idct16x16_neon_trace_subprocess_child
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1731 filtered out; finished in 0.00s
+
+
+stderr: 
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test dsp::aarch64_force_scalar_tests::idct16x16_neon_trace_subprocess_routes ... FAILED
+
+failures:
+
+failures:
+    dsp::aarch64_force_scalar_tests::idct16x16_neon_trace_subprocess_routes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1731 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p rvp9-core --lib`
+IDCT16_ROUTING_REVERSED EXIT=101
+RESTORED crates/rvp9-core/src/dsp/caps.rs SHA256=c77739455f059af3b265452347a39ceb8845d9a2541898a5533b83d59e06cc8f
+RESTORED crates/rvp9-core/src/transforms/inverse.rs SHA256=918bc120fc6d3b476784ee66a122e24e73f068293f39abfb1d7d3caf8f2d1710
+RESTORED_ROUTE_PARENTS COMMAND: deltic timeout 240 cargo test -p rvp9-core --lib --locked subprocess_routes -- --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.29s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-08a9cecbbb70e4ce)
+
+running 2 tests
+test dsp::aarch64_force_scalar_tests::idct16x16_neon_trace_subprocess_routes ... ok
+test dsp::aarch64_force_scalar_tests::force_scalar_aarch64_subprocess_routes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1730 filtered out; finished in 0.03s
+
+RESTORED_ROUTE_PARENTS EXIT=0
+RESTORED_NEON_SCALAR_PARITY COMMAND: deltic timeout 240 cargo test -p rvp9-core --lib --locked transforms::inverse::tests::idct16x16_neon_matches_scalar_for_all_eob_buckets -- --exact --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.06s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-08a9cecbbb70e4ce)
+
+running 1 test
+test transforms::inverse::tests::idct16x16_neon_matches_scalar_for_all_eob_buckets ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1731 filtered out; finished in 0.02s
+
+RESTORED_NEON_SCALAR_PARITY EXIT=0
+SOURCE_DIFF COMMAND: git diff --exit-code -- crates/rvp9-core/src/dsp/caps.rs crates/rvp9-core/src/transforms/inverse.rs < /dev/null
+SOURCE_DIFF EXIT=0
+SMOKE_VECTOR vp90-2-02-size-64x64.webm SHA256=108c5f1c4bcceb0318ee2887678ca2e92fea752db38ad9099eb236ce63ba60b3
+SMOKE_VECTOR vp90-2-02-size-64x64.webm.md5 SHA256=a3f6e09e19a69f32129b6f1b12deaa10a702dbb36d598dafc379df1fbf9c3aad
+SMOKE_VECTOR vp90-2-02-size-34x66.webm SHA256=88f707f7171e9082805fe787a7d20248a928a0ce1b590a19508c85d78797f642
+SMOKE_VECTOR vp90-2-02-size-34x66.webm.md5 SHA256=277899d62ac3a8ed212fd4b2ec8aaaf7953e1c99ee0c58f258861c9062f1695d
+BUILD_CONFORMANCE COMMAND: deltic timeout 240 cargo build -p rvp9-harness --bin conformance --locked < /dev/null
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling itoa v1.0.18
+   Compiling static_assertions v1.1.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-harness)
+   Compiling memchr v2.8.0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling syn v2.0.117
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 30.48s
+BUILD_CONFORMANCE EXIT=0
+NATIVE_THREADS1 COMMAND: deltic timeout 60 target/debug/conformance --vectors-dir .scratch/flu43-vectors --strict --threads 1 < /dev/null
+running rvp9 decoder against 2 vector(s) in .scratch/flu43-vectors
+decoder threads: 1
+
+  vp90-2-02-size-34x66.webm
+     10 passed /   0 mismatched /   0 skipped /  10 expected
+  vp90-2-02-size-64x64.webm
+     10 passed /   0 mismatched /   0 skipped /  10 expected
+
+Conformance: 20 passed / 0 mismatched / 0 skipped / 20 total
+NATIVE_THREADS1 EXIT=0
+NATIVE_THREADS2 COMMAND: deltic timeout 60 target/debug/conformance --vectors-dir .scratch/flu43-vectors --strict --threads 2 < /dev/null
+running rvp9 decoder against 2 vector(s) in .scratch/flu43-vectors
+decoder threads: 2
+
+  vp90-2-02-size-34x66.webm
+     10 passed /   0 mismatched /   0 skipped /  10 expected
+  vp90-2-02-size-64x64.webm
+     10 passed /   0 mismatched /   0 skipped /  10 expected
+
+Conformance: 20 passed / 0 mismatched / 0 skipped / 20 total
+NATIVE_THREADS2 EXIT=0
+FORCED_SCALAR_THREADS1 COMMAND: deltic timeout 60 target/debug/conformance --vectors-dir .scratch/flu43-vectors --strict --threads 1 < /dev/null
+running rvp9 decoder against 2 vector(s) in .scratch/flu43-vectors
+decoder threads: 1
+
+  vp90-2-02-size-34x66.webm
+     10 passed /   0 mismatched /   0 skipped /  10 expected
+  vp90-2-02-size-64x64.webm
+     10 passed /   0 mismatched /   0 skipped /  10 expected
+
+Conformance: 20 passed / 0 mismatched / 0 skipped / 20 total
+FORCED_SCALAR_THREADS1 EXIT=0
+FORCED_SCALAR_THREADS2 COMMAND: deltic timeout 60 target/debug/conformance --vectors-dir .scratch/flu43-vectors --strict --threads 2 < /dev/null
+running rvp9 decoder against 2 vector(s) in .scratch/flu43-vectors
+decoder threads: 2
+
+  vp90-2-02-size-34x66.webm
+     10 passed /   0 mismatched /   0 skipped /  10 expected
+  vp90-2-02-size-64x64.webm
+     10 passed /   0 mismatched /   0 skipped /  10 expected
+
+Conformance: 20 passed / 0 mismatched / 0 skipped / 20 total
+FORCED_SCALAR_THREADS2 EXIT=0
+FINAL SOURCE HASHES {'crates/rvp9-core/src/dsp/caps.rs': 'c77739455f059af3b265452347a39ceb8845d9a2541898a5533b83d59e06cc8f', 'crates/rvp9-core/src/transforms/inverse.rs': '918bc120fc6d3b476784ee66a122e24e73f068293f39abfb1d7d3caf8f2d1710'}
+ENVIRONMENT REPRODUCTION: all functional Cargo commands used CARGO_PROFILE_DEV_OPT_LEVEL=0; NATIVE rows removed RVP9_FORCE_SCALAR; FORCED_SCALAR rows set RVP9_FORCE_SCALAR=1. Each row was a fresh process.
+FINAL ['file', 'target/debug/conformance']
+target/debug/conformance: Mach-O 64-bit executable arm64
+EXIT=0
+FINAL ['git', 'diff', '--exit-code']
+EXIT=0
+FINAL ['git', 'status', '--short']
+EXIT=0

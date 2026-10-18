@@ -1,0 +1,134 @@
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 59.95s
+     Running unittests src/bin/rvp9enc.rs (target/debug/deps/rvp9enc-447fea9249343450)
+
+running 1 test
+test tests::raw_reader_checks_encoder_geometry_before_file_io ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 6 tests
+test enc_raw_limit_does_not_read_trailing_partial_frame ... ok
+test enc_raw_input_requires_width ... ok
+test enc_raw_partial_frame_rejected ... ok
+test enc_raw_invalid_geometry_precedes_frame_errors_and_preserves_outputs ... ok
+test enc_raw_input_requires_height ... ok
+test enc_raw_empty_input_rejected ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 96 filtered out; finished in 0.35s
+
+
+MUTANT: remove only early RawFrameReader geometry predicate, restoring size/file handling before encoder geometry rejection. Retained tests use missing or21byte inputs; no huge frame read/allocation.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-cli)
+warning: unused imports: `MAX_CODED_DIMENSION`, `MAX_CODED_LUMA_PIXELS`, and `coded_dimensions_supported`
+  --> crates/rvp9-cli/src/bin/rvp9enc.rs:22:5
+   |
+22 |     MAX_CODED_DIMENSION, MAX_CODED_LUMA_PIXELS, coded_dimensions_supported,
+   |     ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `coded_dimensions_supported`
+  --> crates/rvp9-cli/src/bin/rvp9enc.rs:22:49
+   |
+22 |     MAX_CODED_DIMENSION, MAX_CODED_LUMA_PIXELS, coded_dimensions_supported,
+   |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rvp9-cli` (bin "rvp9enc" test) generated 1 warning (run `cargo fix --bin "rvp9enc" -p rvp9-cli --tests` to apply 1 suggestion)
+warning: `rvp9-cli` (bin "rvp9enc") generated 1 warning (run `cargo fix --bin "rvp9enc" -p rvp9-cli` to apply 1 suggestion)
+    Finished `test` profile [optimized + debuginfo] target(s) in 8.96s
+     Running unittests src/bin/rvp9enc.rs (target/debug/deps/rvp9enc-447fea9249343450)
+
+running 1 test
+test tests::raw_reader_checks_encoder_geometry_before_file_io ... FAILED
+
+failures:
+
+---- tests::raw_reader_checks_encoder_geometry_before_file_io stdout ----
+
+thread 'tests::raw_reader_checks_encoder_geometry_before_file_io' (287337414) panicked at crates/rvp9-cli/src/bin/rvp9enc.rs:1734:13:
+geometry 16448x64 must fail on the shared geometry limit before file I/O, got: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9enc_raw_geometry_61744_0_missing.yuv: No such file or directory (os error 2)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::raw_reader_checks_encoder_geometry_before_file_io
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-cli --bin rvp9enc`
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 6 tests
+test enc_raw_input_requires_width ... ok
+test enc_raw_invalid_geometry_precedes_frame_errors_and_preserves_outputs ... FAILED
+test enc_raw_empty_input_rejected ... ok
+test enc_raw_input_requires_height ... ok
+test enc_raw_partial_frame_rejected ... ok
+test enc_raw_limit_does_not_read_trailing_partial_frame ... ok
+
+failures:
+
+---- enc_raw_invalid_geometry_precedes_frame_errors_and_preserves_outputs stdout ----
+
+thread 'enc_raw_invalid_geometry_precedes_frame_errors_and_preserves_outputs' (287337592) panicked at crates/rvp9-cli/tests/cli_arg_coverage.rs:1162:5:
+stderr must identify the geometry and supported limits before frame I/O errors, got: rvp9enc: raw input length 22 is not a whole number of 16448x64 I420 frames (1579008 bytes each)
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    enc_raw_invalid_geometry_precedes_frame_errors_and_preserves_outputs
+
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 96 filtered out; finished in 0.32s
+
+error: test failed, to rerun pass `-p rvp9-cli --test cli_arg_coverage`
+error: 2 targets failed:
+    `-p rvp9-cli --bin rvp9enc`
+    `-p rvp9-cli --test cli_arg_coverage`
+
+RESTORED exact original source. Correction: retained tiny input is22bytes, as runtime diagnostic confirms. Final focused green follows.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-kil123-invalid-geometry-verification/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 12.34s
+     Running unittests src/bin/rvp9enc.rs (target/debug/deps/rvp9enc-447fea9249343450)
+
+running 1 test
+test tests::raw_reader_checks_encoder_geometry_before_file_io ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 6 tests
+test enc_raw_partial_frame_rejected ... ok
+test enc_raw_invalid_geometry_precedes_frame_errors_and_preserves_outputs ... ok
+test enc_raw_empty_input_rejected ... ok
+test enc_raw_input_requires_height ... ok
+test enc_raw_input_requires_width ... ok
+test enc_raw_limit_does_not_read_trailing_partial_frame ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 96 filtered out; finished in 0.31s
+
+
+VERDICT recommend close; no split. Claim verify-20261018T165319Z-b9cbb5e9 remains for lead verdict. Fix85153ed163d255b45c858ab619dc0d7d85919fd5 ancestor origin/main confirmed exit0; present in fresh worktree HEAD2de4e3fb. Shared coded_dimensions_supported predicate rejects unsupported dimensions/pixelcount before size arithmetic or File::open. Valid max-dimension/max-pixels controls use empty files remaining0, no frame allocation.
+Initial/final1 unit +6 raw CLI tests all green. Remove only early raw geometry guard: unit and CLI expected-order assertions red; missing-file open and22byte partial-frame errors took precedence. No oversized full-frame allocation attempted. Existing IVF/CSV sentinels preserved on fixed path. Exact source restored and scoped git diff --exit-code clean; no permanent source/test changes or ledger verdict.
+Limit: safe bounded-input validation-order reproduction, not hundreds-of-megabytes allocation measurement. Structural ordering places rejection before all raw frame plane reads/allocations.

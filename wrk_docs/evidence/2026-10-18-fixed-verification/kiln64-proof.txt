@@ -1,0 +1,195 @@
+error: no bin target named `f02_block_oracle` in `rvp9-harness` package
+
+help: a target with a similar name exists: `f02-block-oracle`
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.10s
+     Running unittests src/bin/f02_block_oracle.rs (target/debug/deps/f02_block_oracle-e6c7f64058ec0f1f)
+
+running 30 tests
+test bounded_child::tests::child_process_helper ... ok
+test tests::aq_mode_accepts_only_off_and_cyclic_refresh ... ok
+test tests::cbr_oracle_uses_production_gop_and_cbr_rate_control ... ok
+test tests::cpu_used_defaults_to_seven_and_accepts_product_presets ... ok
+test tests::cpu_used_rejects_non_product_presets_and_invalid_values ... ok
+test tests::explicit_cbr_retains_fixed_q_calibration ... ok
+test tests::explicit_fps_overrides_source_header ... ok
+test tests::fixed_q_maps_to_valid_libvpx_cli_range ... ok
+test tests::fixed_q_spatial_oracle_accepts_vbr_picker_calibration ... ok
+test tests::natural_cbr_spatial_rvp9_uses_canonical_quantizer_bounds ... ok
+test tests::natural_cbr_spatial_anchor_uses_canonical_quantizer_bounds ... ok
+test tests::numeric_options_accept_split_and_equals_forms ... ok
+test tests::numeric_options_keep_documented_defaults ... ok
+test tests::numeric_options_reject_malformed_values_with_option_specific_errors ... ok
+test tests::production_oracle_uses_matched_parallelism ... ok
+test tests::report_only_spatial_oracle_accepts_natural_cbr ... ok
+test tests::spatial_analysis_layer_selects_its_coded_geometry ... ok
+test tests::spatial_oracle_command_matches_canonical_three_layer_anchor ... ok
+test tests::strict_flag_selects_stage4a_strict_split_policy ... ok
+test tests::run_directory_collision_retries_without_touching_retained_files ... ok
+test tests::vbr_oracle_uses_production_gop_and_vbr_rate_control ... ok
+test tests::concurrent_fixed_timestamp_reservations_are_distinct_and_retained ... ok
+test tests::failed_spawn_is_reported_and_cleans_the_raw_input ... ok
+test bounded_child::tests::successful_child_observes_closed_stdin ... ok
+test bounded_child::tests::timeout_kills_and_reaps_a_finite_child_before_its_natural_exit ... ok
+test tests::successful_libvpx_leg_retains_sidecar_and_run_artifacts ... ok
+test tests::spatial_libvpx_leg_enforces_an_injected_timeout ... ok
+test tests::ordinary_libvpx_leg_enforces_an_injected_timeout ... FAILED
+test tests::loud_child_stderr_is_file_backed_and_read_with_a_byte_limit ... ok
+test tests::stderr_capture_is_unique_bounded_and_reports_nonzero_details ... ok
+
+failures:
+
+---- tests::ordinary_libvpx_leg_enforces_an_injected_timeout stdout ----
+
+thread 'tests::ordinary_libvpx_leg_enforces_an_injected_timeout' (287153053) panicked at crates/rvp9-harness/src/bin/f02_block_oracle.rs:2258:9:
+assertion failed: error.contains("ordinary child started")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::ordinary_libvpx_leg_enforces_an_injected_timeout
+
+test result: FAILED. 29 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.26s
+
+error: test failed, to rerun pass `-p rvp9-harness --bin f02-block-oracle`
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.89s
+     Running unittests src/bin/f02_block_oracle.rs (target/debug/deps/f02_block_oracle-e6c7f64058ec0f1f)
+
+running 1 test
+test tests::ordinary_libvpx_leg_enforces_an_injected_timeout ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 1.02s
+
+
+MUTANT1: replace default exclusive pid/sequence run reservation with timestamp-only shared create_dir_all. Initial ordinary timeout diagnostic assertion failed under parallel tests; isolated unchanged rerun passed1/1.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.26s
+     Running unittests src/bin/f02_block_oracle.rs (target/debug/deps/f02_block_oracle-e6c7f64058ec0f1f)
+
+running 1 test
+test tests::concurrent_fixed_timestamp_reservations_are_distinct_and_retained ... FAILED
+
+failures:
+
+---- tests::concurrent_fixed_timestamp_reservations_are_distinct_and_retained stdout ----
+
+thread 'tests::concurrent_fixed_timestamp_reservations_are_distinct_and_retained' (287181032) panicked at crates/rvp9-harness/src/bin/f02_block_oracle.rs:2477:9:
+assertion `left == right` failed
+  left: 1
+ right: 8
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::concurrent_fixed_timestamp_reservations_are_distinct_and_retained
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-harness --bin f02-block-oracle`
+
+MUTANT2: restore run reservation; reverse only F02 child callsite to blocking status wait, preserving closed stdin and file-backed stderr. Two selected children finish naturally after2s.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+warning: unused variable: `timeout`
+    --> crates/rvp9-harness/src/bin/f02_block_oracle.rs:2090:5
+     |
+2090 |     timeout: Duration,
+     |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_timeout`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rvp9-harness` (bin "f02-block-oracle" test) generated 1 warning (run `cargo fix --bin "f02-block-oracle" -p rvp9-harness --tests` to apply 1 suggestion)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.89s
+     Running unittests src/bin/f02_block_oracle.rs (target/debug/deps/f02_block_oracle-e6c7f64058ec0f1f)
+
+running 2 tests
+test tests::ordinary_libvpx_leg_enforces_an_injected_timeout ... FAILED
+test tests::spatial_libvpx_leg_enforces_an_injected_timeout ... FAILED
+
+failures:
+
+---- tests::ordinary_libvpx_leg_enforces_an_injected_timeout stdout ----
+
+thread 'tests::ordinary_libvpx_leg_enforces_an_injected_timeout' (287193010) panicked at crates/rvp9-harness/src/bin/f02_block_oracle.rs:2257:9:
+unexpected error: libvpx sidecar at /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-f02-ordinary-timeout-6098-0/run_fixed_6098_1/foreman_100kbps_libvpx.jsonl was NOT produced — is third_party/libvpx-patches/f02_oracle.patch applied?
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::spatial_libvpx_leg_enforces_an_injected_timeout stdout ----
+
+thread 'tests::spatial_libvpx_leg_enforces_an_injected_timeout' (287193897) panicked at crates/rvp9-harness/src/bin/f02_block_oracle.rs:2295:9:
+unexpected error: libvpx spatial sidecar at /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-f02-spatial-timeout-6098-3/run_fixed_6098_4/foreman_100kbps_libvpx.jsonl was not produced; rebuild with scripts/build-f02-libvpx.sh
+
+
+failures:
+    tests::ordinary_libvpx_leg_enforces_an_injected_timeout
+    tests::spatial_libvpx_leg_enforces_an_injected_timeout
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 28 filtered out; finished in 4.28s
+
+error: test failed, to rerun pass `-p rvp9-harness --bin f02-block-oracle`
+
+RESTORED: exact original F02 source. Final bin tests serialized to avoid parallel fixture startup timing affecting1s deadline diagnostic.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.19s
+     Running unittests src/bin/f02_block_oracle.rs (target/debug/deps/f02_block_oracle-e6c7f64058ec0f1f)
+
+running 30 tests
+test bounded_child::tests::child_process_helper ... ok
+test bounded_child::tests::successful_child_observes_closed_stdin ... ok
+test bounded_child::tests::timeout_kills_and_reaps_a_finite_child_before_its_natural_exit ... ok
+test tests::aq_mode_accepts_only_off_and_cyclic_refresh ... ok
+test tests::cbr_oracle_uses_production_gop_and_cbr_rate_control ... ok
+test tests::concurrent_fixed_timestamp_reservations_are_distinct_and_retained ... ok
+test tests::cpu_used_defaults_to_seven_and_accepts_product_presets ... ok
+test tests::cpu_used_rejects_non_product_presets_and_invalid_values ... ok
+test tests::explicit_cbr_retains_fixed_q_calibration ... ok
+test tests::explicit_fps_overrides_source_header ... ok
+test tests::failed_spawn_is_reported_and_cleans_the_raw_input ... ok
+test tests::fixed_q_maps_to_valid_libvpx_cli_range ... ok
+test tests::fixed_q_spatial_oracle_accepts_vbr_picker_calibration ... ok
+test tests::loud_child_stderr_is_file_backed_and_read_with_a_byte_limit ... ok
+test tests::natural_cbr_spatial_anchor_uses_canonical_quantizer_bounds ... ok
+test tests::natural_cbr_spatial_rvp9_uses_canonical_quantizer_bounds ... ok
+test tests::numeric_options_accept_split_and_equals_forms ... ok
+test tests::numeric_options_keep_documented_defaults ... ok
+test tests::numeric_options_reject_malformed_values_with_option_specific_errors ... ok
+test tests::ordinary_libvpx_leg_enforces_an_injected_timeout ... ok
+test tests::production_oracle_uses_matched_parallelism ... ok
+test tests::report_only_spatial_oracle_accepts_natural_cbr ... ok
+test tests::run_directory_collision_retries_without_touching_retained_files ... ok
+test tests::spatial_analysis_layer_selects_its_coded_geometry ... ok
+test tests::spatial_libvpx_leg_enforces_an_injected_timeout ... ok
+test tests::spatial_oracle_command_matches_canonical_three_layer_anchor ... ok
+test tests::stderr_capture_is_unique_bounded_and_reports_nonzero_details ... ok
+test tests::strict_flag_selects_stage4a_strict_split_policy ... ok
+test tests::successful_libvpx_leg_retains_sidecar_and_run_artifacts ... ok
+test tests::vbr_oracle_uses_production_gop_and_vbr_rate_control ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.41s
+
+
+VERDICT: recommend close with test-timing limitation disclosed; claim verify-20261018T164748Z-b8d44a1e remains for lead. Fix84774126dc01938cc3c88a4b9e29e685ef456578 ancestor origin/main exit0. Actual F02 ordinary/spatial callsites use30s default bounded helper; stdin is null; helper kills then polls reaping at most1s. Unique retained per-run directories use exclusive create_dir/pid/sequence, capture files exclusive create_new; generated raw inputs removed while sidecars/IVF/stderr retained as caller-owned evidence.
+Initial default parallel bin run29/30 passed: ordinary timeout reached intended timed-out branch but missed child-started stderr assertion. Unchanged isolated rerun passed1/1, final restored serialized bin run passed30/30. Cause of initial diagnostic miss not established; startup/scheduling timing is inference, not proof. No production failure reproduced. All no-corpus fake children finite; no patched real libvpx execution performed.
+Mutant1 timestamp-only directory reuse: selected concurrent8 test assertion1 distinct path vs8 expected. Mutant2 F02-only blocking status wait: selected ordinary/spatial timeout assertions failed because2s children exited naturally and code reached missing-sidecar errors instead of1s timeout. Shared helper/numeric validation untouched. Source restored byte-for-byte; scoped git diff --exit-code passed; no ledger verdict written.
