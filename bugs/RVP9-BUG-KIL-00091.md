@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00091 — check-lld-format can omit unreadable inputs and exit successfully
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** harness/check-lld-format
 - **Raised:** 2026-08-22T13:20:53Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T153844Z-879c82c8
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00091-run-verify-20261018T153844Z-879c82c8
-- **Owner base:** 1bd933042a658d8d7280834526e990b08fef0c1a
-- **Owner fingerprint:** sha256:0067c04cd8d5efb40bb03ce801eaf6ec4792430e4ab10846e0b7bc9415d9d543
-- **Owner since:** 2026-10-18T15:38:44Z
-- **Owner until:** 2026-10-18T19:38:44Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T06:16:50Z, deltic:auto role=fix run=fix-20261016T060707Z-0e7ce44a branch=task/bug-RVP9-BUG-KIL-00091-run-fix-20261016T060707Z-0e7ce44a code=225595e6c1c3dd3c190c23bdba4edeb9a7719c0d gate=manual)
+- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T06:16:50Z, deltic:auto role=fix run=fix-20261016T060707Z-0e7ce44a branch=task/bug-RVP9-BUG-KIL-00091-run-fix-20261016T060707Z-0e7ce44a code=225595e6c1c3dd3c190c23bdba4edeb9a7719c0d gate=manual) -> Closed (2026-10-18T15:42:23Z, deltic:manual role=verify run=verify-20261018T153844Z-879c82c8 verified_fix_run=fix-20261016T060707Z-0e7ce44a verdict=close)
 
 ## Observation
 
@@ -36,6 +36,10 @@ are structurally sound while silently excluding files it could not inspect.
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T15:42:23Z, deltic:auto run=verify-20261018T153844Z-879c82c8 verified_fix_run=fix-20261016T060707Z-0e7ce44a verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer. Base09697b55 contains225595e6. Original omitted-input observations exercised: invalid UTF8 candidate alone/mixed and injected directory-entry error. Bin6+CLI6 tests pass before/after reversal. Mutant exit flag=false: both unreadable CLI tests fail status0 vs1. Mutant Err=>continue: injected-entry test fails count0 vs1. Exact source restored, scoped diff empty. Root errors now feed input_failures and exit1 while valid report remains. Workspace fmt and documented clippy pass (warnings retained). Full evidence in 2026.10.18 independent verifi...
 
 ## Notes
 
