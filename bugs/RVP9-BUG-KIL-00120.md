@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00120 — Two-pass encoding ignores thread and tile-column options
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc option contract
 - **Raised:** 2026-08-22T20:44:02Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T163733Z-a17060cf
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00120-run-verify-20261018T163733Z-a17060cf
-- **Owner base:** 94756a00a1fc645e068fc0717ddac0ee871fbbe2
-- **Owner fingerprint:** sha256:8433e6cf11896f2cfa0e273674f5cc40928ed1ee8c6737dba90b307bc2e91480
-- **Owner since:** 2026-10-18T16:37:33Z
-- **Owner until:** 2026-10-18T20:37:33Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:02Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T01:00:57Z, deltic:auto role=fix run=fix-20261016T005409Z-e51506ee branch=task/bug-RVP9-BUG-KIL-00120-run-fix-20261016T005409Z-e51506ee code=889687990c5a59ab34550e05832340c2d57fa640 gate=manual)
+- **State history:** Open (2026-08-22T20:44:02Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T01:00:57Z, deltic:auto role=fix run=fix-20261016T005409Z-e51506ee branch=task/bug-RVP9-BUG-KIL-00120-run-fix-20261016T005409Z-e51506ee code=889687990c5a59ab34550e05832340c2d57fa640 gate=manual) -> Closed (2026-10-18T16:40:42Z, deltic:manual role=verify run=verify-20261018T163733Z-a17060cf verified_fix_run=fix-20261016T005409Z-e51506ee verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ rvp9enc accepts --threads and --tile-columns as supported, but the --passes 2 br
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:40:42Z, deltic:auto run=verify-20261018T163733Z-a17060cf verified_fix_run=fix-20261016T005409Z-e51506ee verdict=close)
+
+Verifier note: Manual verify: Independent verification confirmed explicit two-pass parallelism and tile-column requests are rejected before file I/O. Removing the guards makes the retained rejection test observe successful output creation and omitted diagnostics; restored build passes rejection and valid IVF controls.
 
 ## Notes
