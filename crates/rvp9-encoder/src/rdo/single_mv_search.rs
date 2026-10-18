@@ -131,8 +131,9 @@ pub struct SingleMotionSearchParams<'a> {
     /// (libvpx lines 2634-2640) and the early-exit at lines 2645-2657.
     pub pred_mv_sad: u32,
     /// libvpx `x->pred_mv_sad[i]` for the other refs. Plumbed for the
-    /// libvpx lines 2644-2657 early-exit (we exit if `pred_mv_sad[ref]
-    /// >> 3 > min(other pred_mv_sad)`).
+    /// libvpx lines 2644-2657 early-exit (we exit if the ref-specific
+    /// predicted-motion SAD divided by eight exceeds the minimum for
+    /// another reference).
     pub other_pred_mv_sad_min: u32,
     /// Full-pel-unit MV bounds.
     pub mv_limits: MvLimits,
@@ -147,7 +148,7 @@ pub struct SingleMotionSearchParams<'a> {
     /// `cm->allow_high_precision_mv`.
     pub allow_hp: bool,
     /// libvpx `cpi->sf.mv.subpel_force_stop`. Use
-    /// [`adaptive_subpel_force_stop`] to derive.
+    /// `adaptive_subpel_force_stop` to derive.
     pub subpel_force_stop: SubPixelForcedStop,
 }
 

@@ -15,7 +15,7 @@
 //! reference reconstruction for the window's first frame, the driver:
 //!
 //! 1. For every 8×8 block of every frame in the window runs
-//!    [`mode_estimation`](super::mode_est::mode_estimation): the four
+//!    [`mode_estimation`] with the four
 //!    "primary" intra modes (SATD vs the block's own source neighbours)
 //!    and an inter candidate (SATD vs an integer-pel motion-compensated
 //!    predictor patch produced by a real diamond motion search —
@@ -23,9 +23,9 @@
 //!    `mode_estimation` (`vp9_tpl_model.c:571-727`), whose inter pass
 //!    calls `motion_compensated_prediction` (`:280-330`,
 //!    `vp9_full_pixel_search` NSTEP + sub-pel).
-//! 2. [`tpl_model_store`](super::update::tpl_model_store) recomputes
+//! 2. [`tpl_model_store`] recomputes
 //!    `mc_dep_cost = intra_cost + mc_flow` (`vp9_tpl_model.c:372-390`).
-//! 3. [`tpl_model_update`](super::update::tpl_model_update) projects the
+//! 3. [`tpl_model_update`] projects the
 //!    block's dependency flow into its reference frame's grid
 //!    (`vp9_tpl_model.c:475-489`).
 //!

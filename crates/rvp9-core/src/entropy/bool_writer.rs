@@ -1,7 +1,7 @@
 //! Boolean (arithmetic) writer.
 //!
 //! Mirrors libvpx `vpx_dsp/bitwriter.{h,c}` bit-for-bit. The output stream
-//! is byte-tight after [`Self::stop_encode`]; consumers stitch tile buffers
+//! is byte-tight after `BoolWriter::stop_encode`; consumers stitch tile buffers
 //! together via the superframe-index builder in [`crate::bitstream`].
 //!
 //! ## Algorithm sketch

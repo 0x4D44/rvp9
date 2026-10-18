@@ -27,10 +27,10 @@
 //!   buffer, a frame cursor, the precomputed per-frame **bit
 //!   allocation** (a real, stats-driven distribution of the sequence
 //!   budget), and the total-error normaliser.
-//! - [`pick_q_and_bounds`] — the 2-pass `pick_q` arm. For each frame it
+//! - `pick_q_and_bounds` — the 2-pass `pick_q` arm. For each frame it
 //!   reads the precomputed per-frame target (allocated from the
 //!   first-pass error distribution, NOT the flat 1-pass GOP-amortised
-//!   target) and runs [`super::cbr::regulate_q`] within an
+//!   target) and runs `super::cbr::regulate_q` within an
 //!   error-driven active-Q range. The per-frame target — and therefore
 //!   the picked Q — is a function of the first-pass stats, so a 2-pass
 //!   encode demonstrably differs from a 1-pass encode of the same input.
@@ -112,7 +112,7 @@ impl FirstPassStats {
 /// Holds the complete first-pass stats buffer, a frame cursor, and the
 /// precomputed per-frame bit allocation. Constructed once from the
 /// gathered first-pass stats + the sequence bit budget; consumed
-/// frame-by-frame by [`pick_q_and_bounds`] via the cursor.
+/// frame-by-frame by `pick_q_and_bounds` via the cursor.
 #[derive(Clone, Debug)]
 pub struct TwoPassState {
     /// One [`FirstPassStats`] per display frame, in encode order.

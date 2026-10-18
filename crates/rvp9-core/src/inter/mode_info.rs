@@ -4,7 +4,7 @@
 //! (`vp9/decoder/vp9_decodemv.c:691-786`) — the function called by
 //! `read_inter_frame_mode_info` after `is_inter_block` returns `true`.
 //! It populates a [`ModeInfo`]'s
-//! [`BlockMode::Inter`](crate::mode_info::BlockMode::Inter) variant
+//! [`BlockMode::Inter`] variant
 //! with:
 //!
 //! - `ref_frame[0]`, `ref_frame[1]` (single or compound, via
@@ -131,7 +131,7 @@ pub(crate) fn mode_context_from_counter(counter: i32) -> usize {
 /// Scans the first 2 entries of the block-size-specific neighbour
 /// table ([`crate::inter::mv_ref::MV_REF_BLOCKS`]) and sums each
 /// candidate's `mode_2_counter` contribution. The summed counter is
-/// then mapped through [`COUNTER_TO_CONTEXT`].
+/// then mapped through `COUNTER_TO_CONTEXT`.
 #[must_use]
 pub fn get_mode_context<N: NeighbourLookup>(block_size: BlockSize, neighbours: &N) -> usize {
     let mv_ref_search = &crate::inter::mv_ref::MV_REF_BLOCKS[block_size.idx()];
@@ -1052,7 +1052,7 @@ pub fn count_inter_block_mode_info(
 ///
 /// This is the inverse of [`read_inter_block_mode_info`]. Parent blocks emit
 /// one inter mode and any `NEWMV` residuals; sub-8 blocks delegate their
-/// per-4x4 payload to [`write_sub8_bmi`]. When `counts` is present, the shared
+/// per-4x4 payload to `write_sub8_bmi`. When `counts` is present, the shared
 /// [`count_inter_block_mode_info`] helper retains the exact adaptation counts.
 #[allow(clippy::too_many_arguments)]
 pub fn write_inter_block_mode_info<N: NeighbourLookup>(

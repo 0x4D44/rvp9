@@ -18,7 +18,7 @@
 //!   DCT) which rvp9-core doesn't currently expose; we compute the DC
 //!   coefficient directly as `sum(src_diff[i]) * dct_scale`, where
 //!   `dct_scale` is the libvpx normalisation factor extracted from
-//!   `vpx_fdct{4x4,8x8,16x16,32x32}_1`. See [`fdct_dc_scale`] for the
+//!   `vpx_fdct{4x4,8x8,16x16,32x32}_1`. See `fdct_dc_scale` for the
 //!   per-size scale derivation.
 
 use rvp9_core::quant::forward::{

@@ -205,10 +205,10 @@ fn scaled_value(val: i32, scale_fp: i32) -> i32 {
 ///
 /// | x filtering | y filtering | selected path              |
 /// |-------------|-------------|----------------------------|
-/// | no          | no          | [`convolve_copy`]          |
+/// | no          | no          | `convolve_copy`            |
 /// | no          | yes         | [`convolve8_scaled_vert`]  |
 /// | yes         | no          | [`convolve8_scaled_horiz`] |
-/// | yes         | yes         | [`convolve8_scaled`]       |
+/// | yes         | yes         | `convolve8_scaled`         |
 ///
 /// The `_avg` variant (`is_compound_avg`) follows the same table with
 /// `convolve_avg` / `convolve8_avg_*` / `convolve8_scaled_avg`.

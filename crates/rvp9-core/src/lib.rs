@@ -46,7 +46,7 @@ mod trace_flags;
 ///
 /// libvpx parity: `uint8_t` plane storage when
 /// `CONFIG_VP9_HIGHBITDEPTH == 0`. The HBD path uses
-/// [`HbdPixel`] (`uint16_t` in libvpx) and lives behind the
+/// `HbdPixel` (`uint16_t` in libvpx) and lives behind the
 /// `highbitdepth` feature flag (W6.1 scaffold); the kernel pairs
 /// themselves are pending (see `dsp/highbd.rs`).
 ///
@@ -65,7 +65,7 @@ pub type HbdPixel = u16;
 
 /// Bit-depth of the pixel pipeline. Default builds expose only
 /// [`Bd8`](BitDepth::Bd8); `--features highbitdepth` adds
-/// [`Bd10`](BitDepth::Bd10) and [`Bd12`](BitDepth::Bd12). Mirrors libvpx
+/// `Bd10` and `Bd12`. Mirrors libvpx
 /// `enum vpx_bit_depth_t` (`vpx/vpx_image.h:42-46`).
 ///
 /// W6.1 scaffold (vpxenc parity port). This is **separate** from

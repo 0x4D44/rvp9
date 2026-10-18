@@ -75,7 +75,7 @@ pub struct BlockYrdResult {
     /// matches the emit's `inter_forward_quant_one_tx` (same transform
     /// and quantizer). This is the faithful Y-eob predictor for the
     /// picker's skip gate (`evaluate_candidate`). Note this is distinct
-    /// from [`skippable`], which is keyed off the **Hadamard /
+    /// from `skippable`, which is keyed off the **Hadamard /
     /// `quantize_fp`** rate-proxy path (the libvpx `block_yrd` SATD
     /// metric, which uses a *different* transform). For the canonical
     /// [`block_yrd`] reference function (Hadamard-only) this stays 0;

@@ -284,7 +284,7 @@ mod frame_gate_override {
 /// current thread. Called by the encoder's frame loop before picking a
 /// frame's modes. `Some(true)`/`Some(false)` force the gate on/off for
 /// this frame; `None` (the default) defers to the global `RVP9_S2_GATE`
-/// env. See [`frame_gate_override`].
+/// env. See `frame_gate_override`.
 pub fn set_frame_s2_gate(value: Option<bool>) {
     frame_gate_override::set(value);
 }
@@ -781,14 +781,14 @@ pub enum FullPixelSearchMethod {
 /// - `inter_mode_costs` — F6.1 inter-mode cost table indexed by
 ///   `[ctx][mode_idx]` where `mode_idx = mode as u8 - NEARESTMV as u8`
 ///   (i.e. 0..=3 = NEAREST / NEAR / ZERO / NEW). Build via
-///   [`crate::cost::inter_mode_costs`].
+///   `inter_mode_costs`.
 /// - `inter_mode_ctx` — the per-block inter-mode context
 ///   (`0..INTER_MODE_CONTEXTS`) computed by
 ///   [`crate::inter::get_mode_context`].
 /// - `allow_hp` — frame-header `allow_high_precision_mv` bit.
 pub struct InterModeSearchParams<'a> {
     /// Block size being decided. Drives the transform size via
-    /// [`max_txsize`] and the SAD / sub-pel-variance kernel choice.
+    /// [`crate::block::max_txsize`] and the SAD / sub-pel-variance kernel choice.
     pub block_size: BlockSize,
     /// Source luma plane view.
     pub src_plane: &'a PlaneRef<'a>,
@@ -814,7 +814,7 @@ pub struct InterModeSearchParams<'a> {
     /// MV-bit-cost LUT (from F6.1 `build_nmv_cost_table`).
     pub mv_costs: &'a MvCosts,
     /// Inter-mode rate-cost table from
-    /// [`crate::cost::inter_mode_costs`]. Indexed
+    /// `inter_mode_costs`. Indexed
     /// `[inter_mode_ctx][mode.idx()]`.
     pub inter_mode_costs: &'a InterModeCosts,
     /// Inter-mode context index — `0..INTER_MODE_CONTEXTS`. Computed
@@ -1269,7 +1269,7 @@ pub struct PickInterModeParams<'a> {
     /// [`crate::inter::mv_refs_rt_const_motion`].
     pub last_const_motion: bool,
     /// P15 — libvpx `const_motion[GOLDEN_FRAME]` flag (same as
-    /// [`last_const_motion`] but for `(GOLDEN, NEARMV)`).
+    /// `last_const_motion` but for `(GOLDEN, NEARMV)`).
     pub golden_const_motion: bool,
 
     // --- G1: UV RD fields ---
@@ -1391,14 +1391,14 @@ pub struct PickInterModeParams<'a> {
     // ------------------------------------------------------------------
     /// libvpx `sf.short_circuit_flat_blocks` speed-feature flag
     /// (`vp9_speed_features.c:486-487`). When `true`, the picker reads
-    /// [`source_variance`] and applies the flat-block gates documented at
+    /// `source_variance` and applies the flat-block gates documented at
     /// `vp9_pickmode.c:1882, 2563`. rvp9 default: `false` (matches libvpx
     /// pre-init, `cpi->sf.short_circuit_flat_blocks = 0`).
     pub short_circuit_flat_blocks: bool,
 
     /// Per-pixel source variance (libvpx `x->source_variance`,
     /// `vp9_pickmode.c:1781 / 1889`). The encoder fills this in via
-    /// [`source_variance`] when [`short_circuit_flat_blocks`] is `true`;
+    /// `source_variance` when `short_circuit_flat_blocks` is `true`;
     /// otherwise pass [`SOURCE_VARIANCE_UNCOMPUTED`] (== `u32::MAX`) to
     /// match libvpx's pre-init sentinel.
     pub source_variance: u32,
@@ -1410,7 +1410,7 @@ pub struct PickInterModeParams<'a> {
     /// matching libvpx's pre-init `force_skip_low_temp_var = 0`.
     pub force_skip_low_temp_var: bool,
     /// libvpx `sf.short_circuit_low_temp_var` level controlling whether
-    /// [`force_skip_low_temp_var`] may suppress LAST+NEWMV. Level 1 applies
+    /// `force_skip_low_temp_var` may suppress LAST+NEWMV. Level 1 applies
     /// only to 64x64 leaves; levels 2 and 3 apply to every leaf.
     pub short_circuit_low_temp_var: u8,
 
@@ -1492,7 +1492,7 @@ pub struct PickInterModeParams<'a> {
     pub bias_golden: bool,
 
     /// libvpx `cpi->rc.frames_since_golden` — number of frames since
-    /// the last GOLDEN refresh. Feeds the [`bias_golden`] gate's
+    /// the last GOLDEN refresh. Feeds the `bias_golden` gate's
     /// `frames_since_golden > 4` check (`vp9_pickmode.c:2238`).
     pub frames_since_golden: u32,
 
@@ -1535,19 +1535,19 @@ pub struct PickInterModeParams<'a> {
     /// measured recovery while other presets retain causal-filter reuse.
     pub retain_last_near_eighttap_filter_search: bool,
 
-    /// 8×8-MI row index of this block. Feeds the [`cb_pred_filter_search`]
+    /// 8×8-MI row index of this block. Feeds the `cb_pred_filter_search`
     /// chessboard predicate `((mi_row + mi_col) >> bsl) +
     /// chessboard_index) & 1` (`vp9_pickmode.c:1855-1857`).
     pub mi_row: u32,
 
     /// 8×8-MI column index of this block. Feeds the
-    /// [`cb_pred_filter_search`] chessboard predicate.
+    /// `cb_pred_filter_search` chessboard predicate.
     pub mi_col: u32,
 
     /// libvpx `get_chessboard_index(cm->current_video_frame) = frame &
     /// 1` (`vp9_common.h:88-90`). Toggles which half of the chessboard
     /// pattern runs filter search this frame. Feeds the
-    /// [`cb_pred_filter_search`] predicate.
+    /// `cb_pred_filter_search` predicate.
     pub chessboard_index: u32,
 
     /// Whether the current frame's reference flags permit GOLDEN.
@@ -1582,7 +1582,7 @@ pub struct PickInterModeParams<'a> {
     /// libvpx `cpi->sf.rt_intra_dc_only_low_content`
     /// (`vp9_speed_features.h:654`, gate site `vp9_pickmode.c:2571`).
     /// When `true`, restricts intra-in-inter to `DC_PRED` only on
-    /// blocks whose [`content_state_sb`] is not `kVeryHighSad`.
+    /// blocks whose `content_state_sb` is not `kVeryHighSad`.
     ///
     /// libvpx defaults to `1` only at speed 8
     /// (`vp9_speed_features.c:770`); rvp9 follows the speed-6/7 default
@@ -1706,7 +1706,7 @@ pub struct DenoiserCandidateContext {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct PickInterModeResult {
     /// Winning inter mode. Meaningless when `picked_ref_frame ==
-    /// IntraFrame`; use [`picked_intra_mode`] instead.
+    /// IntraFrame`; use `picked_intra_mode` instead.
     pub best_mode: InterMode,
     /// Winning MV (1/8-pel units). `Mv::ZERO` when intra wins.
     pub best_mv: Mv,
@@ -1766,7 +1766,7 @@ pub struct PickInterModeResult {
     /// the diamond + sub-pel search. Carries NO coding effect on its own.
     pub newmv_search_last: Option<Mv>,
     /// **Phase-2 option-A** — the GOLDEN-ref NEWMV search result. See
-    /// [`newmv_search_last`].
+    /// `newmv_search_last`.
     pub newmv_search_golden: Option<Mv>,
     /// Diagnostic handle for the actually evaluated LAST candidates.
     /// Zero when tracing is disabled. The encoder consumes non-zero handles

@@ -1600,7 +1600,7 @@ fn open_input(input: &Path, opts: &EncOpts) -> Result<(FrameSource, InputInfo), 
 /// Build the [`EncoderConfig`] from the parsed [`EncOpts`] plus the
 /// runtime-derived geometry/bitrate. This is the SINGLE source of truth
 /// for the CLI→encoder mapping: `run()` calls it for the real encode,
-/// and the PROOF tests call it (via [`build_encoder_config_for_test`])
+/// and the PROOF tests call it (via `build_encoder_config_for_test`)
 /// so they exercise exactly the production plumbing — if a field's
 /// wiring is stripped, both the encode and the test break.
 ///

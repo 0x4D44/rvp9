@@ -815,12 +815,12 @@ const FIRST_PASS_QINDEX: u8 = 128;
 /// `vp9/encoder/vp9_ratectrl.c`):
 ///
 /// 1. **First pass** — encode the whole sequence at a fixed quantizer
-///    ([`FIRST_PASS_QINDEX`]) in a stats-only mode, gathering per-frame
+///    (`FIRST_PASS_QINDEX`) in a stats-only mode, gathering per-frame
 ///    [`FirstPassStats`] (`coded_error` from the actual coded
 ///    reconstruction, a DC-intra `intra_error` proxy, and a
 ///    motion-effectiveness `pcnt_inter` proxy). The first-pass bitstream
 ///    is discarded (mirrors libvpx writing stats to a file and throwing
-///    away the pass-1 output). See [`gather_first_pass_stats`].
+///    away the pass-1 output). See `gather_first_pass_stats`.
 /// 2. **Second pass** — build a [`TwoPassState`] that distributes the
 ///    sequence bit budget across frames proportional to their
 ///    first-pass coded-error score (libvpx `gf_group->bit_allocation`,

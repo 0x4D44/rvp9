@@ -53,7 +53,7 @@
 //! 6. Refine with a 2-point cross derived from the diamond results.
 //! 7. Multiply by 8 to convert full-pel → Q3 (1/8-pel) units.
 //! 8. Clamp to the subpel MV search range (caller's responsibility
-//!    via [`MvLimits`]).
+//!    via `MvLimits`).
 //!
 //! ## Limitations / divergences
 //!

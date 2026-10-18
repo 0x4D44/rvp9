@@ -6,14 +6,15 @@
 //! with [`ModeInfo`]-derived MV(s) / refs / filter, this driver:
 //!
 //! 1. Looks up each active reference frame via its
-//!    `header.ref_frame_indices[i]` slot in the [`DecoderFramePool`].
+//!    `header.ref_frame_indices[i]` slot in the
+//!    [`rvp9_core::frame::DecoderFramePool`].
 //! 2. Builds a [`ScaleFactors`] for each ref against the current frame's
 //!    dimensions (libvpx `vp9_setup_scale_factors_for_frame` at
 //!    `vp9_decodeframe.c:1559-1606`).
 //! 3. For each plane (Y, U, V) and each TX-sized sub-region inside the
 //!    coding block, computes the plane-relative pixel origin, scales
 //!    the MV into the ref's coord system, and calls
-//!    [`inter_predictor`].
+//!    [`rvp9_core::inter::scale::inter_predictor`].
 //! 4. If `mi.skip == false`, decodes the residual coefficients per TX
 //!    position via [`decode_block_tokens`] and applies the IT-add
 //!    on top of the MC output.
@@ -27,10 +28,10 @@
 //! - **D.2.b** — `mi.skip == true`: MC output is the final
 //!   reconstruction (no residual).
 //! - **D.2.c** — compound prediction (both refs valid): first ref via
-//!   [`inter_predictor`] into dst, second ref via averaging.
+//!   [`rvp9_core::inter::scale::inter_predictor`] into dst, second ref via averaging.
 //! - **D.2.d** — sub-8 inter blocks (`Block4x4` / `Block4x8` /
 //!   `Block8x4`): per-bmi MC.
-//! - **D.2.e** — integration into [`crate::tile::decode_block`].
+//! - **D.2.e** — integration into `decode_block`.
 //!
 //! ## Coordinate system
 //!
@@ -152,7 +153,7 @@ pub struct InterBlockInputs<'a> {
 /// - If `inputs.refs[i] == None` for any `i` where `mi.ref_frames[i]`
 ///   is an inter ref (caller must resolve before invocation).
 /// - Inherits the assertions in [`decode_block_tokens`] and
-///   [`inter_predictor`].
+///   [`rvp9_core::inter::scale::inter_predictor`].
 #[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
 pub fn reconstruct_inter_block<D: TileFrameDst>(
     reader: &mut BoolReader<'_>,
@@ -645,7 +646,7 @@ pub fn reconstruct_inter_block<D: TileFrameDst>(
 /// will fully populate `mi.mode` and `mi.bmi`.
 ///
 /// `decode_block` integration (Stage D.2.e): the live inter-frame
-/// driver ([`crate::Decoder::decode_inter_frame`]) calls this helper
+/// driver (`Decoder::decode_inter_frame`) calls this helper
 /// from the inter branch of `decode_block`. `FrameKind::InterFrame`
 /// is fully handled; only specific structural error cases (e.g. an
 /// inter ref naming an empty `ref_frame_map` slot —

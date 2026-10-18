@@ -9,7 +9,7 @@
 //! ## Overview
 //!
 //! - [`WorkerPool`] — a long-lived pool of OS threads owned by a
-//!   [`Decoder`] (or future `Encoder`). One construction per codec
+//!   `Decoder` (or future `Encoder`). One construction per codec
 //!   instance, joined on drop.
 //! - [`FrameScope`] — a per-frame submission handle returned via
 //!   [`WorkerPool::scope`]. The closure-form API (HLD V6 §G5
@@ -37,7 +37,7 @@
 //! returns — see [`FrameScope::submit`]'s SAFETY comment and the
 //! module-adjacent `SAFETY.md` for the full chain.
 //!
-//! [`Decoder`]: rvp9_decoder::Decoder
+//! The decoder crate owns the pool through its `Decoder` type.
 
 mod lf_pool;
 mod pool;

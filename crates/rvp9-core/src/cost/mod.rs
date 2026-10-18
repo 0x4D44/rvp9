@@ -16,7 +16,7 @@
 //!   partition / inter-mode / skip / switchable-interp / tx-size /
 //!   intra-Y / intra-UV trees. Mirrors libvpx `vp9_initialize_rd_consts`
 //!   (`vp9_rd.c:396-`) and `fill_mode_costs` (`vp9_rd.c:92-133`).
-//! - [`mv_cost`] — MV joint-cost vector + per-axis component-cost
+//! - [`mod@mv_cost`] — MV joint-cost vector + per-axis component-cost
 //!   tables. Mirrors libvpx `build_nmv_component_cost_table` and
 //!   `vp9_build_nmv_cost_table` (`vp9_encodemv.c:69-237`).
 //! - [`coef_cost`] — the big `[tx][plane][ref][band][ctx][token]`

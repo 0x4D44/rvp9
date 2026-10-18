@@ -30,6 +30,8 @@ Evidence fingerprint: `manual:v1:manual-v1-workspace-rustdoc-doc-link-warnings`
 
 ## Fix
 
-<unfixed — raised only>
+Corrected broken intra-doc links throughout the public API documentation. Links now target documented public items; references to private implementation details and literal syntax use inline code or corrected Markdown. No API or runtime behavior changed.
+
+Validation: the baseline `cargo doc --workspace --no-deps --locked --offline` emitted 143 rustdoc warning diagnostics. After the documentation fixes, the same command completed with zero warnings. `cargo fmt --all --check` and `git diff --check` passed, and a source diff audit confirmed all 290 changed Rust source lines are comments.
 
 ## Notes

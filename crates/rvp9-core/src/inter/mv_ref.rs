@@ -164,7 +164,7 @@ pub static MV_REF_BLOCKS: [[Position; MVREF_NEIGHBOURS]; 13] = [
 /// (`vp9_mvref_common.h:209-211`). For sub-8 partitions, maps
 /// `(block_idx, is_search_col_zero)` to the index of the 4×4
 /// sub-block within the parent's `bmi[4]` array. Used by
-/// [`get_sub_block_mv`].
+/// `get_sub_block_mv`.
 pub static IDX_N_COLUMN_TO_SUBBLOCK: [[usize; 2]; 4] = [[1, 2], [1, 3], [3, 2], [3, 3]];
 
 /// libvpx `get_sub_block_mv` (`vp9_mvref_common.h:222-230`). For

@@ -82,7 +82,7 @@
 //!
 //! ## Tests
 //!
-//! Module-level PROOF tests live in [`tests`] (≥5, each citing
+//! Module-level PROOF tests live in `tests` (≥5, each citing
 //! libvpx file:line). No encoder integration tests yet.
 
 use crate::rate_control::{RateControl, RateControlConfig};

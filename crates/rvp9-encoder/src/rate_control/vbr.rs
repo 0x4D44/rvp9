@@ -15,17 +15,17 @@
 //!
 //! What this module implements (libvpx file:line references inline):
 //!
-//! - [`pick_q_and_bounds`] — top-level dispatch entry point, mirrors
+//! - `pick_q_and_bounds` — top-level dispatch entry point, mirrors
 //!   `rc_pick_q_and_bounds_one_pass_vbr` (`vp9_ratectrl.c:1138-1303`).
-//! - [`active_worst_quality_vbr`] — VBR's active-worst computation,
+//! - `active_worst_quality_vbr` — VBR's active-worst computation,
 //!   mirrors `calc_active_worst_quality_one_pass_vbr`
 //!   (`vp9_ratectrl.c:905-928`).
-//! - [`active_best_quality_vbr`] — VBR's active-best computation
+//! - `active_best_quality_vbr` — VBR's active-best computation
 //!   (libvpx-faithful, lines 1167-1185 KF / 1234-1247 inter).
-//! - [`calc_iframe_target_size_vbr`] — KF target (`avg_bw * 25`),
+//! - `calc_iframe_target_size_vbr` — KF target (`avg_bw * 25`),
 //!   mirrors `vp9_calc_iframe_target_size_one_pass_vbr`
 //!   (`vp9_ratectrl.c:2039-2048`).
-//! - [`calc_pframe_target_size_vbr`] — inter target with GOP
+//! - `calc_pframe_target_size_vbr` — inter target with GOP
 //!   amortisation, mirrors
 //!   `vp9_calc_pframe_target_size_one_pass_vbr`
 //!   (`vp9_ratectrl.c:2019-2037`).

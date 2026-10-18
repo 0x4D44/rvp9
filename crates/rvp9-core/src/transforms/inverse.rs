@@ -616,7 +616,7 @@ pub(crate) fn idct16x16_neon_entry_trace() -> [usize; 3] {
 }
 
 /// Dispatch the full inverse 16×16 DCT to the exact AArch64 vector
-/// kernel when available, retaining [`idct16x16_add_scalar`] as the
+/// kernel when available, retaining `idct16x16_add_scalar` as the
 /// portable oracle.
 pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
     #[cfg(all(target_arch = "aarch64", not(miri)))]
@@ -1704,7 +1704,7 @@ fn iht_16_dispatch(tx_type: TxType) -> TransformPair<16> {
 ///
 /// Per `tx_type` (libvpx struct `transform_2d { cols, rows }` — `cols`
 /// is the first field, see Stage 3 stretch M.8 note on
-/// [`iht_4_dispatch`]):
+/// `iht_4_dispatch`):
 /// - `DctDct`: row=idct4, col=idct4 (equivalent to [`idct4x4_16_add`]).
 /// - `AdstDct`: row=idct4, col=iadst4.
 /// - `DctAdst`: row=iadst4, col=idct4.

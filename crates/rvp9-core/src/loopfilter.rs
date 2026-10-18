@@ -44,7 +44,7 @@
 //!
 //! ## Task 6.3.4 — `setup_mask` partition-tree walker
 //!
-//! - [`setup_mask`] — the top-level partition-tree walker that
+//! - [`setup_mask()`] — the top-level partition-tree walker that
 //!   calls `build_masks` / `build_y_mask` per leaf, switching on
 //!   `mip[0]->sb_type` at the 32 / 16 / 8 levels and handling the
 //!   per-partition shift bookkeeping. Mirrors libvpx
@@ -52,7 +52,7 @@
 //!
 //! ## Task 6.3.5 — `adjust_mask` post-pass
 //!
-//! - [`adjust_mask`] — the post-pass that merges TX_32X32 into
+//! - [`adjust_mask()`] — the post-pass that merges TX_32X32 into
 //!   TX_16X16, promotes 4×4-border edges to 8×8, and masks off
 //!   frame-edge cells (right/bottom clamps + left-column clear).
 //!   Mirrors libvpx `vp9_adjust_mask` (`vp9_loopfilter.c:766-878`).
@@ -1076,7 +1076,8 @@ pub const LAST_FRAME: usize = 1;
 pub type FrameFilterLevels = [[[u8; MAX_MODE_LF_DELTAS]; MAX_REF_FRAMES]; MAX_SEGMENTS];
 
 /// Inputs to [`resolve_filter_levels`]. Carries the post-parse
-/// (resolved) loop-filter deltas. Where [`LoopFilterParams`] holds
+/// (resolved) loop-filter deltas. Where
+/// [`crate::bitstream::sub_parsers::LoopFilterParams`] holds
 /// `Option<i8>` per slot (`None` = "no update this frame, keep
 /// previous"), this struct holds the resolved `i8` value the decoder
 /// is currently using for each slot.
@@ -1093,7 +1094,7 @@ pub struct ResolvedLfDeltas {
 
 /// Subset of segmentation parameters needed by the loop-filter
 /// resolver. Smaller and more focused than the full
-/// [`crate::bitstream::SegmentationParams`] — only the AltLf feature
+/// [`crate::bitstream::sub_parsers::SegmentationParams`] — only the AltLf feature
 /// data + the `abs_delta` flag matter for filter-level computation.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub struct SegmentationLfView {
@@ -1107,7 +1108,8 @@ pub struct SegmentationLfView {
 }
 
 impl SegmentationLfView {
-    /// Build a view from the parser's full [`SegmentationParams`].
+    /// Build a view from the parser's full
+    /// [`crate::bitstream::sub_parsers::SegmentationParams`].
     /// Falls back to `None` for every segment when segmentation is
     /// disabled.
     #[must_use]

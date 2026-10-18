@@ -27,7 +27,7 @@
 //!   update) or gate=1 followed by per-slot updates. Mirrors libvpx
 //!   `update_coef_probs_common` (`vp9_bitstream.c:545-699`,
 //!   TWO_LOOP branch).
-//! - [`tx_totals_gate`] — outer-loop early-out used by libvpx
+//! - [`tx_totals_gate_skips`] — outer-loop early-out used by libvpx
 //!   `update_coef_probs` (`vp9_bitstream.c:683-699`): if the
 //!   per-TX-size token total is `<= 20` the encoder skips the
 //!   savings search entirely and writes a single `0` gate bit.

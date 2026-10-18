@@ -972,7 +972,7 @@ pub static RVP9_G5_2_SCRATCH_ALLOCS: std::sync::atomic::AtomicU32 =
 /// and zero-init traffic (per-tile scratch is ~3 MB at 1080p). G5.2
 /// recycles those buffers across frames.
 ///
-/// **Lifecycle**: the [`crate::Decoder`] equivalent (or any host) owns
+/// **Lifecycle**: the `Decoder` equivalent (or any host) owns
 /// one [`Yv12ScratchPool`] for its lifetime. Per-frame:
 ///
 /// 1. Call [`Self::take(n_tiles, &yv12)`](Self::take) to obtain

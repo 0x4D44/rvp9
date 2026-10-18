@@ -25,7 +25,7 @@
 //! `OnceLock` keeps whichever value won the first init race, and the
 //! caps are baked in. By holding `Arc<SimdDispatch>` everywhere in
 //! production AND letting in-crate tests construct their own
-//! `Arc<SimdDispatch>` via [`SimdDispatch::build`] (`pub(crate)` —
+//! `Arc<SimdDispatch>` via `SimdDispatch::build` (`pub(crate)` —
 //! external callers route through [`init`] / [`get`] only), the test
 //! ergonomics work without compromising the singleton model. The
 //! `Arc` clone is one atomic per construction — cheap and bounded.
@@ -38,7 +38,7 @@
 //! 2. Add a `pub fn <kernel>(&self) -> fn(...)` accessor returning the
 //!    raw `fn`. External crates dispatch via this accessor (the field
 //!    itself is `pub(crate)` to keep slot additions crate-internal).
-//! 3. Populate the slot inside [`SimdDispatch::build`], dispatching on
+//! 3. Populate the slot inside `SimdDispatch::build`, dispatching on
 //!    `caps` to pick the best available implementation. Default to
 //!    the scalar reference.
 //! 4. Co-locate a scalar-vs-SIMD differential test under
@@ -46,7 +46,7 @@
 //!    `#[cfg(test)] mod tests`).
 //!
 //! G4.1 pilot lands the first slot: `idct8x8_add`. See
-//! [`crate::dsp::x86_64::idct8x8_avx2`] for the AVX2 implementation
+//! `crate::dsp::x86_64::idct8x8_avx2` for the AVX2 implementation
 //! and the safe-wrapper convention this slot uses.
 
 use std::sync::{Arc, OnceLock};
@@ -648,7 +648,7 @@ pub type SadFn = fn(&[u8], usize, &[u8], usize) -> u32;
 /// 13-entry SAD dispatch table, one fn-pointer per VP9 block size, indexed
 /// by `BlockSize::idx()` (`0..13`). Mirrors libvpx's `cpi->fn_ptr[bsize].sdf`
 /// indirection. Each entry is selected by one `if caps.avx2` clause in
-/// [`SimdDispatch::build`] — the AVX2 wrapper on AVX2 hosts, the scalar
+/// `SimdDispatch::build` — the AVX2 wrapper on AVX2 hosts, the scalar
 /// reference otherwise. Byte-exact across the two arms (SAD is an
 /// integer-exact `Σ|a − b|`).
 #[derive(Debug, Clone)]
@@ -679,7 +679,7 @@ pub type Sad4dFn = fn(&[u8], usize, &[&[u8]; 4], usize, &mut [u32; 4]);
 /// `cpi->fn_ptr[bsize].sdx4df` indirection. Used by the diamond search's
 /// `all_in` fast path (`crate::mv_search::full_pixel`) to evaluate the four
 /// axis-aligned candidate sites of a step in one call. Each entry is selected
-/// by ISA capability in [`SimdDispatch::build`] — AVX2 on x86-64, dot-product
+/// by ISA capability in `SimdDispatch::build` — AVX2 on x86-64, dot-product
 /// or base NEON on AArch64, and the scalar four-`sad` reference otherwise.
 /// Every arm is byte-exact with the corresponding single-SAD slot.
 #[derive(Debug, Clone)]
@@ -722,7 +722,7 @@ pub type CellVarFn = fn(&[u8], usize, &[u8], usize) -> (i32, u32);
 /// size, indexed by `BlockSize::idx()` (`0..13`). Feeds the inter RD model's
 /// `compute_variance` (`crate::mode_decision::model_rd`), whose scalar
 /// `saturating_sub` finisher consumes the reduction unchanged. Each entry is
-/// selected by ISA capability in [`SimdDispatch::build`] — AVX2 on x86_64,
+/// selected by ISA capability in `SimdDispatch::build` — AVX2 on x86_64,
 /// dot-product or base NEON for widths 8–64 on AArch64, and scalar otherwise.
 /// All arms are byte-exact (integer-exact reduction, no overflow for any VP9
 /// size).
@@ -755,7 +755,7 @@ pub type SubpelVarFn = fn(&[u8], usize, usize, usize, &[u8], usize) -> (u32, u32
 /// rectangular) carry a kernel; the two sub-8 rect sizes (4×8, 8×4) hold
 /// `None`, preserving the fail-soft `svf_for` semantics
 /// (`crate::mv_search::sub_pixel`). Each populated entry is selected by one
-/// ISA clause in [`SimdDispatch::build`] — AVX2 on x86_64, NEON for widths
+/// ISA clause in `SimdDispatch::build` — AVX2 on x86_64, NEON for widths
 /// 16–64 on AArch64, and the scalar reference otherwise. Byte-exact across
 /// all arms.
 #[derive(Debug, Clone)]
@@ -777,7 +777,7 @@ impl SubpelVarTable {
 /// The runtime SIMD kernel dispatch table.
 ///
 /// Populated once per process via [`init`] (production path). In-crate
-/// tests may also use the `pub(crate)` [`SimdDispatch::build`]
+/// tests may also use the `pub(crate)` `SimdDispatch::build`
 /// constructor with caps tweaked to force a particular ISA tier;
 /// external callers reach `SimdDispatch` exclusively through
 /// [`init`] / [`get`].
@@ -840,7 +840,7 @@ impl SubpelVarTable {
 pub struct SimdDispatch {
     /// The capability set the table was built against. Persisted for
     /// debug / instrumentation; the dispatch slots below are already
-    /// specialised to this caps state at [`SimdDispatch::build`] time.
+    /// specialised to this caps state at `SimdDispatch::build` time.
     pub caps: Caps,
 
     /// G4.1 — 8×8 inverse DCT + residual add, full-density (eob > 1).

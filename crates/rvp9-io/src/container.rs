@@ -23,7 +23,7 @@
 //! ```
 //!
 //! Each `&[u8]` is one transport packet — i.e. exactly what gets fed
-//! into [`rvp9_decoder::Decoder::parse_packet`].
+//! into `Decoder::parse_packet`.
 
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
@@ -1015,7 +1015,7 @@ fn read_ebml_vint(data: &[u8], pos: usize) -> Result<(u64, usize), ContainerErro
 /// ranges of every video-track block (one per VP9 transport packet).
 ///
 /// Implementation note: we recurse into top-level Segment and Cluster
-/// containers, but treat any unrecognised element as "skip <size>
+/// containers, but treat any unrecognised element as "skip `<size>`
 /// bytes". This is robust against tracks/seek-heads/cues/etc.
 ///
 /// # Errors

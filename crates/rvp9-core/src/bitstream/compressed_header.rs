@@ -35,7 +35,7 @@
 //!   `comp_inter_prob` / `single_ref_prob` / `comp_ref_prob`
 //!   depending on the selected reference mode.
 //! - [`read_y_mode_probs`] / [`read_partition_probs`].
-//! - [`read_mv_probs`] / [`update_mv_probs`] — note: MV probs use
+//! - [`read_mv_probs`] / `update_mv_probs` — note: MV probs use
 //!   a different wire format ("update bit at `MV_UPDATE_PROB`,
 //!   then a 7-bit literal forced odd") and **not** `diff_update_prob`.
 //!

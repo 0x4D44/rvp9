@@ -41,7 +41,7 @@
 //!
 //! ## Wire format produced
 //!
-//! For each parent block visited by [`write_partition_tree`] (top
+//! For each parent block visited by `write_partition_tree` (top
 //! call at `bsize = Block64x64, n4x4_l2 = 4`):
 //!
 //! 1. **Partition bit-sequence** against `VP9_KF_PARTITION_PROBS[ctx]`:
@@ -678,7 +678,7 @@ impl NeighbourCtx {
 /// use the keyframe tables directly).
 ///
 /// Walks `tile_bounds` in row-major 64x64 SB order; for each SB
-/// drives [`write_partition_tree`] which recursively emits the
+/// drives `write_partition_tree` which recursively emits the
 /// partition decisions (mirrored from the decoder's
 /// `decode_partition`) and the per-leaf intra-DC-skip block.
 ///
@@ -686,7 +686,8 @@ impl NeighbourCtx {
 ///
 /// - The compressed header must commit the same `tx_mode` passed here.
 ///   Under `TxModeSelect` (Track-F iter8) each leaf's RD-chosen
-///   `tx_size` is signalled on the wire via [`write_tx_size`]; under any
+///   `tx_size` is signalled on the wire via
+///   [`crate::mode_info::write_tx_size`]; under any
 ///   non-select mode no tx_size bits are emitted and the decoder derives
 ///   `tx_size = min(max_tx, tx_mode_to_biggest_tx_size(tx_mode))`.
 /// - The uncompressed header must commit `segmentation.enabled =
@@ -2103,7 +2104,7 @@ impl NeighbourLookup for MiGridNeighbourLookup<'_> {
 /// grid. Mirror of [`write_tile_intra_keyframe`] for non-keyframes.
 ///
 /// Walks the tile in 64x64 SB order and drives
-/// [`write_inter_partition_tree`] which recursively emits the
+/// `write_inter_partition_tree` which recursively emits the
 /// partition decisions (mirrored from the decoder's
 /// `decode_inter_partition`) plus the per-leaf inter block info
 /// (segment-id skipped, skip=1, is_inter=1, tx_size, ref frames,
@@ -3386,7 +3387,7 @@ fn write_or_reset_inter_residual(
 
 /// Record one fully encoded inter-frame leaf's coefficient tokens.
 ///
-/// This is the coefficient-only portion of [`write_inter_block_leaf`]. It
+/// This is the coefficient-only portion of `write_inter_block_leaf`. It
 /// lets a realtime encoder tokenize a leaf immediately after transform and
 /// quantization, while the owning tile job is already active. The caller must
 /// invoke leaves in the same per-tile syntax order as [`write_tile_inter`].
@@ -3449,7 +3450,7 @@ pub fn record_inter_leaf_coefficients(
 /// This is the per-transform counterpart to
 /// [`record_inter_leaf_coefficients`]. The caller supplies the transform's
 /// leaf-local 4×4 coordinates and must visit transform blocks in the same
-/// raster order as [`write_inter_block_residual`]. The helper updates the
+/// raster order as `write_inter_block_residual`. The helper updates the
 /// inter coefficient context, the four-token coefficient counts, the
 /// optional full twelve-token encoder histogram, and `retained` in one
 /// count-only recording pass.

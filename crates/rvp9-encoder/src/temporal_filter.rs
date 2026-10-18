@@ -227,7 +227,7 @@ impl<'a> ArnrFilterData<'a> {
     /// # Panics
     ///
     /// Panics if `alt_ref_index >= frames.len()`, if `frames` is
-    /// empty or exceeds [`MAX_LAG_BUFFERS`], or if `strength > 6`.
+    /// empty or exceeds [`crate::lookahead::MAX_LAG_BUFFERS`], or if `strength > 6`.
     #[must_use]
     pub fn new(frames: Vec<ArnrFrameRef<'a>>, alt_ref_index: usize, strength: u8) -> Self {
         assert!(!frames.is_empty(), "ArnrFilterData needs ≥1 frame");
@@ -1255,7 +1255,7 @@ fn sad_at_offset_clamped(
 /// frame width.
 ///
 /// Writes to `out_y` / `out_u` / `out_v` at the same offsets the
-/// ARF source occupies. Uses [`fixed_divide_table`] to normalise
+/// ARF source occupies. Uses `fixed_divide_table` to normalise
 /// `accumulator / count` per pixel (libvpx lines 905-947).
 #[allow(clippy::too_many_arguments)]
 pub fn temporal_filter_iterate_row(

@@ -1,7 +1,8 @@
 //! T-5 per-tile-dispatch profiling driver.
 //!
 //! Sets `RVP9_PROFILE_TILES_OUT=<--out>`, constructs
-//! [`rvp9_decoder::Decoder::with_threads(--threads)`], and replays the
+//! [`rvp9_decoder::Decoder::with_threads`] using the `--threads` setting,
+//! and replays the
 //! `--fixture` file in a loop until at least `--min-timed` post-warmup
 //! profiling rows have been emitted; repeats for `--runs` independent decoder
 //! instances. Each frame appends one CSV row of phase rdtsc-cycles

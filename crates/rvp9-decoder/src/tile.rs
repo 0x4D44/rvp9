@@ -1753,8 +1753,9 @@ fn left_block_mode(
 /// [`FrameDecodeParams`] but carries the inter-only fields the
 /// per-block reader needs: the resolved reference frames (Y'CbCr buffers
 /// for LAST / GOLDEN / ALTREF), the inter mode read params, and the
-/// current frame's aligned luma dimensions for the [`ScaleFactors`]
-/// build inside [`decode_and_reconstruct_inter_block`].
+/// current frame's aligned luma dimensions for the
+/// [`rvp9_core::inter::scale::ScaleFactors`] build inside
+/// [`crate::reconstruct_inter::decode_and_reconstruct_inter_block`].
 #[derive(Clone, Debug)]
 pub struct InterFrameDecodeParams<'a> {
     /// Shared base (mi_cols / tx_mode / segmentation / quant).
@@ -1774,7 +1775,8 @@ pub struct InterFrameDecodeParams<'a> {
     /// per-block reader either avoid the ref (single-ref blocks pinning
     /// LAST) or panic if a missing ref is selected.
     pub refs: [Option<&'a Yv12Buffer>; 3],
-    /// Per-logical-ref pre-computed [`ScaleFactors`] (`[LAST, GOLDEN,
+    /// Per-logical-ref pre-computed
+    /// [`rvp9_core::inter::scale::ScaleFactors`] (`[LAST, GOLDEN,
     /// ALTREF]`). Tier 1 optimization: mirrors libvpx
     /// `vp9_setup_scale_factors_for_frame` which is called once per
     /// active ref per frame at `vp9_decodeframe.c:2928-2935` rather
@@ -1788,7 +1790,7 @@ pub struct InterFrameDecodeParams<'a> {
 
 /// Run the per-tile decode loop for an inter frame. Mirrors
 /// [`decode_tile_intra`] but threads the inter ref pool + per-frame
-/// inter params and dispatches per-block to [`decode_inter_block`].
+/// inter params and dispatches per-block to `decode_inter_block`.
 ///
 /// # Errors
 ///

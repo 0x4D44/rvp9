@@ -21,7 +21,7 @@
 //!
 //! ## What this glue builds (assessment items 1-4)
 //!
-//! 1. A [`HandleInterRunner`] factory per ref-frame, wired to the real
+//! 1. A `HandleInterRunner` factory per ref-frame, wired to the real
 //!    [`handle_inter_mode_single_ref`] with real Y/UV quantizers, the
 //!    [`CoefCostTable`], `tx_size_cost`, skip costs and U/V plane
 //!    slices, and the real `inter_mode_costs` mode rate (NOT the

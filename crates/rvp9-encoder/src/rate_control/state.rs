@@ -120,7 +120,7 @@ pub struct RateControl {
     ///
     /// Mirrors libvpx `rc->rate_correction_factors[RATE_FACTOR_LEVELS]`
     /// (`vp9_ratectrl.h:103`). Indexed by the
-    /// [`cbr::RateFactorLevel`] enum. Multiplies the libvpx
+    /// `cbr::RateFactorLevel` enum. Multiplies the libvpx
     /// `vp9_rc_bits_per_mb` enumerator-over-Q estimate to compensate
     /// for systematic over-/under-estimation; damped-updated
     /// post-encode by `postencode::update_rate_correction_factors`.
@@ -438,7 +438,7 @@ impl RateControl {
     /// bounds describe the per-frame range the encoder may dither
     /// within (e.g. segment-level Q deltas, AQ adjustments).
     ///
-    /// Wraps [`super::cbr::pick_q_and_bounds`].
+    /// Wraps `super::cbr::pick_q_and_bounds`.
     ///
     /// W1.6(vpxenc parity, A3 P0) — dispatches on `config.rc_mode`
     /// (libvpx `vp9_ratectrl.c:1587-1609`). All five arms are now live:
@@ -577,7 +577,7 @@ impl RateControl {
     ///
     /// `actual_bits` is the exact bit count of the emitted frame
     /// (compressed-header + tile data + frame overhead). Wraps
-    /// [`super::postencode::postencode_update`].
+    /// `super::postencode::postencode_update`.
     pub fn postencode_update(&mut self, actual_bits: u32, frame_kind: FrameKind) {
         postencode::postencode_update(self, actual_bits, frame_kind);
     }

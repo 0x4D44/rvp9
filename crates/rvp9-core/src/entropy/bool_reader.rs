@@ -191,7 +191,7 @@ impl<'a> BoolReader<'a> {
     /// overwhelming common case mid-stream) lives here and is
     /// `#[inline]`-hinted so LLVM can fold it into the single call
     /// site in `read()`. The EOF byte-loop is hoisted to
-    /// [`Self::fill_slow`] with `#[cold] #[inline(never)]` so it
+    /// `Self::fill_slow` with `#[cold] #[inline(never)]` so it
     /// stays out-of-line and does not bloat the per-bit hot loop.
     ///
     /// `#[inline]` (not `#[inline(always)]`) is deliberate: it is a

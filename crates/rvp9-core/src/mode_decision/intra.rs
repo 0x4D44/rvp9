@@ -38,7 +38,7 @@
 //! For each `mode ∈ 0..NUM_INTRA_MODES`:
 //!
 //! 1. Build the prediction edges (above / left / above-left) from the
-//!    caller's neighbour buffers, honouring [`have_above`] / [`have_left`].
+//!    caller's neighbour buffers, honouring `have_above` / `have_left`.
 //! 2. Run [`crate::intra_pred::intra_predict`] into a scratch `pred`
 //!    buffer.
 //! 3. Compute the residual `src - pred`.
@@ -91,10 +91,10 @@ pub type YModeCostsKf = [[[i32; NUM_INTRA_MODES]; NUM_INTRA_MODES]; NUM_INTRA_MO
 ///
 /// `above_pixels` (length ≥ `bs`), `left_pixels` (length ≥ `bs`), and
 /// `top_left_pixel` describe the already-reconstructed neighbour
-/// edges. When [`have_above`] is `false`, the picker ignores
+/// edges. When `have_above` is `false`, the picker ignores
 /// `above_pixels` and fills the above edge with `127` per libvpx's
 /// unavailable-neighbour convention (`ABOVE_UNAVAILABLE_FILL`); same
-/// for [`have_left`] with `129` (`LEFT_UNAVAILABLE_FILL`).
+/// for `have_left` with `129` (`LEFT_UNAVAILABLE_FILL`).
 ///
 /// `quantizer` is the per-plane Y quantizer struct from
 /// `init_plane_quantizers(q_index, QuantizerDeltas::Y)`. `q_index` is
@@ -107,7 +107,7 @@ pub type YModeCostsKf = [[[i32; NUM_INTRA_MODES]; NUM_INTRA_MODES]; NUM_INTRA_MO
 #[derive(Clone, Copy)]
 pub struct IntraModeSearchParams<'a> {
     /// Block size we are deciding for. Drives the transform size via
-    /// [`max_txsize`].
+    /// [`crate::block::max_txsize`].
     pub block_size: BlockSize,
     /// Source luma plane view.
     pub src_plane: &'a PlaneRef<'a>,
@@ -126,7 +126,7 @@ pub struct IntraModeSearchParams<'a> {
     pub have_above: bool,
     /// Whether `left_pixels` is in-frame and decoded.
     pub have_left: bool,
-    /// Y-plane forward-quantizer derived from [`q_index`].
+    /// Y-plane forward-quantizer derived from `q_index`.
     pub quantizer: &'a PlaneQuantizers,
     /// Frame base qindex (0..255) — used to compute `lambda`.
     pub q_index: u8,
@@ -151,7 +151,7 @@ pub struct IntraModeSearchResult {
     pub best_rd_cost: i64,
     /// Transform-domain `block_yrd` distortion (`sum((coef -
     /// dqcoeff)^2) >> shift`) for the winning mode. See
-    /// [`block_yrd_distortion`].
+    /// `block_yrd_distortion`.
     pub best_distortion: u32,
     /// Mode-coding rate cost for the winning mode, in
     /// `vp9_prob_cost` units.
@@ -225,7 +225,7 @@ fn block_yrd_distortion(
 /// Evaluates all 10 [`IntraMode`] variants, returns the lowest-RD-cost
 /// winner. Distortion is libvpx's transform-coefficient-domain
 /// `block_yrd` model — `sum((coef - dqcoeff)^2) >> shift` — *not* the
-/// post-reconstruction SSE. See [`block_yrd_distortion`] for the
+/// post-reconstruction SSE. See `block_yrd_distortion` for the
 /// shift table.
 #[must_use]
 pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSearchResult {
@@ -678,9 +678,9 @@ pub type UvModeCostsKf = [[i32; NUM_INTRA_MODES]; NUM_INTRA_MODES];
 ///
 /// `u_above_pixels` / `u_left_pixels` / `u_top_left_pixel` and the
 /// corresponding `v_*` describe the already-reconstructed chroma
-/// neighbour edges. When [`have_above`] is `false`, the picker ignores
+/// neighbour edges. When `have_above` is `false`, the picker ignores
 /// the above buffers and fills with `127` (libvpx
-/// `ABOVE_UNAVAILABLE_FILL`); when [`have_left`] is `false`, fills
+/// `ABOVE_UNAVAILABLE_FILL`); when `have_left` is `false`, fills
 /// with `129` (libvpx `LEFT_UNAVAILABLE_FILL`).
 ///
 /// `quantizer` is the per-plane UV quantizer (delta-q zero ⇒ same as
@@ -694,7 +694,7 @@ pub struct UvIntraModeSearchParams<'a> {
     /// Chroma plane block size (UV-subsampled). For 4:2:0 this is the
     /// luma block size halved on each axis: Block16x16 → Block8x8,
     /// Block8x8 → Block4x4, etc. The transform size is
-    /// [`max_txsize(block_size)`], yielding one TX per chroma plane
+    /// `max_txsize(block_size)`, yielding one TX per chroma plane
     /// for the F10.1b leaf sizes we support (≤ Block32x32).
     pub block_size: BlockSize,
     /// Source U plane view.
@@ -722,7 +722,7 @@ pub struct UvIntraModeSearchParams<'a> {
     pub have_above: bool,
     /// Whether the left-column pixels are in-frame and decoded.
     pub have_left: bool,
-    /// UV-plane forward-quantizer derived from [`q_index`].
+    /// UV-plane forward-quantizer derived from `q_index`.
     pub quantizer: &'a PlaneQuantizers,
     /// Frame base qindex (0..255) — used to compute `lambda`.
     pub q_index: u8,

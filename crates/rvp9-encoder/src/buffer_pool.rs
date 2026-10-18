@@ -388,7 +388,7 @@ pub struct RefSlotView<'a> {
 /// - `frame_refs[REFS_PER_FRAME]` — resolved slot index for LAST /
 ///   GOLDEN / ALTREF this frame. The encoder's internal model uses the
 ///   identity selector `frame_refs[i] = ref_frame_map[i]` (LAST →
-///   map[0], GOLDEN → map[1], ALTREF → map[2]); see
+///   `map[0]`, GOLDEN → `map[1]`, ALTREF → `map[2]`); see
 ///   [`RefFramePool::frame_refs`]. libvpx's full indirection
 ///   `cm->frame_refs[i].idx = cm->ref_frame_map[ref_frame_idx[i]]`
 ///   (`vp9_decodeframe.c:1206`) collapses to the identity here because
@@ -447,11 +447,11 @@ impl RefFramePool {
     /// ## Named-ref → map-slot mapping (encoder internal model)
     ///
     /// The encoder reads named ref `i` from `ref_frame_map[i]` — the
-    /// identity selector LAST→map[0], GOLDEN→map[1], ALTREF→map[2].
+    /// identity selector LAST→`map[0]`, GOLDEN→`map[1]`, ALTREF→`map[2]`.
     /// This reproduces the prior ad-hoc fields exactly: `last_recon_*`
-    /// rotated every frame (map[0], refresh bit 0); `golden_recon_*`
-    /// rotated only on GOLDEN-refresh (map[1], refresh bit 1);
-    /// `altref_recon_*` rotated only on the ARF (map[2], refresh bit 2).
+    /// rotated every frame (`map[0]`, refresh bit 0); `golden_recon_*`
+    /// rotated only on GOLDEN-refresh (`map[1]`, refresh bit 1);
+    /// `altref_recon_*` rotated only on the ARF (`map[2]`, refresh bit 2).
     ///
     /// NOTE: this is the encoder's INTERNAL reference-selection model,
     /// distinct from the bitstream's `ref_frame_indices[3]` header field

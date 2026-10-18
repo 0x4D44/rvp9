@@ -69,8 +69,8 @@
 //!    critical buffer pushes Q to worst_quality.
 //! 3. Set `active_best_quality` from the recent inter-frame Q via the
 //!    `rtc_minq` lookup. v1 uses a simplified linear approximation in
-//!    [`cbr::rtc_minq_approx`].
-//! 4. Run [`cbr::regulate_q`]: iterate from active_best upward; the
+//!    `cbr::rtc_minq_approx`.
+//! 4. Run `cbr::regulate_q`: iterate from active_best upward; the
 //!    first qindex whose `bits_per_mb` estimate falls below the
 //!    target wins.
 //!

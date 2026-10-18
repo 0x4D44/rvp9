@@ -14,7 +14,7 @@
 //!    boolean decoder.
 //! 2. If the bit is 0, the prob stays unchanged.
 //! 3. If the bit is 1: decode a variable-length `term_subexp` value
-//!    `delp` in `0..=254`, pass it through the [`INV_MAP_TABLE`]
+//!    `delp` in `0..=254`, pass it through the `INV_MAP_TABLE`
 //!    permutation and the `inv_recenter_nonneg` math to produce a
 //!    new probability in `1..=255` centered around the existing `*p`,
 //!    then overwrite `*p`.
@@ -106,7 +106,7 @@ fn decode_term_subexp(r: &mut BoolReader<'_>) -> i32 {
     decode_uniform(r) + 64
 }
 
-/// Map a decoded `delp` value (0..=254) through [`INV_MAP_TABLE`]
+/// Map a decoded `delp` value (0..=254) through `INV_MAP_TABLE`
 /// and the inv-recenter math to produce a new probability centered
 /// around the existing `m`. Mirrors libvpx `inv_remap_prob`
 /// (`vp9_dsubexp.c:30-58`).

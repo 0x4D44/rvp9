@@ -178,8 +178,7 @@ pub static RVP9_TRACE_FRAME_COUNTER: std::sync::atomic::AtomicU32 =
 /// crate's integration test suite) to confirm the parallel path
 /// fires non-tautologically on multi-tile vectors. Bumped exactly
 /// once per `scope.submit(...)` call in
-/// [`Decoder::decode_intra_frame_inner`] and
-/// [`Decoder::decode_inter_frame`].
+/// `Decoder::decode_intra_frame_inner` and `Decoder::decode_inter_frame`.
 pub static RVP9_G5_1_PARALLEL_JOBS: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0);
 
@@ -190,7 +189,7 @@ pub static RVP9_G5_1_PARALLEL_JOBS: std::sync::atomic::AtomicU32 =
 /// `decode_target_buffer_is_pooled_after_warmup` test asserts no fresh
 /// allocs once the working set of ref buffers is established. Bumped
 /// exactly once per [`Yv12Buffer::alloc`] in
-/// [`Decoder::acquire_decode_target`].
+/// `Decoder::acquire_decode_target`.
 pub static RVP9_DECODE_TARGET_ALLOCS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
@@ -4348,7 +4347,7 @@ pub enum DecodeError {
     /// slot that holds no decoded frame. Sibling of [`Self::EmptySlot`]
     /// — `EmptySlot` covers the `decode_show_existing_frame` path,
     /// `EmptyInterRef` covers the inter-reference resolution path
-    /// at [`Decoder::decode_inter_frame`]. In libvpx terms this is a
+    /// at `Decoder::decode_inter_frame`. In libvpx terms this is a
     /// bitstream-corrupt condition (no real stream ever names an
     /// empty slot — the prior keyframe always populates them), so
     /// callers should treat it as a malformed-bitstream error rather

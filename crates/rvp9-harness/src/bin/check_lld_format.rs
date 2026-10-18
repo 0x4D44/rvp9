@@ -51,7 +51,7 @@ impl LldReport {
 const REQUIRED_SECTIONS: [u8; 9] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 /// Check whether `line` is a level-2 header opening section `n` (i.e.
-/// starts with "## <n>." possibly followed by a space and the title).
+/// starts with "## `<n>`." possibly followed by a space and the title).
 fn is_section_header(line: &str, n: u8) -> bool {
     let prefix = format!("## {n}.");
     line.trim_start().starts_with(&prefix)

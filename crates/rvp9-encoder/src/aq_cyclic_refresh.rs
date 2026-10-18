@@ -28,7 +28,7 @@
 //! is `age >= min_refresh_age`. AQ-night-7 ported the following
 //! libvpx feedback signals:
 //!
-//! - **`apply_cyclic_refresh` gate** ([`Self::apply_cyclic_refresh`])
+//! - **`apply_cyclic_refresh` gate** ([`CyclicRefresh::apply_cyclic_refresh`])
 //!   — frame-level skip. AQ is suppressed on keyframes, on frames
 //!   where `avg_frame_qindex_inter < 20`, and on
 //!   "stuck at MAXQ end" frames (`> 233 && frames_since_key > 20`).
@@ -37,7 +37,7 @@
 //! - **`last_coded_q_map`** — per-mi-cell q-history. Seeded to MAXQ,
 //!   updated post-encode with libvpx's skip-aware MIN-clamp logic
 //!   (`vp9_aq_cyclicrefresh.c:224-254`). Eligibility in
-//!   [`Self::pre_encode_pick_segments`] gates on `> qindex_thresh`,
+//!   [`CyclicRefresh::pre_encode_pick_segments`] gates on `> qindex_thresh`,
 //!   matching `vp9_aq_cyclicrefresh.c:437`.
 //! - **"≥ half eligible" gate** — SB is painted segment 1 iff at
 //!   least half its cells are eligible under the libvpx `sum_map >=
@@ -428,7 +428,7 @@ impl CyclicRefresh {
     /// gate — bug-for-bug fix per libvpx `vp9_aq_cyclicrefresh.c:449`.
     ///
     /// The `base_qindex` parameter feeds
-    /// [`Self::qindex_thresh_for_eligibility`]; pass the q-index that
+    /// `qindex_thresh_for_eligibility`; pass the q-index that
     /// will be used for this frame so the eligibility filter is
     /// computed against the correct boost segment q. Libvpx threads
     /// `cm->base_qindex` through `cyclic_refresh_update_map`

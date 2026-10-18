@@ -211,7 +211,7 @@ fn fdct4x4_scalar(input: &[i16], output: &mut [i32; 16], stride: usize) {
 }
 
 /// Dispatch the 4x4 forward DCT to the exact AArch64 vector kernel when
-/// available, retaining [`fdct4x4_scalar`] as the portable oracle.
+/// available, retaining `fdct4x4_scalar` as the portable oracle.
 pub fn fdct4x4(input: &[i16], output: &mut [i32; 16], stride: usize) {
     #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
@@ -503,7 +503,7 @@ fn fdct8x8_scalar(input: &[i16], output: &mut [i32; 64], stride: usize) {
 }
 
 /// Dispatch the 8x8 forward DCT to the exact AArch64 vector kernel when
-/// available, retaining [`fdct8x8_scalar`] as the portable oracle.
+/// available, retaining `fdct8x8_scalar` as the portable oracle.
 pub fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
     #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
@@ -1097,7 +1097,7 @@ fn fdct16x16_scalar(input: &[i16], output: &mut [i32; 256], stride: usize) {
 }
 
 /// Dispatch the 16x16 forward DCT to an exact architecture-specific vector
-/// kernel when available, retaining [`fdct16x16_scalar`] as the portable
+/// kernel when available, retaining `fdct16x16_scalar` as the portable
 /// oracle.
 pub fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
     #[cfg(all(target_arch = "aarch64", not(miri)))]
@@ -1187,7 +1187,7 @@ fn fht16x16_scalar(input: &[i16], output: &mut [i32; 256], stride: usize, tx_typ
 }
 
 /// Dispatch the 16x16 hybrid forward transform to the exact AArch64 vector
-/// kernel when available, retaining [`fht16x16_scalar`] as the portable
+/// kernel when available, retaining `fht16x16_scalar` as the portable
 /// oracle.
 pub fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: TxType) {
     if matches!(tx_type, TxType::DctDct) {
@@ -1549,7 +1549,7 @@ fn fdct32x32_scalar(input: &[i16], output: &mut [i32; 1024], stride: usize) {
 }
 
 /// Dispatch the 32x32 forward DCT to the exact AArch64 vector kernel when
-/// available, retaining [`fdct32x32_scalar`] as the portable oracle.
+/// available, retaining `fdct32x32_scalar` as the portable oracle.
 pub fn fdct32x32(input: &[i16], output: &mut [i32; 1024], stride: usize) {
     #[cfg(all(target_arch = "aarch64", not(miri)))]
     {

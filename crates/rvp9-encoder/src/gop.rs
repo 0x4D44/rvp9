@@ -96,7 +96,7 @@ pub struct FrameSchedule {
     pub update_type: FrameUpdateType,
     /// Wire-format `refresh_frame_flags` mask this frame emits. Derived
     /// 1:1 from `update_type`: KF → `0xFF`, GF → `0x03`, LF → `0x01`.
-    /// (The ARF's `0x04` is carried by [`ArfSchedule`], not here, since
+    /// (The ARF's `0x04` is carried by `ArfSchedule`, not here, since
     /// the ARF is a separate non-show frame in the superframe.)
     pub refresh_frame_flags: u8,
     /// libvpx `gf_group.frame_gop_index[i]` — the frame's offset from the

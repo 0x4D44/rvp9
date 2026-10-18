@@ -9,7 +9,7 @@
 //!
 //! | rvp9 module      | libvpx source                                |
 //! |------------------|----------------------------------------------|
-//! | [`nn_predict`]   | `vp9/encoder/vp9_encodeframe.c:3111-3153` (runtime) + `vp9/encoder/vp9_partition_models.h:18-974` (13 NN configs + linear tables) |
+//! | [`nn_predict()`]   | `vp9/encoder/vp9_encodeframe.c:3111-3153` (runtime) + `vp9/encoder/vp9_partition_models.h:18-974` (13 NN configs + linear tables) |
 //! | [`pruners`]      | `vp9/encoder/vp9_encodeframe.c:3155-3427` (`ml_pruning_partition`, `ml_predict_breakout`, `ml_prune_rect_partition`) |
 //! | [`var_partition`]| `vp9/encoder/vp9_encodeframe.c:3429-3618` (`simple_motion_search` + `ml_predict_var_rd_partitioning` + `pred_buffer`) |
 //!

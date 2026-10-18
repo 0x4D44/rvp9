@@ -76,13 +76,12 @@ enum LfControl {
     Shutdown,
 }
 
-/// Long-lived loop-filter worker pool. Construct once per [`Decoder`];
+/// Long-lived loop-filter worker pool. Construct once per `Decoder`;
 /// joined on [`Drop`].
 ///
 /// Phase 1 (HLD §11 condition 1): the pool spawns **exactly one**
 /// worker thread. Future N_LF > 1 is a Phase 2 experiment.
 ///
-/// [`Decoder`]: rvp9_decoder::Decoder
 pub struct LfWorkerPool {
     /// Worker thread handles. Joined in [`Drop`].
     workers: Vec<JoinHandle<()>>,

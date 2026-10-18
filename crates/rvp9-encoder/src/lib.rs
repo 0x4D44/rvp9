@@ -550,7 +550,7 @@ impl Encoder {
     /// fdct → forward-quant → dequant → inverse-DCT-add → record qcoeff),
     /// then emits a keyframe packet with `skip = false` on every leaf
     /// and the quantized coefficients threaded through the keyframe
-    /// writer's new [`IntraCoefSource`] plumbing.
+    /// writer's new [`rvp9_core::bitstream::IntraCoefSource`] plumbing.
     ///
     /// Decoder reconstruction is bit-exact against the encoder's
     /// internal `recon_yuv` (the encoder simulator's per-TX inverse
@@ -677,7 +677,7 @@ impl Encoder {
     /// on the inter frame, exercising the encoder's residual-coef
     /// emission path end-to-end.
     ///
-    /// Same shape as [`encode_synthetic_two_frame_kf_inter`] (default
+    /// Same shape as [`Encoder::encode_synthetic_two_frame_kf_inter`] (default
     /// keyframe + single-ref LASTFRAME ZEROMV PARTITION_NONE 64×64
     /// inter), but the inter cell carries `skip = false` and the
     /// writer emits per-plane per-TX residual tokens via
@@ -697,7 +697,7 @@ impl Encoder {
     ///
     /// # Errors
     ///
-    /// Same as [`encode_synthetic_two_frame_kf_inter`].
+    /// Same as [`Encoder::encode_synthetic_two_frame_kf_inter`].
     pub fn encode_synthetic_two_frame_kf_inter_non_skip(&self) -> Result<Vec<u8>, EncodeError> {
         let kf_payload = self.build_keyframe_payload(/* refresh_frame_context = */ false)?;
         let inter_payload =
@@ -1245,7 +1245,7 @@ static INTER_ZERO_COEFS: [i16; 1024] = [0; 1024];
 /// Empty marker in [`VecBackedInterCoefSource::slots`].
 const INTER_COEF_SLOT_EMPTY: u32 = u32::MAX;
 
-/// Encoder simulator output: a direct-slot [`IntraCoefSource`].
+/// Encoder simulator output: a direct-slot [`rvp9_core::bitstream::IntraCoefSource`].
 ///
 /// Intra and inter writers address coefficients with the same physical
 /// transform position tuple. Reuse the inter source's dense slot map so the
@@ -1363,7 +1363,7 @@ impl rvp9_core::bitstream::IntraCoefSource for VecBackedIntraCoefSource {
 /// but consumed by the inter-frame writer
 /// ([`rvp9_core::bitstream::write_tile_inter`]).
 ///
-/// Populated by [`pick_and_simulate_inter_encode_partitions`] — the
+/// Populated by `pick_and_simulate_inter_encode_partitions` — the
 /// F10.1c inter encoder simulator.
 pub struct VecBackedInterCoefSource {
     /// Frame width in pixels.

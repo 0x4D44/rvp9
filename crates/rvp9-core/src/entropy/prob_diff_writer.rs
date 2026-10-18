@@ -9,7 +9,7 @@
 //!
 //! 1. Compute `delp = remap_prob(newp, oldp)`. Mirrors libvpx
 //!    `remap_prob` (`vp9_subexp.c:44-77`).
-//! 2. Emit `delp` via [`encode_term_subexp`]. Mirrors libvpx
+//! 2. Emit `delp` via `encode_term_subexp`. Mirrors libvpx
 //!    `encode_term_subexp` (`vp9_subexp.c:100-110`).
 //!
 //! Higher-level helpers in this module:

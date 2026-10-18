@@ -214,7 +214,7 @@ pub struct PartitionSearchParams<'a> {
     /// branch the per-level threshold is multiplied by this factor
     /// (1× / 2× / 4× for `NoiseLevel::Low|LowLow` / `Medium` / `High`
     /// respectively — see
-    /// [`crate::pre_analysis::PreAnalysisState::vbp_threshold_scale`]).
+    /// `PreAnalysisState::vbp_threshold_scale`).
     /// Pass `1` to disable (default; no-op multiplier). The keyframe
     /// threshold branch ignores this value (libvpx applies the scale
     /// only on the non-key branch).

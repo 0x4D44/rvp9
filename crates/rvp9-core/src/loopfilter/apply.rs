@@ -735,7 +735,7 @@ const TX_16X16: usize = 2;
 /// [`LoopFilterMask`] (ss11) nor the luma masks (ss00) carry the right
 /// per-edge information. libvpx handles this via the `LF_PATH_SLOW`
 /// path (`vp9_loopfilter.c:1459-1462`), which calls
-/// [`filter_block_plane_non420`] (mirroring libvpx
+/// `filter_block_plane_non420` (mirroring libvpx
 /// `vp9_filter_block_plane_non420`, `:1078-1237`) and walks the
 /// MODE_INFO grid directly per chroma row to build per-row masks. This
 /// is why `mi_grid` / `mi_stride` / `levels` are required arguments:
@@ -970,7 +970,7 @@ pub unsafe fn loop_filter_sb_row(
 /// `shared` holds the three plane raw pointers; the function reconstructs
 /// the slices internally. This is the worker entry — the serial path
 /// inlines the slice acquisition once outside the per-SB loop and calls
-/// the [`apply_one_sb_inner`] helper directly to avoid the per-SB
+/// the `apply_one_sb_inner` helper directly to avoid the per-SB
 /// raw-pointer-to-slice overhead.
 ///
 /// # Safety

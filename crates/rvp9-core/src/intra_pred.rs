@@ -81,7 +81,7 @@ pub enum IntraMode {
     D207 = 7,
     /// D63_PRED — 63-degree downward-right edge (steeper than D45).
     D63 = 8,
-    /// TM_PRED — true motion (clip(left[r] + above[c] - above_left)).
+    /// TM_PRED — true motion (`clip(left[r] + above[c] - above_left)`).
     Tm = 9,
 }
 
@@ -363,7 +363,7 @@ pub fn d45_predictor(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
 /// 4×4 path uses this hand-unrolled version which differs from the
 /// generic. Critically, `DST(3, 2) = AVG2(E, F)` and
 /// `DST(3, 3) = AVG3(E, F, G)`, **not** the generic's
-/// `memset(..., above[bs - 1], ...)` = above[3] right-pad. Using the
+/// `memset(..., above[bs - 1], ...)` = `above[3]` right-pad. Using the
 /// generic at `bs == 4` shifts the bottom-right cells by an arbitrary
 /// amount (up to ±5 typically) that then cascades through downstream
 /// sub-8 H-mode reads of those cells via `left[r]`.
@@ -1014,7 +1014,7 @@ const fn extend_mask(mode: IntraMode) -> u8 {
 ///   `vp9_reconintra.c:286-297, 302, 326, 354`).
 /// - `tx_size`: the transform size of the block.
 /// - `mode`: the prediction mode; selects which edges are populated
-///   via [`extend_mask`].
+///   via `extend_mask`.
 /// - `have_top`: whether the row above is in-frame **and** already
 ///   decoded. Mirrors libvpx `up_available` (`vp9_reconintra.c:411`).
 /// - `have_left`: whether the column to the left is in-frame and
