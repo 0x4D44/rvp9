@@ -1,0 +1,245 @@
+Claimaccepted beforetests verify-20261018T175853Z-6e8e6f1d
+Overlap oldKILN37 timeout/tempownership closed;KILN64 F02 separatebin. Stalebug Fixplaceholder and Notes nochildlaunched retainedunchanged; thisverification actuallylaunches selfcontainedfakechildren.
+PROVENANCE git rev-parse HEAD
+b7f2c3bc056ed37bb6f8fe39ea106f13888fdc10
+EXIT: 0
+PROVENANCE git merge-base --is-ancestor fc88c0f2d92b0b67c85275f3edbb892fc0d31215 HEAD
+EXIT: 0
+INITIAL fakechild failure+calibration checks COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin e1_block_stats run_libvpx </dev/null
+   Compiling crossbeam-utils v0.8.21
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-core)
+   Compiling quote v1.0.45
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-decoder)
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling memchr v2.8.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-harness)
+   Compiling static_assertions v1.1.0
+   Compiling itoa v1.0.18
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 00s
+     Running unittests src/bin/e1_block_stats.rs (target/debug/deps/e1_block_stats-491e7233e260fae9)
+
+running 5 tests
+test tests::run_libvpx_missing_explicit_path_is_a_failure ... ok
+test tests::run_libvpx_timeout_is_a_failed_requested_leg ... ok
+test tests::run_libvpx_success_without_ivf_is_a_failed_requested_leg ... ok
+test tests::run_libvpx_positive_empty_ivf_fixture_calibration ... ok
+test tests::run_libvpx_nonzero_exit_is_a_failed_requested_leg ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 1.07s
+
+
+EXIT: 0
+INITIAL failedrequestedleg reportpreservation COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin e1_block_stats tests::explicit_leg_failure_does_not_publish_a_successful_report -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 8.10s
+     Running unittests src/bin/e1_block_stats.rs (target/debug/deps/e1_block_stats-491e7233e260fae9)
+
+running 1 test
+test tests::explicit_leg_failure_does_not_publish_a_successful_report ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 0.25s
+
+
+EXIT: 0
+INITIAL omittedlibvpx optionalmode COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin e1_block_stats tests::omitted_vpxenc_preserves_the_rvp9_only_mode -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 8.10s
+     Running unittests src/bin/e1_block_stats.rs (target/debug/deps/e1_block_stats-491e7233e260fae9)
+
+running 1 test
+test tests::omitted_vpxenc_preserves_the_rvp9_only_mode ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 0.00s
+
+
+EXIT: 0
+MUTANT swallowrequestedleg failure intooptionalabsence COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin e1_block_stats tests::explicit_leg_failure_does_not_publish_a_successful_report -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 16.25s
+     Running unittests src/bin/e1_block_stats.rs (target/debug/deps/e1_block_stats-491e7233e260fae9)
+
+running 1 test
+test tests::explicit_leg_failure_does_not_publish_a_successful_report ... FAILED
+
+failures:
+
+---- tests::explicit_leg_failure_does_not_publish_a_successful_report stdout ----
+Loaded 1 frames 256x256 @ 30 fps from /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-e1-report-failure-test-64144-0/input.y4m
+Using vpxenc at /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-e1-report-failure-test-64144-0/vpxenc
+--- 25 kbps ---
+Wrote report to /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-e1-report-failure-test-64144-0/report.md
+# E1 — rvp9 vs libvpx realtime encoder gap analysis (foreman_cif)
+
+Source: foreman_cif centre-crop 256x256, 1 frames @ 30 fps. rvp9/libvpx run as one-pass VBR (`vpxenc --rt --cpu-used=7 --lag-in-frames=0 --passes=1 --aq-mode=0`). BOTH bitstreams decoded through the SAME rvp9 decoder (oracle); all per-block stats use identical definitions.
+
+Area-weighted % = fraction of coded 8x8 cells (so a 64x64 leaf counts 64x more than an 8x8 leaf). 'count' = number of distinct partition leaves. Mode/skip/ref stats are over INTER frames only.
+
+
+## Operating point: 25 kbps target
+
+### 1. Bit allocation
+
+| metric | rvp9 | libvpx |
+|---|---:|---:|
+| achieved bitrate (kbps) | 6.7 | n/a |
+| keyframe bits | 224 | n/a |
+| avg inter-frame bits | 0 | n/a |
+| frames rvp9-decoder FAILED to decode | 0 | n/a |
+| avg inter uncompressed-header bits | 0 | n/a |
+| avg inter compressed-header bits | 0 | n/a |
+| avg inter tile-data bits | 0 | n/a |
+| avg inter coef model tokens zero/one/two+/eob | 0/0/0/0 | n/a |
+| avg inter coef eob-branch attempts | 0 | n/a |
+| avg inter luma TX leaves 4x4/8x8/16x16/32x32 | 0/0/0/0 | n/a |
+| avg inter luma TX blocks 4x4/8x8/16x16/32x32 | 0/0/0/0 | n/a |
+
+### Keyframe bitstream decomposition
+
+| metric | rvp9 | libvpx |
+|---|---:|---:|
+| uncompressed / compressed / tile-data bits | 144/16/64 | n/a |
+| coef model tokens zero/one/two+/eob | 0/0/0/0 | n/a |
+| coef eob-branch attempts | 0 | n/a |
+| luma TX leaves 4x4/8x8/16x16/32x32 | 0/0/16/0 | n/a |
+| luma TX blocks 4x4/8x8/16x16/32x32 | 0/0/256/0 | n/a |
+| skip area% | 100.0 | n/a |
+
+### Keyframe partition and mode distribution
+
+Distinct keyframe leaves and area coverage. Mode percentages are area-weighted.
+
+| field | rvp9 count / area% | libvpx count / area% |
+|---|---:|---:|
+| partition 64x64 | 16 / 100.0 | n/a |
+| mode DC | 100.0 | n/a |
+| UV mode DC | 100.0 | n/a |
+
+### 5. base_qindex (inter frames)
+
+| metric | rvp9 | libvpx |
+|---|---:|---:|
+| avg base_qindex | -0.0 | n/a |
+| min / max | 0 / 0 | n/a |
+
+### 2. Partition size distribution (inter frames)
+
+Distinct coded leaf blocks (count) and area coverage (% of coded 8x8 cells).
+
+| block | rvp9 count | rvp9 area% | libvpx count | libvpx area% |
+|---|---:|---:|---:|---:|
+
+### 3-4-6. Mode / skip / ref distribution (inter frames, area-weighted % of coded 8x8 cells)
+
+| metric | rvp9 | libvpx |
+|---|---:|---:|
+| intra % | 0.0 | n/a |
+| NEARESTMV % | 0.0 | n/a |
+| NEARMV % | 0.0 | n/a |
+| ZEROMV % | 0.0 | n/a |
+| NEWMV % | 0.0 | n/a |
+| skip=1 % | 0.0 | n/a |
+| ref LAST % | 0.0 | n/a |
+| ref GOLDEN % | 0.0 | n/a |
+| ref ALTREF % | 0.0 | n/a |
+
+
+thread 'tests::explicit_leg_failure_does_not_publish_a_successful_report' (289454906) panicked at crates/rvp9-harness/src/bin/e1_block_stats.rs:2872:9:
+assertion `left == right` failed
+  left: "# E1 — rvp9 vs libvpx realtime encoder gap analysis (foreman_cif)\n\nSource: foreman_cif centre-crop 256x256, 1 frames @ 30 fps. rvp9/libvpx run as one-pass VBR (`vpxenc --rt --cpu-used=7 --lag-in-frames=0 --passes=1 --aq-mode=0`). BOTH bitstreams decoded through the SAME rvp9 decoder (oracle); all per-block stats use identical definitions.\n\nArea-weighted % = fraction of coded 8x8 cells (so a 64x64 leaf counts 64x more than an 8x8 leaf). 'count' = number of distinct partition leaves. Mode/skip/ref stats are over INTER frames only.\n\n\n## Operating point: 25 kbps target\n\n### 1. Bit allocation\n\n| metric | rvp9 | libvpx |\n|---|---:|---:|\n| achieved bitrate (kbps) | 6.7 | n/a |\n| keyframe bits | 224 | n/a |\n| avg inter-frame bits | 0 | n/a |\n| frames rvp9-decoder FAILED to decode | 0 | n/a |\n| avg inter uncompressed-header bits | 0 | n/a |\n| avg inter compressed-header bits | 0 | n/a |\n| avg inter tile-data bits | 0 | n/a |\n| avg inter coef model tokens zero/one/two+/eob | 0/0/0/0 | n/a |\n| avg inter coef eob-branch attempts | 0 | n/a |\n| avg inter luma TX leaves 4x4/8x8/16x16/32x32 | 0/0/0/0 | n/a |\n| avg inter luma TX blocks 4x4/8x8/16x16/32x32 | 0/0/0/0 | n/a |\n\n### Keyframe bitstream decomposition\n\n| metric | rvp9 | libvpx |\n|---|---:|---:|\n| uncompressed / compressed / tile-data bits | 144/16/64 | n/a |\n| coef model tokens zero/one/two+/eob | 0/0/0/0 | n/a |\n| coef eob-branch attempts | 0 | n/a |\n| luma TX leaves 4x4/8x8/16x16/32x32 | 0/0/16/0 | n/a |\n| luma TX blocks 4x4/8x8/16x16/32x32 | 0/0/256/0 | n/a |\n| skip area% | 100.0 | n/a |\n\n### Keyframe partition and mode distribution\n\nDistinct keyframe leaves and area coverage. Mode percentages are area-weighted.\n\n| field | rvp9 count / area% | libvpx count / area% |\n|---|---:|---:|\n| partition 64x64 | 16 / 100.0 | n/a |\n| mode DC | 100.0 | n/a |\n| UV mode DC | 100.0 | n/a |\n\n### 5. base_qindex (inter frames)\n\n| metric | rvp9 | libvpx |\n|---|---:|---:|\n| avg base_qindex | -0.0 | n/a |\n| min / max | 0 / 0 | n/a |\n\n### 2. Partition size distribution (inter frames)\n\nDistinct coded leaf blocks (count) and area coverage (% of coded 8x8 cells).\n\n| block | rvp9 count | rvp9 area% | libvpx count | libvpx area% |\n|---|---:|---:|---:|---:|\n\n### 3-4-6. Mode / skip / ref distribution (inter frames, area-weighted % of coded 8x8 cells)\n\n| metric | rvp9 | libvpx |\n|---|---:|---:|\n| intra % | 0.0 | n/a |\n| NEARESTMV % | 0.0 | n/a |\n| NEARMV % | 0.0 | n/a |\n| ZEROMV % | 0.0 | n/a |\n| NEWMV % | 0.0 | n/a |\n| skip=1 % | 0.0 | n/a |\n| ref LAST % | 0.0 | n/a |\n| ref GOLDEN % | 0.0 | n/a |\n| ref ALTREF % | 0.0 | n/a |\n"
+ right: "existing report sentinel\n"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::explicit_leg_failure_does_not_publish_a_successful_report
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 23 filtered out; finished in 0.14s
+
+error: test failed, to rerun pass `-p rvp9-harness --bin e1_block_stats`
+
+EXIT: 101
+RESTORED fakechild failure+calibration checks COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin e1_block_stats run_libvpx </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 14.85s
+     Running unittests src/bin/e1_block_stats.rs (target/debug/deps/e1_block_stats-491e7233e260fae9)
+
+running 5 tests
+test tests::run_libvpx_missing_explicit_path_is_a_failure ... ok
+test tests::run_libvpx_timeout_is_a_failed_requested_leg ... ok
+test tests::run_libvpx_nonzero_exit_is_a_failed_requested_leg ... ok
+test tests::run_libvpx_success_without_ivf_is_a_failed_requested_leg ... ok
+test tests::run_libvpx_positive_empty_ivf_fixture_calibration ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.78s
+
+
+EXIT: 0
+RESTORED failedrequestedleg reportpreservation COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin e1_block_stats tests::explicit_leg_failure_does_not_publish_a_successful_report -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 8.37s
+     Running unittests src/bin/e1_block_stats.rs (target/debug/deps/e1_block_stats-491e7233e260fae9)
+
+running 1 test
+test tests::explicit_leg_failure_does_not_publish_a_successful_report ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 0.14s
+
+
+EXIT: 0
+RESTORED omittedlibvpx optionalmode COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin e1_block_stats tests::omitted_vpxenc_preserves_the_rvp9_only_mode -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00089-explicit-e1-libvpx-failu/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.07s
+     Running unittests src/bin/e1_block_stats.rs (target/debug/deps/e1_block_stats-491e7233e260fae9)
+
+running 1 test
+test tests::omitted_vpxenc_preserves_the_rvp9_only_mode ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 0.00s
+
+
+EXIT: 0
+FINAL git diff --exit-code -- crates/rvp9-harness/src/bin/e1_block_stats.rs bugs/RVP9-BUG-KIL-00089.md
+EXIT: 0
+FINAL git status --short
+EXIT: 0
+FINAL git hash-object crates/rvp9-harness/src/bin/e1_block_stats.rs
+272ab207ef6dedccd2053a7fea9d41f9ba99b0c5
+EXIT: 0
+FINAL git rev-parse HEAD:crates/rvp9-harness/src/bin/e1_block_stats.rs
+272ab207ef6dedccd2053a7fea9d41f9ba99b0c5
+EXIT: 0
+Limits: native macOSarm64 Unixfakechildren and generated256x256Y4M; realnonzero17, 50mstimeout/killreap, spawnmissingpath, outputmissingIVF andsuccesscalibration exercised. No realvpxenc/corpus/Windowsrun; tempdirectory/raw-input writefailure injection notretained. Noverdict/docs edits.
