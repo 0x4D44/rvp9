@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00047 — Production timing matrix exceeds Deltic quiet leases
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** Medium
 - **Area:** benchmark
 - **Raised:** 2026-10-17T13:58:37Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T174427Z-66908827
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00047-run-fix-20261018T174427Z-66908827
-- **Owner base:** 8873d526c1627864ef28db3d0b78cd7985945ab1
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T17:44:27Z
-- **Owner until:** 2026-10-18T21:44:27Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T13:58:37Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium)
+- **State history:** Open (2026-10-17T13:58:37Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T18:28:43Z, deltic:auto role=fix run=fix-20261018T174427Z-66908827 branch=task/bug-RVP9-BUG-FLU-00047-run-fix-20261018T174427Z-66908827 code=056ddb1839c3caa22bffcc048f06305e4cfb3974 gate=manual)
 
 ## Observation
 
