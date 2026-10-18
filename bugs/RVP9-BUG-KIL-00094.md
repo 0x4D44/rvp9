@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00094 — WebM accepts unknown sizes on schema-bounded elements
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** io/webm parser
 - **Raised:** 2026-08-22T14:33:35Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T160147Z-fb24c539
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00094-run-verify-20261018T160147Z-fb24c539
-- **Owner base:** af9388d8a088356c68100945a71b0a285c699850
-- **Owner fingerprint:** sha256:f3dd20716e0810417030f2fbcc24fbda3a8e8d4b1fb087b27c0ef65bbffc7344
-- **Owner since:** 2026-10-18T16:01:47Z
-- **Owner until:** 2026-10-18T20:01:47Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T14:33:35Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T01:34:26Z, deltic:auto role=fix run=fix-20261016T012403Z-bce91f0c branch=task/bug-RVP9-BUG-KIL-00094-run-fix-20261016T012403Z-bce91f0c code=8aca657f32a24406b047d13b2010431bb3497930 gate=manual)
+- **State history:** Open (2026-08-22T14:33:35Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T01:34:26Z, deltic:auto role=fix run=fix-20261016T012403Z-bce91f0c branch=task/bug-RVP9-BUG-KIL-00094-run-fix-20261016T012403Z-bce91f0c code=8aca657f32a24406b047d13b2010431bb3497930 gate=manual) -> Closed (2026-10-18T16:05:23Z, deltic:manual role=verify run=verify-20261018T160147Z-fb24c539 verified_fix_run=fix-20261016T012403Z-bce91f0c verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ EBML permits unknown sizes only for Master elements whose schema enables them. c
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:05:23Z, deltic:auto run=verify-20261018T160147Z-fb24c539 verified_fix_run=fix-20261016T012403Z-bce91f0c verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer; base283ea929 includes8aca657f. Original forbidden unknown-size element observation: IO error_paths75 pass. Disable only shared schema allowlist guard:4 execute, forbidden TrackEntry/block/other-ID tests assertion-fail in both readers; legal Segment control passes. Reversal permits block payloads to absorb siblings. Exact bytes restored/diff empty; restored75 pass. Lead source review and executable rerun4 pass. Shared repository gate limits/raw proof in2026.10.18 verification journal.
 
 ## Notes
