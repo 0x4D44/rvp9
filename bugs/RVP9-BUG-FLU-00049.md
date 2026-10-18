@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00049 — SSE2 forward DCT span check can wrap before unsafe input loads
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/transforms x86 SSE2
 - **Raised:** 2026-10-17T20:46:57Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T171040Z-454dd919
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00049-run-fix-20261018T171040Z-454dd919
-- **Owner base:** 0a8d3137d7f1eff8ee6555f6a537be89f2b0b465
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T17:10:40Z
-- **Owner until:** 2026-10-18T21:10:40Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T20:46:57Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium)
+- **State history:** Open (2026-10-17T20:46:57Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T17:29:17Z, deltic:auto role=fix run=fix-20261018T171040Z-454dd919 branch=task/bug-RVP9-BUG-FLU-00049-run-fix-20261018T171040Z-454dd919 code=48b442451cc86416657ac75ca5e63424274e5fb9 gate=manual)
 
 ## Observation
 
