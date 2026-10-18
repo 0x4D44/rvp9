@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** decoder/loopfilter overlap
 - **Raised:** 2026-07-31T10:22:52Z
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T161119Z-25634be8
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00067-run-verify-20261018T161119Z-25634be8
+- **Owner base:** efa9b36f24ac3556cfaf96ab64c8bf141d6675c5
+- **Owner fingerprint:** sha256:d7e3fb492a1e47bd44452562f5b79194bcf933d0f07adebfe8c0f8d645ca4ecd
+- **Owner since:** 2026-10-18T16:11:19Z
+- **Owner until:** 2026-10-18T20:11:19Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
