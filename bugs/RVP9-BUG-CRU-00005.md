@@ -1,25 +1,25 @@
 # RVP9-BUG-CRU-00005 — write_loopfilter and write_delta_q silently truncate out-of-range fields instead of returning Err
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** core/bitstream sub_parsers
 - **Raised:** 2026-08-23T17:09:50Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T160843Z-5c383c6c
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-CRU-00005-run-verify-20261018T160843Z-5c383c6c
-- **Owner base:** f9498d46aafcab4e8d717c26ec526beb99232c7f
-- **Owner fingerprint:** sha256:386aa0176a169af8a9043d752cf65a540db3fc884115f1aada32d212821a9f1d
-- **Owner since:** 2026-10-18T16:08:43Z
-- **Owner until:** 2026-10-18T20:08:43Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-23T17:09:50Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T07:46:16Z, deltic:auto role=fix run=fix-20261016T073258Z-c32e26d5 branch=task/bug-RVP9-BUG-CRU-00005-run-fix-20261016T073258Z-c32e26d5 code=37ca6debe91e1e841eea4b3ea10496a39fe3ec88 gate=manual)
+- **State history:** Open (2026-08-23T17:09:50Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T07:46:16Z, deltic:auto role=fix run=fix-20261016T073258Z-c32e26d5 branch=task/bug-RVP9-BUG-CRU-00005-run-fix-20261016T073258Z-c32e26d5 code=37ca6debe91e1e841eea4b3ea10496a39fe3ec88 gate=manual) -> Closed (2026-10-18T16:15:53Z, deltic:manual role=verify run=verify-20261018T160843Z-5c383c6c verified_fix_run=fix-20261016T073258Z-c32e26d5 verdict=close)
 
 ## Observation
 
@@ -76,5 +76,9 @@ were emitted.
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:15:53Z, deltic:auto run=verify-20261018T160843Z-5c383c6c verified_fix_run=fix-20261016T073258Z-c32e26d5 verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer; basef9498d46 includes37ca6deb. Original filter64 and delta100/-128 observations:19 subparser tests pass, require InvalidHeaderField, unchanged bytes/5-bit offset and unpoisoned writer. Reverse loopfilter preflight then quantization preflight separately: each selected1 regression assertion-fails invalid header field must fail. Exact bytes restored/diff empty; restored19 pass, lead executable19 pass. Fmt/documented workspace clippy pass; full-suite limits and raw proof in2026.10.18 verification journal.
 
 ## Notes
