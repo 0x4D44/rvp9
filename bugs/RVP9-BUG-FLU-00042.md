@@ -6,15 +6,15 @@
 - **Area:** harness/bdrate
 - **Raised:** 2026-10-16T14:10:24Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T172911Z-6b47bd77
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00042-run-verify-20261018T172911Z-6b47bd77
+- **Owner base:** 48b442451cc86416657ac75ca5e63424274e5fb9
+- **Owner fingerprint:** sha256:97c019c7610e10354e095c45b850b1b12473467589662d4f86ed219a0d7301d0
+- **Owner since:** 2026-10-18T17:29:11Z
+- **Owner until:** 2026-10-18T21:29:11Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
