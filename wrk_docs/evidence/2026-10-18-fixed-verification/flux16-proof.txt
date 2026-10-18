@@ -1,0 +1,138 @@
+Claim verify-20261018T171218Z-5e1da460
+PROVENANCE git rev-parse HEAD
+d7cf0fb03de8514507837d5696551f3188180841
+EXIT: 0
+PROVENANCE git merge-base --is-ancestor 8e015526ab40a877c2c6749160d0113c339b623d HEAD
+EXIT: 0
+INITIAL tile+compact complete record regressions COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib frame_loop::tests::f02_ </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 48s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 2 tests
+test frame_loop::tests::f02_tile_workers_preserve_complete_frame_records ... ok
+test frame_loop::tests::f02_compact_workers_preserve_complete_frame_records ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 823 filtered out; finished in 0.13s
+
+
+EXIT: 0
+INITIAL three capture/TLS invariants COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib f02_oracle::tests::capture_ </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 16.15s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 3 tests
+test f02_oracle::tests::capture_disabled_preserves_tls_without_capturing_records ... ok
+test f02_oracle::tests::capture_restores_nested_and_panicking_jobs_and_both_sinks ... ok
+test f02_oracle::tests::capture_isolates_caller_jobs_and_reused_worker_tls ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 822 filtered out; finished in 0.00s
+
+
+EXIT: 0
+MUTANT drop tile-job captured record merge COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib frame_loop::tests::f02_tile_workers_preserve_complete_frame_records -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 36s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+test frame_loop::tests::f02_tile_workers_preserve_complete_frame_records ... FAILED
+
+failures:
+
+---- frame_loop::tests::f02_tile_workers_preserve_complete_frame_records stdout ----
+
+thread 'frame_loop::tests::f02_tile_workers_preserve_complete_frame_records' (288176218) panicked at crates/rvp9-encoder/src/frame_loop.rs:10536:17:
+frame 1 leaves must cover every pixel exactly once
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    frame_loop::tests::f02_tile_workers_preserve_complete_frame_records
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.06s
+
+error: test failed, to rerun pass `-p rvp9-encoder --lib`
+
+EXIT: 101
+MUTANT drop compact-row captured record merge COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib frame_loop::tests::f02_compact_workers_preserve_complete_frame_records -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 54s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+test frame_loop::tests::f02_compact_workers_preserve_complete_frame_records ... FAILED
+
+failures:
+
+---- frame_loop::tests::f02_compact_workers_preserve_complete_frame_records stdout ----
+
+thread 'frame_loop::tests::f02_compact_workers_preserve_complete_frame_records' (288224107) panicked at crates/rvp9-encoder/src/frame_loop.rs:10537:17:
+frame 1 leaves must cover every pixel exactly once
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    frame_loop::tests::f02_compact_workers_preserve_complete_frame_records
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.09s
+
+error: test failed, to rerun pass `-p rvp9-encoder --lib`
+
+EXIT: 101
+RESTORED tile+compact complete record regressions COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib frame_loop::tests::f02_ </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 55s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 2 tests
+test frame_loop::tests::f02_compact_workers_preserve_complete_frame_records ... ok
+test frame_loop::tests::f02_tile_workers_preserve_complete_frame_records ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 823 filtered out; finished in 0.20s
+
+
+EXIT: 0
+RESTORED capture/TLS invariants COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib f02_oracle::tests::capture_ </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 17.28s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 3 tests
+test f02_oracle::tests::capture_disabled_preserves_tls_without_capturing_records ... ok
+test f02_oracle::tests::capture_restores_nested_and_panicking_jobs_and_both_sinks ... ok
+test f02_oracle::tests::capture_isolates_caller_jobs_and_reused_worker_tls ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 822 filtered out; finished in 0.02s
+
+
+EXIT: 0
+
+Final restoration: exact originals restored in finally; git diff --exit-code on frame_loop.rs/lib.rs exit0; git status --short empty. HEAD d7cf0fb03de8514507837d5696551f3188180841.
+Verdict reserved to lead; no close issued. Active claim verify-20261018T171218Z-5e1da460.
+Limits: native macOSarm64; generated512x128/3frames serialvs2workers; original60frame1280x704CPU7CBRAQ3 old-town/4thread corpus run not repeated.
