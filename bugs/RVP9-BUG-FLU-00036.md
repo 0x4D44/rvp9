@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00036 — Corpus downloader fails on unavailable Parkrun source
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** scripts/fetch-corpus
 - **Raised:** 2026-10-15T22:28:12Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T214251Z-518f7803
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00036-run-verify-20261018T214251Z-518f7803
-- **Owner base:** 5858fd2979cc3d1c182bd7a91f546758e1c50b26
-- **Owner fingerprint:** sha256:3b22963201ed824ccd01819ae662cd0e1c837abb29bf12cb9bf1f0a832bbc07c
-- **Owner since:** 2026-10-18T21:42:51Z
-- **Owner until:** 2026-10-19T01:42:51Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-15T22:28:12Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T20:29:22Z, deltic:auto role=fix run=fix-20261018T202454Z-f3cfdc4b branch=task/bug-RVP9-BUG-FLU-00036-run-fix-20261018T202454Z-f3cfdc4b code=4dfc49b0 gate=manual)
+- **State history:** Open (2026-10-15T22:28:12Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T20:29:22Z, deltic:auto role=fix run=fix-20261018T202454Z-f3cfdc4b branch=task/bug-RVP9-BUG-FLU-00036-run-fix-20261018T202454Z-f3cfdc4b code=4dfc49b0 gate=manual) -> Closed (2026-10-18T21:55:32Z, deltic:manual role=verify run=verify-20261018T214251Z-518f7803 verified_fix_run=fix-20261018T202454Z-f3cfdc4b verdict=close)
 
 ## Observation
 
@@ -34,5 +34,9 @@ the old URL before the change and accepted all four current mappings after
 it; PowerShell `-WhatIf` reports the corrected URL. The HLD source note now
 documents the remote and local names. No replacement clip or quality
 threshold was introduced.
+
+### Verification summary (2026-10-18T21:55:32Z, deltic:auto run=verify-20261018T214251Z-518f7803 verified_fix_run=fix-20261018T202454Z-f3cfdc4b verdict=close)
+
+Verifier note: Manual verify: Independent verification on 5b4b3f62: original deltic timeout 1800 bash scripts/fetch-corpus.sh command completed live downloads of all four canonical clips with Corpus: 4 fetched, 0 already present, 0 failed (exit 0). Parkrun response HTTP200, length696732659, established local filename retained. A mocked four-mapping regression rejects pre-fix script at exact obsolete Parkrun URL (3 fetched/1 failed, exit1), accepts current script (4 fetched/0 failed). PowerShell -WhatIf reports corrected remote/local mapping; bash -n passed. Reviewed both scripts and source note; no substitut...
 
 ## Notes
