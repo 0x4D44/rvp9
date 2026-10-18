@@ -6,15 +6,15 @@
 - **Area:** unsafe documentation
 - **Raised:** 2026-10-17T21:16:56Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261018T201337Z-24e3b39d
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00054-run-fix-20261018T201337Z-24e3b39d
+- **Owner base:** 69c4ad39f8df8ffb5a14b2390a5735e433f1c6ca
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-18T20:13:37Z
+- **Owner until:** 2026-10-19T00:13:37Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
