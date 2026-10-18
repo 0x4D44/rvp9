@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00090 — F02 sidecar parser silently overwrites duplicate fields
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** harness/f02 schema
 - **Raised:** 2026-08-22T13:20:53Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T170758Z-4264e2c4
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00090-run-verify-20261018T170758Z-4264e2c4
-- **Owner base:** 498e3d1e56d92e6867255600bc9a44c74dcda8c0
-- **Owner fingerprint:** sha256:3f078a5ee47d6a5c7db178725506bb41d5eaf406bce27e1175edb46f56361ce0
-- **Owner since:** 2026-10-18T17:07:58Z
-- **Owner until:** 2026-10-18T21:07:58Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T08:30:00Z, deltic:auto role=fix run=fix-20261016T082026Z-135aa26a branch=task/bug-RVP9-BUG-KIL-00090-run-fix-20261016T082026Z-135aa26a code=0ef46d9c724f69c97ba73587ff1695ec371c00ef gate=manual)
+- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T08:30:00Z, deltic:auto role=fix run=fix-20261016T082026Z-135aa26a branch=task/bug-RVP9-BUG-KIL-00090-run-fix-20261016T082026Z-135aa26a code=0ef46d9c724f69c97ba73587ff1695ec371c00ef gate=manual) -> Closed (2026-10-18T17:09:54Z, deltic:manual role=verify run=verify-20261018T170758Z-4264e2c4 verified_fix_run=fix-20261016T082026Z-135aa26a verdict=close)
 
 ## Observation
 
@@ -38,6 +38,10 @@ value.
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T17:09:54Z, deltic:auto run=verify-20261018T170758Z-4264e2c4 verified_fix_run=fix-20261016T082026Z-135aa26a verdict=close)
+
+Verifier note: Manual verify: Independent Codex verification on d7cf0fb0 containing fix0ef46d9c (merge-base ancestor proof). cargo test -p rvp9-harness --lib f02_schema:: selected24 PASS before/after. Matrix rejects identical and differing duplicate known fields including frame_idx/mode across inter/intra; stream propagates Malformed duplicate schema field; valid roundtrips/unknown extras preserved. Removing only set_once duplicate guard selected2 duplicate regressions, both FAIL expected assertions: matrix lists accepted keys and stream returnedOk BlockDecision. Exact source bytes restoredfinally; scoped di...
 
 ## Notes
 
