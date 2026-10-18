@@ -379,6 +379,8 @@ fn read_coeff_bits(reader: &mut BoolReader<'_>, probs: &[u8]) -> i32 {
 /// - `dq_coefs_out.len() < seg_eob`.
 /// - `seg_eob > tx_size.n_coeffs()` (the scan/iscan/neighbour tables
 ///   are sized for the full block).
+/// - The scan, inverse-scan, or neighbour table length does not match
+///   `tx_size`.
 /// - `initial_pt > 2` (out of the 0..=2 range produced by
 ///   `combine_entropy_contexts`).
 #[must_use]
@@ -407,6 +409,22 @@ pub fn decode_coefs(
     assert!(
         initial_pt <= 2,
         "decode_coefs: initial_pt ({initial_pt}) > 2",
+    );
+    let n_coeffs = tx_size.n_coeffs();
+    assert_eq!(
+        scan.scan().len(),
+        n_coeffs,
+        "decode_coefs: scan length must match tx_size",
+    );
+    assert_eq!(
+        scan.iscan().len(),
+        n_coeffs,
+        "decode_coefs: inverse scan length must match tx_size",
+    );
+    assert_eq!(
+        scan.neighbors().len(),
+        (n_coeffs + 1) * MAX_NEIGHBORS,
+        "decode_coefs: neighbors length must match tx_size",
     );
 
     let band_translate = get_band_translate(tx_size);
@@ -554,12 +572,13 @@ pub fn decode_coefs(
     //    returns `(1 + a + b) >> 1` with `a, b ∈ {0..=5}` from the
     //    token-tree, so `ctx ∈ 0..=5 < COEFF_CONTEXTS=6`). So
     //    `coef_probs[band][ctx]` is in bounds.
-    // 4. `scan.scan().len() == tx_size.n_coeffs() >= seg_eob`, and
-    //    `scan.scan()[c] < n_coeffs` (raster index into the same TX block).
-    //    `token_cache.len() == DECODE_COEFS_SCRATCH_CAP = 1024 ≥
-    //    n_coeffs`, so `token_cache[scan.scan()[c]]` is in bounds.
+    // 4. The scan, inverse-scan, and neighbor table lengths match
+    //    `tx_size` — asserted above before any bit reads. Static scan
+    //    tables contain in-range raster and neighbor indices (verified by
+    //    scan-table tests). `token_cache.len() == DECODE_COEFS_SCRATCH_CAP
+    //    = 1024 ≥ n_coeffs`, so every coefficient and neighbor lookup is
+    //    in bounds.
     debug_assert!(band_translate.len() >= seg_eob);
-    debug_assert!(scan.scan().len() >= seg_eob);
 
     'outer: while c < seg_eob {
         // SAFETY: invariant (2) above — `c < seg_eob ≤ band_translate.len()`.
@@ -2480,6 +2499,30 @@ mod tests {
         assert!(replay_pass.finished());
         assert_eq!(coef_ctx.above_coef(0, 0), 1);
         assert_eq!(coef_ctx.left_coef(0, 0), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "decode_coefs: scan length")]
+    fn decode_coefs_rejects_scan_shorter_than_transform() {
+        let probs = flat_coef_probs(128, 128, 128);
+        // Return at the first EOB before the old implementation can index
+        // the mismatched scan, keeping this regression safe before the fix.
+        let bytes = encode(|writer| writer.write(0, 128));
+        let mut reader = BoolReader::new(&bytes).unwrap();
+        let scan = default_scan_4x4();
+        let mut dq_coefs = vec![0; 17];
+
+        let _ = decode_coefs(
+            &mut reader,
+            &probs,
+            None,
+            &scan,
+            0,
+            TxSize::Tx32x32,
+            17,
+            (1, 1),
+            &mut dq_coefs,
+        );
     }
 
     /// EOB at position 0 ⇒ no coefficients decoded.

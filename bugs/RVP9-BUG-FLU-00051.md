@@ -27,6 +27,6 @@ The public safe crates/rvp9-core/src/entropy/detokenize.rs::decode_coefs accepts
 
 ## Fix
 
-<unfixed — raised only>
+`decode_coefs` now unconditionally checks that the scan and inverse-scan lengths equal `tx_size.n_coeffs()` and that the neighbor table has `(n_coeffs + 1) * MAX_NEIGHBORS` entries, before the EOB fast path or any unchecked access. The public panic contract and the unchecked-access proof comment now state these requirements. The regression uses the reported 4×4 scan with `Tx32x32` and an EOB-at-zero stream, so the pre-fix call safely returned without indexing the scan while the test still proved the missing rejection.
 
 ## Notes
