@@ -1,0 +1,40 @@
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-native-apple-silicon-simd-differential-r/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1.23s
+     Running unittests src/lib.rs (.scratch/native-simd/target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 33 tests
+test dsp::aarch64::convolve8_neon::tests::dispatch_routes_neon_and_scalar_caps ... ok
+test dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes ... ok
+test dsp::aarch64::convolve8_neon::tests::two_axis_matches_scalar_representative_filters ... ok
+test dsp::aarch64::convolve_copy_neon::tests::dispatch_routes_neon_and_scalar_caps ... ok
+test dsp::aarch64::idct8x8_neon::tests::idct8x8_12_neon_matches_scalar_and_ignores_tail_rows ... ok
+test dsp::aarch64::idct8x8_neon::tests::idct8x8_neon_directed_matches_scalar ... ok
+test dsp::aarch64::idct8x8_neon::tests::idct8x8_neon_random_valid_inputs_match_scalar ... ok
+test dsp::aarch64::idct8x8_neon::tests::iht8x8_neon_all_tx_types_and_eob64_match_scalar ... ok
+test dsp::aarch64::idct8x8_neon::tests::iht8x8_neon_extreme_inputs_match_scalar ... ok
+test dsp::aarch64::idct8x8_neon::tests::iht8x8_neon_random_valid_inputs_match_scalar ... ok
+test dsp::aarch64::int_pro_neon::tests::fused_64x64_projections_match_scalar_with_padding_and_extremes ... ok
+test dsp::aarch64::int_pro_neon::tests::int_pro_col_matches_scalar_random_unaligned_and_extreme_rows ... ok
+test dsp::aarch64::int_pro_neon::tests::vector_var_matches_scalar_random_and_extreme_projections ... ok
+test dsp::aarch64::intra_pred_neon::tests::dispatch_routes_neon_and_scalar_caps ... ok
+test dsp::aarch64::minmax_neon::tests::minmax_8x8_matches_scalar_across_strides_and_offsets ... ok
+test dsp::aarch64::quantize_neon::tests::all_zero_predicate_matches_scalar_and_neon_at_edges ... ok
+test dsp::aarch64::variance_neon::tests::fused_neon_grid_matches_scalar_for_all_large_shapes_and_content ... ok
+test dsp::aarch64::vbp_neon::tests::avg_diff_grid_matches_scalar_for_strides_and_extremes ... ok
+test dsp::dispatch::tests::convolve8_scaled_neon_and_scalar_routing ... ok
+test dsp::dispatch::tests::highbd_idct4x4_add_slot_is_scalar_reference ... ok
+test dsp::tests::predictor_storage_accepts_checked_scalar_fallback_size ... ok
+test mode_decision::hadamard::tests::simd_matches_scalar_for_random_residuals_and_stride_jitter ... ok
+test mode_decision::hadamard::tests::simd_matches_scalar_for_residual_extremes ... ok
+test mode_decision::partition::tests::dispatched_block_variance_matches_scalar_for_partition_sizes_and_origins ... ok
+test mv_search::full_pixel::tests::hoisted_sad_source_matches_scalar_lanes_and_oob_source ... ok
+test transforms::forward::tests::fdct16x16_neon_matches_scalar_valid_residuals ... ok
+test transforms::forward::tests::fdct32x32_neon_matches_scalar_valid_residuals ... ok
+test transforms::forward::tests::fdct4x4_neon_matches_scalar_valid_residuals ... ok
+test transforms::forward::tests::fdct8x8_neon_matches_scalar_valid_residuals ... ok
+test transforms::forward::tests::fht16x16_neon_matches_scalar_valid_residuals ... ok
+test transforms::forward::tests::fht4x4_neon_matches_scalar_all_tx_types ... ok
+test transforms::forward::tests::fht8x8_neon_matches_scalar_all_tx_types ... ok
+test transforms::inverse::tests::idct16x16_neon_matches_scalar_for_all_eob_buckets ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 1694 filtered out; finished in 0.08s

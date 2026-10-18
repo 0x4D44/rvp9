@@ -1,0 +1,14 @@
+run_timestamp_utc=2026-10-18T01:48:08Z
+host_arch=arm64
+rustc_host=aarch64-apple-darwin
+rustc=1.95.0 (59807616e 2026-04-14)
+cargo=1.95.0 (f2d3ce0bd 2026-03-21)
+git_commit=9700ed85a7f73fa2220d80decf7fbd9a981ab1fd
+rvp9_core_tree=631fa2f7ab3f8e482cb2ef77d4f323b59c2f48b2
+candidate_product_source=fb5c0c917038db6c640b3dbc7c2b84b567233333
+core_source_diff_from_candidate=clean
+cargo_lock_sha256=98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf
+differential_raw_scratch_log_sha256=a77088abde8cc80d85de8426a8ae86087dafc57f8dc912474afc73519df1b229
+differential_committed_transcript_normalization=one terminal LF removed from double-LF ending
+scalar_raw_scratch_log_sha256=022a13491a8a5ed2fcbf4cca764b67ad314fd28af3cdd2af0af53b04b9cf4ccb
+scalar_committed_transcript_normalization=one terminal LF removed from double-LF ending

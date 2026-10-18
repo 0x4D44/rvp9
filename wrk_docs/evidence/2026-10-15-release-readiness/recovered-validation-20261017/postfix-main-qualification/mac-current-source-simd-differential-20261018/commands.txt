@@ -1,0 +1,11 @@
+Host: arm64, aarch64-apple-darwin; rustc 1.95.0 (59807616e 2026-04-14); cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+Working tree source: 9700ed85a7f73fa2220d80decf7fbd9a981ab1fd
+Product-source comparison: git diff --exit-code fb5c0c917038db6c640b3dbc7c2b84b567233333 HEAD -- crates/rvp9-core/src
+
+Command 1:
+deltic timeout 1800 env CARGO_TARGET_DIR=/Users/md/worktrees/rvp9/20261018-TSK-HUM-native-apple-silicon-simd-differential-r/.scratch/native-simd/target cargo test --locked --offline -p rvp9-core --lib differential -- --test-threads=1
+Exit status: 0
+
+Command 2:
+deltic timeout 1800 env CARGO_TARGET_DIR=/Users/md/worktrees/rvp9/20261018-TSK-HUM-native-apple-silicon-simd-differential-r/.scratch/native-simd/target cargo test --locked --offline -p rvp9-core --lib scalar -- --test-threads=1
+Exit status: 0

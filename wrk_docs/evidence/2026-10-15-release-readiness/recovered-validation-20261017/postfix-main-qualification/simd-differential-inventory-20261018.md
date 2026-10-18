@@ -79,7 +79,7 @@ Paths in this table are relative to `crates/rvp9-core/src/`; `D` means `dsp/`, `
 - Forward NEON transforms (`transforms/forward.rs`), NEON Hadamard (`mode_decision/hadamard.rs`) and NEON inverse16 (`transforms/inverse.rs`) dispatch at compile time outside the shared function table. All-false shared-table caps or `RVP9_FORCE_SCALAR` alone do not prove a fully scalar AArch64 run.
 - A dispatch round-trip that only observes scalar-equivalent output is weaker backend-selection evidence than a pointer/counter assertion.
 - The HLD's proposed ≥10,000 random inputs per kernel is not met uniformly by existing test source: several use 1,024 iterations, Hadamard uses nine stride jitters per size, and the primary AVX2 quantize random test uses one deterministic vector.
-- Arm scalar routing remains blocked by FLU-00043. This audit ran no native x86 or Apple Silicon tests and establishes no test pass.
+- Arm scalar routing remains blocked by FLU-00043. This source audit ran no tests. A separate [native Apple Silicon follow-up](mac-current-source-simd-differential-20261018/README.md) passed 35 `differential`-named and 33 `scalar`-named tests; that filtered run is partial evidence and does not execute every mapped test or prove scalar-only routing.
 
 ## Release-readiness consequence
 

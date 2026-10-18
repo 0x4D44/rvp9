@@ -1,0 +1,71 @@
+   Compiling libc v0.2.186
+   Compiling cfg-if v1.0.4
+   Compiling getrandom v0.3.4
+   Compiling zerocopy v0.8.48
+   Compiling rustix v1.1.4
+   Compiling getrandom v0.4.2
+   Compiling autocfg v1.5.0
+   Compiling bitflags v2.11.1
+   Compiling once_cell v1.21.4
+   Compiling fastrand v2.4.1
+   Compiling crossbeam-utils v0.8.21
+   Compiling quick-error v1.2.3
+   Compiling bit-vec v0.8.0
+   Compiling fnv v1.0.7
+   Compiling regex-syntax v0.8.10
+   Compiling unarray v0.1.4
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-native-apple-silicon-simd-differential-r/crates/rvp9-core)
+   Compiling bit-set v0.8.0
+   Compiling num-traits v0.2.19
+   Compiling errno v0.3.14
+   Compiling wait-timeout v0.2.1
+   Compiling crossbeam-channel v0.5.15
+   Compiling rand_core v0.9.5
+   Compiling rand v0.9.4
+   Compiling rand_xorshift v0.4.0
+   Compiling tempfile v3.27.0
+   Compiling rusty-fork v0.3.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling proptest v1.11.0
+    Finished `test` profile [optimized + debuginfo] target(s) in 12.19s
+     Running unittests src/lib.rs (.scratch/native-simd/target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 35 tests
+test bitstream::raw::tests::differential_known_sequence ... ok
+test dsp::aarch64::convolve8_scaled_neon::tests::differential_all_q4_phases_and_edge_values ... ok
+test dsp::aarch64::convolve8_scaled_neon::tests::differential_normative_width_height_steps_and_filters ... ok
+test dsp::aarch64::convolve_copy_neon::tests::differential_all_vp9_shapes_and_strides ... ok
+test dsp::aarch64::int_pro_neon::tests::differential_extreme_rows ... ok
+test dsp::aarch64::int_pro_neon::tests::differential_random_heights_strides_and_unaligned_starts ... ok
+test dsp::aarch64::intra_pred_neon::tests::differential_all_sizes_and_strides ... ok
+test dsp::aarch64::lpf16_neon::tests::differential_16_tap_dual_boundary_does_not_saturate_at_255 ... ok
+test dsp::aarch64::lpf16_neon::tests::differential_4_tap_extreme_boundary_and_stride ... ok
+test dsp::aarch64::lpf16_neon::tests::differential_8_tap_boundary_does_not_saturate_at_255 ... ok
+test dsp::aarch64::lpf16_neon::tests::differential_flat_and_step_edges ... ok
+test dsp::aarch64::lpf16_neon::tests::differential_random_4_tap_single_and_dual_edges ... ok
+test dsp::aarch64::lpf16_neon::tests::differential_random_8_tap_single_and_dual_edges ... ok
+test dsp::aarch64::lpf16_neon::tests::differential_random_single_and_dual_edges ... ok
+test dsp::aarch64::quantize_neon::tests::differential_32x32_zbin_all_qindices_thresholds_and_eob ... ok
+test dsp::aarch64::quantize_neon::tests::differential_all_realtime_sizes_scans_and_qindices ... ok
+test dsp::aarch64::quantize_neon::tests::differential_fast_32x32_all_qindices_thresholds_and_eob ... ok
+test dsp::aarch64::quantize_neon::tests::differential_sparse_eob_positions ... ok
+test dsp::aarch64::quantize_neon::tests::differential_zbin_quantizer_all_sizes_scans_and_qindices ... ok
+test dsp::aarch64::quantize_neon::tests::differential_zbin_thresholds_and_sparse_eob ... ok
+test dsp::aarch64::sad4d_neon::tests::differential_edge_content ... ok
+test dsp::aarch64::sad4d_neon::tests::differential_random_all_shapes_and_strides ... ok
+test dsp::aarch64::sad_neon::tests::differential_edge_content ... ok
+test dsp::aarch64::sad_neon::tests::differential_random_all_shapes_and_strides ... ok
+test dsp::aarch64::subpel_variance_neon::tests::differential_edge_content ... ok
+test dsp::aarch64::subpel_variance_neon::tests::differential_var_sse_all_offsets_and_shapes ... ok
+test dsp::aarch64::subtract_neon::tests::differential_extreme_values ... ok
+test dsp::aarch64::subtract_neon::tests::differential_random_all_sizes_and_strides ... ok
+test dsp::aarch64::variance_neon::tests::differential_edge_content ... ok
+test dsp::aarch64::variance_neon::tests::differential_random_all_sizes ... ok
+test entropy::detokenize::tests::differential_fuzz_decode_coefs_vs_libvpx_ref ... ok
+test inter::filter::tests::differential_random_2d ... ok
+test inter::filter::tests::differential_random_horiz ... ok
+test inter::filter::tests::differential_random_vert ... ok
+test inter::scale::tests::differential_random_scaled_2d ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 1692 filtered out; finished in 0.05s
