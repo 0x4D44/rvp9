@@ -1,0 +1,3 @@
+nice -n 15 deltic timeout 7200 env CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/scratch-9d2c8da6/target CARGO_BUILD_JOBS=1 MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test --locked --offline --package rvp9-core --test frame_alloc -- --test-threads=1 </dev/null
+
+stdout and stderr were captured to `frame-alloc.raw.txt`; the command's status was written to `exit-status.txt`.

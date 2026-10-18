@@ -1,0 +1,11 @@
+rustc=rustc 1.98.0-nightly (bd08c9e71 2026-06-25)
+cargo=cargo 1.98.0-nightly (a595d0da2 2026-06-20)
+miri=miri 0.1.0 (bd08c9e718 2026-06-25)
+host_triple=aarch64-apple-darwin
+machine=Mac17,6
+kernel=Darwin 25.6.0 arm64
+macOS=26.6.2 (25G83)
+recorded_at_utc=2026-10-18T01:35:04Z
+build_jobs=1
+dependencies=locked, offline
+MIRIFLAGS=-Zmiri-disable-isolation

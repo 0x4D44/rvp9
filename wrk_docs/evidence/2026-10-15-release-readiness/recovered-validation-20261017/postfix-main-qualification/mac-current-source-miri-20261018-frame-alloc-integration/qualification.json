@@ -1,0 +1,66 @@
+{
+  "schema": "rvp9.mac-current-source-miri-frame-alloc-integration.v1",
+  "candidate": {
+    "product_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "task_head": "d9706fb8a6151719d19c25f1a032c21cd5477732",
+    "task_branch": "task/20261018-TSK-HUM-run-frame-allocation-miri-target",
+    "rvp9_core_tree_matches_product_source": true,
+    "rvp9_core_tree_git_object": "631fa2f7ab3f8e482cb2ef77d4f323b59c2f48b2",
+    "cargo_lock_git_blob": "eef9129866d45300de9a7dc8784fca68bae4f226",
+    "tracked_worktree_clean_before_run": true
+  },
+  "host": {
+    "os": "macOS 26.6.2 (Darwin 25.6.0)",
+    "machine": "Mac17,6",
+    "host_triple": "aarch64-apple-darwin"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "cargo": "cargo 1.98.0-nightly (a595d0da2 2026-06-20)",
+    "miri": "miri 0.1.0 (bd08c9e718 2026-06-25)"
+  },
+  "command": "nice -n 15 deltic timeout 7200 env CARGO_TARGET_DIR=<registered-deltic-scratch>/target CARGO_BUILD_JOBS=1 MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test --locked --offline --package rvp9-core --test frame_alloc -- --test-threads=1 </dev/null",
+  "result": {
+    "target": "rvp9-core --test frame_alloc",
+    "expected_tests": [
+      "huge_aligned_custom_border_is_rejected",
+      "custom_border_with_overlarge_total_allocation_is_rejected",
+      "ordinary_custom_border_still_allocates"
+    ],
+    "tests_started": false,
+    "tests_passed": 0,
+    "tests_failed": 0,
+    "compile_failure": true,
+    "compiler_error_code": "E0425",
+    "compiler_error_count": 8,
+    "missing_helper_names": [
+      "fdct4x4_scalar",
+      "fht4x4_scalar",
+      "fht8x8_scalar",
+      "fht16x16_scalar",
+      "fdct32x32_scalar",
+      "idct16x16_add_scalar"
+    ],
+    "exit_status": 101,
+    "timeout_seconds": 7200,
+    "raw_original": {
+      "path": "frame-alloc.raw.txt",
+      "bytes": 7082,
+      "sha256": "ef0c2cb2035ba0c367ba01d9b7497123781fca03c7d7a2b3a951f6f55f6e3ad4"
+    },
+    "exit_record": {
+      "path": "exit-status.txt",
+      "bytes": 4,
+      "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+    }
+  },
+  "tracking": {
+    "existing_bug": "RVP9-BUG-FLU-00037",
+    "new_bug_created": false
+  },
+  "limits": [
+    "No integration test executed; this is a dependency compilation failure, not a test pass or failure.",
+    "The observed missing-helper errors match the existing dependent-library Miri bug FLU-00037.",
+    "This does not change the separate passing rvp9-core --lib Miri result."
+  ]
+}
