@@ -1,0 +1,94 @@
+{
+  "observed_at_utc": "2026-10-18T01:52:33Z",
+  "current_origin_main": "836361611ee2a9d8d369032d641409c98bff638e",
+  "product_candidate_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "checks": {
+    "crates/rvp9-core/src": {
+      "candidate": "f9df1a4c9053e0fd0634094c751ba28bb971aa3d",
+      "current": "f9df1a4c9053e0fd0634094c751ba28bb971aa3d"
+    },
+    "crates/rvp9-io/src": {
+      "candidate": "e6680dfd4eb69c1922485881be72009d59a5a316",
+      "current": "e6680dfd4eb69c1922485881be72009d59a5a316"
+    },
+    "crates/rvp9-decoder/src": {
+      "candidate": "f7cd8fb27950974ce51c22cc77822d408c21f545",
+      "current": "f7cd8fb27950974ce51c22cc77822d408c21f545"
+    },
+    "crates/rvp9-encoder/src": {
+      "candidate": "96840e76ebe67260be6bb3d528999354e6a331fc",
+      "current": "96840e76ebe67260be6bb3d528999354e6a331fc"
+    },
+    "crates/rvp9-cli/src": {
+      "candidate": "480e78ebf4600d661e7200b093ab32506c4aacd6",
+      "current": "480e78ebf4600d661e7200b093ab32506c4aacd6"
+    },
+    "crates/rvp9-bench/src": {
+      "candidate": "5ed2e9a67077d641eaf90c1e9a3f34d938385ba2",
+      "current": "5ed2e9a67077d641eaf90c1e9a3f34d938385ba2"
+    },
+    "crates/rvp9-harness/src": {
+      "candidate": "63244a80a3fc5701103f39f63cb977c93a7e942c",
+      "current": "63244a80a3fc5701103f39f63cb977c93a7e942c"
+    },
+    "crates/rvp9-fuzz/fuzz_targets": {
+      "candidate": "5a46d09bc43a55018e34cf94dd4760ff81d25664",
+      "current": "5a46d09bc43a55018e34cf94dd4760ff81d25664"
+    },
+    "Cargo.toml": {
+      "candidate": "da941188bb379293c61e2dc04f352b3a8c4206aa",
+      "current": "da941188bb379293c61e2dc04f352b3a8c4206aa"
+    },
+    "Cargo.lock": {
+      "candidate": "eef9129866d45300de9a7dc8784fca68bae4f226",
+      "current": "eef9129866d45300de9a7dc8784fca68bae4f226"
+    },
+    ".cargo/config.toml": {
+      "candidate": "e64c571e745d787fa7547cce0a2777b67cf0bf9a",
+      "current": "e64c571e745d787fa7547cce0a2777b67cf0bf9a"
+    },
+    "scripts": {
+      "candidate": "10596800e226db6e17cc973658934be0ad89c4fb",
+      "current": "10596800e226db6e17cc973658934be0ad89c4fb"
+    },
+    "crates/rvp9-core/Cargo.toml": {
+      "candidate": "867f99ef805bbd9b0c841b3016ac1e26f7370891",
+      "current": "867f99ef805bbd9b0c841b3016ac1e26f7370891"
+    },
+    "crates/rvp9-io/Cargo.toml": {
+      "candidate": "18f21cf599c7e0a8e6ba3a59864bf36f845be92d",
+      "current": "18f21cf599c7e0a8e6ba3a59864bf36f845be92d"
+    },
+    "crates/rvp9-decoder/Cargo.toml": {
+      "candidate": "2a19739a6289dfe9169c4a924dac852dd042c2a7",
+      "current": "2a19739a6289dfe9169c4a924dac852dd042c2a7"
+    },
+    "crates/rvp9-encoder/Cargo.toml": {
+      "candidate": "2a31e1f9132fe8cc15cb58ddfa53d4c8c8f73557",
+      "current": "2a31e1f9132fe8cc15cb58ddfa53d4c8c8f73557"
+    },
+    "crates/rvp9-cli/Cargo.toml": {
+      "candidate": "a6ff11766c99f5024805fc1a5d29d229b1602c8d",
+      "current": "a6ff11766c99f5024805fc1a5d29d229b1602c8d"
+    },
+    "crates/rvp9-bench/Cargo.toml": {
+      "candidate": "974c348883639cd55dd070206214be896d0e775a",
+      "current": "974c348883639cd55dd070206214be896d0e775a"
+    },
+    "crates/rvp9-harness/Cargo.toml": {
+      "candidate": "3c530b23aaef21a417d91c76ca28a3ec987d01a6",
+      "current": "3c530b23aaef21a417d91c76ca28a3ec987d01a6"
+    },
+    "crates/rvp9-fuzz/Cargo.toml": {
+      "candidate": "9288c3560eb99738c38d8f9c810a1ea573e99edb",
+      "current": "9288c3560eb99738c38d8f9c810a1ea573e99edb"
+    }
+  },
+  "all_checked_objects_match": true,
+  "tracked_differences_since_candidate": [
+    "M\tcrates/rvp9-bench/tests/soak_cli.rs",
+    "M\tcrates/rvp9-fuzz/README.md"
+  ],
+  "interpretation": "The product crate source trees, fuzz target tree, package manifests, workspace manifest and lockfile, target configuration, and scripts are identical. The only tracked differences under crates are a bench-test fixture correction and fuzz README documentation; they do not change shipped product source.",
+  "limits": "Tree identity is source carry-forward evidence only. It does not independently reproduce historical tests, verify binary equality, qualify platform-specific outputs, or satisfy remaining release gates."
+}
