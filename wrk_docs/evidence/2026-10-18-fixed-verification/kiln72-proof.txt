@@ -1,0 +1,704 @@
+KILN-00072 fixed-build proof
+HEAD: 2d9d2ebd06e369521cd80f97e81733ad3f97bfec
+Claim: verify-20261018T171235Z-d2b55406
+Fix: b2a0e12a17d551719b70cd4443b376fd95bddff2 (ancestor of origin/main)
+   Compiling crossbeam-utils v0.8.21
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-core)
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling libc v0.2.186
+   Compiling zmij v1.0.21
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-decoder)
+   Compiling itoa v1.0.18
+   Compiling static_assertions v1.1.0
+   Compiling memchr v2.8.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-harness)
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling cpufeatures v0.2.17
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3m 04s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 4 tests
+test frame_loop::tests::cadence_survives_u32_saturation_gop_10 ... ok
+test frame_loop::tests::cadence_survives_u32_saturation_gop_15 ... ok
+test frame_loop::tests::cadence_survives_u32_saturation_altref ... ok
+test spatial_encoder::tests::cadence_survives_u32_saturation_spatial ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 821 filtered out; finished in 0.24s
+
+     Running tests/a18_picker_reads_prev_grid.rs (target/debug/deps/a18_picker_reads_prev_grid-e22be59b3a6fbf36)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/a18_prev_frame_mvs_fires.rs (target/debug/deps/a18_prev_frame_mvs_fires-0efc37c28b0275cd)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/budget_gate_validation.rs (target/debug/deps/budget_gate_validation-a80c8193a8150cae)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/cross_decoder_gate.rs (target/debug/deps/cross_decoder_gate-dc0cc66e177408f5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running tests/diag_foreman_kf.rs (target/debug/deps/diag_foreman_kf-763ab1209dba7766)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_foreman_kf_partitions.rs (target/debug/deps/diag_foreman_kf_partitions-efece36fb5447440)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_foreman_per_frame.rs (target/debug/deps/diag_foreman_per_frame-70b59e98ef8265f9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_frame4_dump.rs (target/debug/deps/diag_frame4_dump-7d935c0981b38081)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_kfcap_measure.rs (target/debug/deps/diag_kfcap_measure-cc5f5ba202164dee)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_per_frame.rs (target/debug/deps/diag_per_frame-fb3ef771840bdb81)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_per_sb_motion.rs (target/debug/deps/diag_per_sb_motion-6af234a22310a877)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_picker_direct.rs (target/debug/deps/diag_picker_direct-248885466c7606f1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_ref_divergence.rs (target/debug/deps/diag_ref_divergence-97aba56f06df973b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/diag_sb03_motion.rs (target/debug/deps/diag_sb03_motion-1c8333634f31bfc0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_source_frame0.rs (target/debug/deps/diag_source_frame0-115fab7771e98351)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_source_static.rs (target/debug/deps/diag_source_static-fa7f6a9042722ff8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/drift_diag.rs (target/debug/deps/drift_diag-a4ef66d07315c683)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/e12_oracle.rs (target/debug/deps/e12_oracle-c53d4ba24297d2db)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/e13_diamond.rs (target/debug/deps/e13_diamond-da3e534176e99525)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/e3_mvdiag.rs (target/debug/deps/e3_mvdiag-e2eb7ce959deb32f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/e4_overshoot_accounting.rs (target/debug/deps/e4_overshoot_accounting-53b092e8af37d20a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/e9_quality_gap.rs (target/debug/deps/e9_quality_gap-2c7bc3fda6335e37)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/f1_block_yrd_newmv_winner.rs (target/debug/deps/f1_block_yrd_newmv_winner-383c37b5f9d1710d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/f2_find_mv_refs_temporal_visible.rs (target/debug/deps/f2_find_mv_refs_temporal_visible-981ceb61837dc14e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/phase2_reuse_positive_control.rs (target/debug/deps/phase2_reuse_positive_control-b4d4db37c98a5118)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/quality_gate.rs (target/debug/deps/quality_gate-d1d1658c51f9e9f0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+
+     Running tests/rdo_dispatch_proof.rs (target/debug/deps/rdo_dispatch_proof-694106d7ba33d271)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/realtime_gate.rs (target/debug/deps/realtime_gate-08b36b49bb4f85e0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running tests/stage4a_source_drift.rs (target/debug/deps/stage4a_source_drift-41e55bd248ce1733)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+     Running tests/stage_sse_diag.rs (target/debug/deps/stage_sse_diag-30f6059b7a016a0e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w8_altref_emit.rs (target/debug/deps/w8_altref_emit-330eca980549a891)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/w_2pass_vbr.rs (target/debug/deps/w_2pass_vbr-8903e24927cdae59)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running tests/w_altref_partial_height.rs (target/debug/deps/w_altref_partial_height-dc1f9878f984bed9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+     Running tests/w_altref_picker.rs (target/debug/deps/w_altref_picker-5658e012229fab97)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_altref_real_coding.rs (target/debug/deps/w_altref_real_coding-9e10b7bd996f3a25)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/w_buffer_pool.rs (target/debug/deps/w_buffer_pool-a12db633cfb9fee1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_coef_prob_parity.rs (target/debug/deps/w_coef_prob_parity-0a21cd73e37b8d63)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_coef_prob_twoloop.rs (target/debug/deps/w_coef_prob_twoloop-32a7910668c88cc5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_compound_proof.rs (target/debug/deps/w_compound_proof-cd036d74c0e8092d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_feature_interaction_matrix.rs (target/debug/deps/w_feature_interaction_matrix-345f12937aad130d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w_gop_topology.rs (target/debug/deps/w_gop_topology-c1f30befdee1972f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_lossless_config.rs (target/debug/deps/w_lossless_config-c4a9e42ac6499f18)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/w_ml_partition.rs (target/debug/deps/w_ml_partition-aa345f2c2fcd1694)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w_ml_rect_prune.rs (target/debug/deps/w_ml_rect_prune-1a4cab580d05e3fb)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w_rd_partition.rs (target/debug/deps/w_rd_partition-9e44f5696b23ad33)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w_rd_partition_rect.rs (target/debug/deps/w_rd_partition_rect-02462aa303c94518)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w_svc_spatial_keyframe.rs (target/debug/deps/w_svc_spatial_keyframe-670801e081fc7997)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+     Running tests/w_svc_temporal.rs (target/debug/deps/w_svc_temporal-aba67e39ec56fd39)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+     Running tests/w_tpl.rs (target/debug/deps/w_tpl-beff9a62e96553e7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/w_vbr_rc_proof.rs (target/debug/deps/w_vbr_rc_proof-22ceddf2c9468afa)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 29s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 4 tests
+
+thread 'frame_loop::tests::cadence_survives_u32_saturation_gop_10' (288251031) panicked at crates/rvp9-encoder/src/frame_loop.rs:13617:22:
+assertion `left == right` failed: GOP 10, encoded ordinal 7, phase 8
+  left: 1
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test frame_loop::tests::cadence_survives_u32_saturation_gop_10 ... FAILED
+
+thread 'frame_loop::tests::cadence_survives_u32_saturation_gop_15' (288251032) panicked at crates/rvp9-encoder/src/frame_loop.rs:13597:13:
+assertion `left == right` failed: GOP 15, encoded ordinal 15, phase 1
+  left: Key
+ right: Inter
+test frame_loop::tests::cadence_survives_u32_saturation_gop_15 ... FAILED
+
+thread 'frame_loop::tests::cadence_survives_u32_saturation_altref' (288251030) panicked at crates/rvp9-encoder/src/frame_loop.rs:13717:13:
+assertion `left == right` failed: GOP 15, encoded ordinal 15, phase 1
+  left: Key
+ right: Inter
+test frame_loop::tests::cadence_survives_u32_saturation_altref ... FAILED
+
+thread 'spatial_encoder::tests::cadence_survives_u32_saturation_spatial' (288251033) panicked at crates/rvp9-encoder/src/spatial_encoder.rs:1141:9:
+stateful spatial KEY and enhancement headers must follow the AU cadence at GOP lengths 10 and 15
+test spatial_encoder::tests::cadence_survives_u32_saturation_spatial ... FAILED
+
+failures:
+
+failures:
+    frame_loop::tests::cadence_survives_u32_saturation_altref
+    frame_loop::tests::cadence_survives_u32_saturation_gop_10
+    frame_loop::tests::cadence_survives_u32_saturation_gop_15
+    spatial_encoder::tests::cadence_survives_u32_saturation_spatial
+
+test result: FAILED. 0 passed; 4 failed; 0 ignored; 0 measured; 821 filtered out; finished in 0.27s
+
+error: test failed, to rerun pass `-p rvp9-encoder --lib`
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-kiln-00072-stream-counter-cadence/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 32s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 4 tests
+test frame_loop::tests::cadence_survives_u32_saturation_gop_10 ... ok
+test frame_loop::tests::cadence_survives_u32_saturation_gop_15 ... ok
+test frame_loop::tests::cadence_survives_u32_saturation_altref ... ok
+test spatial_encoder::tests::cadence_survives_u32_saturation_spatial ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 821 filtered out; finished in 0.22s
+
+     Running tests/a18_picker_reads_prev_grid.rs (target/debug/deps/a18_picker_reads_prev_grid-e22be59b3a6fbf36)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/a18_prev_frame_mvs_fires.rs (target/debug/deps/a18_prev_frame_mvs_fires-0efc37c28b0275cd)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/budget_gate_validation.rs (target/debug/deps/budget_gate_validation-a80c8193a8150cae)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/cross_decoder_gate.rs (target/debug/deps/cross_decoder_gate-dc0cc66e177408f5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running tests/diag_foreman_kf.rs (target/debug/deps/diag_foreman_kf-763ab1209dba7766)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_foreman_kf_partitions.rs (target/debug/deps/diag_foreman_kf_partitions-efece36fb5447440)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_foreman_per_frame.rs (target/debug/deps/diag_foreman_per_frame-70b59e98ef8265f9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_frame4_dump.rs (target/debug/deps/diag_frame4_dump-7d935c0981b38081)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_kfcap_measure.rs (target/debug/deps/diag_kfcap_measure-cc5f5ba202164dee)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_per_frame.rs (target/debug/deps/diag_per_frame-fb3ef771840bdb81)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_per_sb_motion.rs (target/debug/deps/diag_per_sb_motion-6af234a22310a877)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_picker_direct.rs (target/debug/deps/diag_picker_direct-248885466c7606f1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_ref_divergence.rs (target/debug/deps/diag_ref_divergence-97aba56f06df973b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/diag_sb03_motion.rs (target/debug/deps/diag_sb03_motion-1c8333634f31bfc0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_source_frame0.rs (target/debug/deps/diag_source_frame0-115fab7771e98351)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diag_source_static.rs (target/debug/deps/diag_source_static-fa7f6a9042722ff8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/drift_diag.rs (target/debug/deps/drift_diag-a4ef66d07315c683)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/e12_oracle.rs (target/debug/deps/e12_oracle-c53d4ba24297d2db)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/e13_diamond.rs (target/debug/deps/e13_diamond-da3e534176e99525)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/e3_mvdiag.rs (target/debug/deps/e3_mvdiag-e2eb7ce959deb32f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/e4_overshoot_accounting.rs (target/debug/deps/e4_overshoot_accounting-53b092e8af37d20a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/e9_quality_gap.rs (target/debug/deps/e9_quality_gap-2c7bc3fda6335e37)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/f1_block_yrd_newmv_winner.rs (target/debug/deps/f1_block_yrd_newmv_winner-383c37b5f9d1710d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/f2_find_mv_refs_temporal_visible.rs (target/debug/deps/f2_find_mv_refs_temporal_visible-981ceb61837dc14e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/phase2_reuse_positive_control.rs (target/debug/deps/phase2_reuse_positive_control-b4d4db37c98a5118)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/quality_gate.rs (target/debug/deps/quality_gate-d1d1658c51f9e9f0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+
+     Running tests/rdo_dispatch_proof.rs (target/debug/deps/rdo_dispatch_proof-694106d7ba33d271)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/realtime_gate.rs (target/debug/deps/realtime_gate-08b36b49bb4f85e0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running tests/stage4a_source_drift.rs (target/debug/deps/stage4a_source_drift-41e55bd248ce1733)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+     Running tests/stage_sse_diag.rs (target/debug/deps/stage_sse_diag-30f6059b7a016a0e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w8_altref_emit.rs (target/debug/deps/w8_altref_emit-330eca980549a891)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/w_2pass_vbr.rs (target/debug/deps/w_2pass_vbr-8903e24927cdae59)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running tests/w_altref_partial_height.rs (target/debug/deps/w_altref_partial_height-dc1f9878f984bed9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+     Running tests/w_altref_picker.rs (target/debug/deps/w_altref_picker-5658e012229fab97)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_altref_real_coding.rs (target/debug/deps/w_altref_real_coding-9e10b7bd996f3a25)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/w_buffer_pool.rs (target/debug/deps/w_buffer_pool-a12db633cfb9fee1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_coef_prob_parity.rs (target/debug/deps/w_coef_prob_parity-0a21cd73e37b8d63)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_coef_prob_twoloop.rs (target/debug/deps/w_coef_prob_twoloop-32a7910668c88cc5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_compound_proof.rs (target/debug/deps/w_compound_proof-cd036d74c0e8092d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_feature_interaction_matrix.rs (target/debug/deps/w_feature_interaction_matrix-345f12937aad130d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w_gop_topology.rs (target/debug/deps/w_gop_topology-c1f30befdee1972f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/w_lossless_config.rs (target/debug/deps/w_lossless_config-c4a9e42ac6499f18)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/w_ml_partition.rs (target/debug/deps/w_ml_partition-aa345f2c2fcd1694)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w_ml_rect_prune.rs (target/debug/deps/w_ml_rect_prune-1a4cab580d05e3fb)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w_rd_partition.rs (target/debug/deps/w_rd_partition-9e44f5696b23ad33)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w_rd_partition_rect.rs (target/debug/deps/w_rd_partition_rect-02462aa303c94518)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/w_svc_spatial_keyframe.rs (target/debug/deps/w_svc_spatial_keyframe-670801e081fc7997)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+     Running tests/w_svc_temporal.rs (target/debug/deps/w_svc_temporal-aba67e39ec56fd39)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+     Running tests/w_tpl.rs (target/debug/deps/w_tpl-beff9a62e96553e7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/w_vbr_rc_proof.rs (target/debug/deps/w_vbr_rc_proof-22ceddf2c9468afa)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
