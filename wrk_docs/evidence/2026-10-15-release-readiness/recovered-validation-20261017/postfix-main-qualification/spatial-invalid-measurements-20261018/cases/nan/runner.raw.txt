@@ -1,0 +1,2 @@
+[quality   1/96] cbr-720p30-in_to_tree-cpu6-s2
+cbr-720p30-in_to_tree-cpu6-s2 SL0 BD-rate: expected a decimal number, got 'NaN'

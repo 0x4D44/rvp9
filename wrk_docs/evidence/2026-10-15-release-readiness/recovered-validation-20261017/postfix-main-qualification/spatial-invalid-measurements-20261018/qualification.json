@@ -1,0 +1,283 @@
+{
+  "schema": 1,
+  "captured_at_utc": "2026-10-18T02:24:33Z",
+  "host": {
+    "name": "flux.home.arpa",
+    "os": "macOS-26.6.2-arm64-arm-64bit",
+    "architecture": "arm64"
+  },
+  "candidate": {
+    "runner_revision": "afa6d491072aa6a832120c02e1ab6f63242bfc76",
+    "product_source_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "script_path": "scripts/qualify-spatial-svc.sh",
+    "runner_script_git_blob": "9a09cb6604dd507cb273cae61d31744732d51ec9",
+    "product_script_git_blob": "9a09cb6604dd507cb273cae61d31744732d51ec9",
+    "script_sha256": "6453cd72adedbe82c1c719a728873f419543170819111a1139dba5303d47c3de",
+    "script_matches_product_source": true
+  },
+  "probe": {
+    "purpose": "Verify the exact-source spatial run_quality_curve row parser rejects non-finite and over-ceiling BD-rate values.",
+    "functions_extracted_verbatim": {
+      "target_spec": {
+        "lines": [
+          103,
+          110
+        ],
+        "sha256": "681666cffe92b47586ce9b1cd0448f7ee71cc8238b2ae29c5eeacaa09450e766"
+      },
+      "target_bitrates": {
+        "lines": [
+          122,
+          132
+        ],
+        "sha256": "905c75889ddf9705f15d40a8305eb8fd79a1515a3e76174fa5948ebe19730c60"
+      },
+      "quality_bdrate_limit": {
+        "lines": [
+          156,
+          163
+        ],
+        "sha256": "28a8f0c5dbdae57328da577a48ccf87c4ab16fdda328bff9fe6ffdb4bcb4a52c"
+      },
+      "fail": {
+        "lines": [
+          201,
+          204
+        ],
+        "sha256": "2c08ea37b2aa8af4f040b8a77498044a0749744819e26714778eb86773a4ab65"
+      },
+      "require_number": {
+        "lines": [
+          206,
+          213
+        ],
+        "sha256": "a5a350047a4e4684e1f8412416a5037ae6c6ce6d16dbf386ee558b51a2148374"
+      },
+      "number_le": {
+        "lines": [
+          216,
+          218
+        ],
+        "sha256": "0048a9773e8ae6cbcafdbf4d25df48c42342fe76ddf450c0afb2085b107aecda"
+      },
+      "acceptance_input": {
+        "lines": [
+          818,
+          820
+        ],
+        "sha256": "8ad22e1e519a04888d41cb5b8be823e5bbc64201a14366361a9763c3b471e1c9"
+      },
+      "run_quality_curve": {
+        "lines": [
+          959,
+          1030
+        ],
+        "sha256": "937a3805dcce0f05e04ae8b6bf687029c1d5bdc291e943210c8f9422df090fef"
+      }
+    },
+    "source_extract_sha256": "6cfef335564836be1d5c6ffe88643d3a4f8f1f4fa33595c87a550a7f89f41547",
+    "command": "bash harness.sh stub-bdrate-svc.sh; stdin closed; invoked from the registered task worktree; the exact function calls deltic timeout 7200 around the stub child.",
+    "curve": {
+      "mode": "cbr",
+      "target": "720p30",
+      "clip": "in_to_tree",
+      "cpu_used": 6,
+      "spatial_layers": 2,
+      "bitrates_kbps": [
+        420,
+        630,
+        840,
+        1260,
+        2100,
+        3360
+      ],
+      "gate_pct": 0.5
+    },
+    "stubbed_bdrate_rows": "bdrate_pct,0,<injected-value> and bdrate_pct,1,<injected-value>",
+    "results": {
+      "nan": {
+        "value": "NaN",
+        "expected": "reject non-decimal",
+        "exit_code": 1,
+        "diagnostic": "cbr-720p30-in_to_tree-cpu6-s2 SL0 BD-rate: expected a decimal number, got 'NaN'",
+        "summary_rows_after_header": [],
+        "cross_check_called": false,
+        "harness": "harness.sh"
+      },
+      "infinity": {
+        "value": "inf",
+        "expected": "reject non-decimal",
+        "exit_code": 1,
+        "diagnostic": "cbr-720p30-in_to_tree-cpu6-s2 SL0 BD-rate: expected a decimal number, got 'inf'",
+        "summary_rows_after_header": [],
+        "cross_check_called": false,
+        "harness": "harness.sh"
+      },
+      "over-limit": {
+        "value": "0.6",
+        "expected": "reject above CBR +0.5%",
+        "exit_code": 1,
+        "diagnostic": "cbr-720p30-in_to_tree-cpu6-s2: SL0 BD-rate 0.6% exceeds +0.5%",
+        "summary_rows_after_header": [
+          "cbr-720p30-in_to_tree-cpu6-s2,cbr,720p30,in_to_tree,6,2,1,0,420,630,840,1260,2100,3360,SL0,0.6,0.5,FAIL"
+        ],
+        "cross_check_called": false,
+        "harness": "harness.sh"
+      },
+      "nan-guard-disabled": {
+        "value": "NaN",
+        "expected": "mutation control demonstrates fail-open",
+        "exit_code": 0,
+        "diagnostic": "[quality   1/96] cbr-720p30-in_to_tree-cpu6-s2",
+        "summary_rows_after_header": [
+          "cbr-720p30-in_to_tree-cpu6-s2,cbr,720p30,in_to_tree,6,2,1,0,420,630,840,1260,2100,3360,SL0,NaN,0.5,PASS",
+          "cbr-720p30-in_to_tree-cpu6-s2,cbr,720p30,in_to_tree,6,2,1,0,420,630,840,1260,2100,3360,SL1,NaN,0.5,PASS"
+        ],
+        "cross_check_called": true,
+        "harness": "mutation-control-harness.sh"
+      }
+    },
+    "mutation_control": {
+      "mutation": "Replaced the extracted require_number function with a no-op in mutation-control-harness.sh; product source was not changed.",
+      "observed": "NaN was written as PASS for both layers, cross_check_curve was reached, and the helper exited 0.",
+      "result": "PASS: the probe detects removal of the spatial row's finite-decimal guard."
+    }
+  },
+  "limits": [
+    "The bdrate-svc child is a stub that writes the supplied CSV rows and does not run encoders, decoders, or BD-rate calculations.",
+    "This executes one exact-source run_quality_curve call with helper stubs; it does not run the 96-curve spatial phase, publication path, or any codec, quality, or performance measurement.",
+    "The probe shows the caller's fail-closed parsing and CBR ceiling for injected values; it does not resolve FLU-00041 or FLU-00042."
+  ],
+  "artifacts": [
+    {
+      "path": "cases/infinity/bdrate.csv",
+      "bytes": 53,
+      "sha256": "4a4d986f36d6c2cfad3ac65376b9c0dc77f4a510f67cbcecf95823b7230d7c75"
+    },
+    {
+      "path": "cases/infinity/bdrate.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/infinity/quality-summary.csv",
+      "bytes": 118,
+      "sha256": "03e82c69030970cc239dd49a1437b1b9686ffd038d25ceed50a6fce5cc0e16d4"
+    },
+    {
+      "path": "cases/infinity/runner.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "cases/infinity/runner.raw.txt",
+      "bytes": 127,
+      "sha256": "f14e510c38fa82c89386c98f624bef8513c540714dc797411fa6db246370999e"
+    },
+    {
+      "path": "cases/nan/bdrate.csv",
+      "bytes": 53,
+      "sha256": "008627ff665c50abe759de98e7a1e3df299e0685dcc6c3e0a63ac26d55acef72"
+    },
+    {
+      "path": "cases/nan/bdrate.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/nan/quality-summary.csv",
+      "bytes": 118,
+      "sha256": "03e82c69030970cc239dd49a1437b1b9686ffd038d25ceed50a6fce5cc0e16d4"
+    },
+    {
+      "path": "cases/nan/runner.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "cases/nan/runner.raw.txt",
+      "bytes": 127,
+      "sha256": "c9e10454f700e921ad61303f223f42730ed4af2b93131ea2e7ebe1b89d862fa4"
+    },
+    {
+      "path": "cases/nan-guard-disabled/bdrate.csv",
+      "bytes": 53,
+      "sha256": "008627ff665c50abe759de98e7a1e3df299e0685dcc6c3e0a63ac26d55acef72"
+    },
+    {
+      "path": "cases/nan-guard-disabled/bdrate.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/nan-guard-disabled/cross-check-called.marker",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/nan-guard-disabled/quality-summary.csv",
+      "bytes": 326,
+      "sha256": "8bf4f8d50b68bc2640c67c8ec436ee5e5f90b602559720a04ed0f37e4a94dacc"
+    },
+    {
+      "path": "cases/nan-guard-disabled/runner.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "cases/nan-guard-disabled/runner.raw.txt",
+      "bytes": 47,
+      "sha256": "3b23ae27378cb35718a86b7bb77a5165500c2b53f9b801229022dc89dea3b941"
+    },
+    {
+      "path": "cases/over-limit/bdrate.csv",
+      "bytes": 53,
+      "sha256": "3e76615fbf6836ea86455f2063b163479d5f39c20c549839ddc973c1fb601209"
+    },
+    {
+      "path": "cases/over-limit/bdrate.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/over-limit/quality-summary.csv",
+      "bytes": 222,
+      "sha256": "33368dd9b3e3fa56bd367c25a183cda8c3c0c0991ceb5164d0f0d7dc90a5863a"
+    },
+    {
+      "path": "cases/over-limit/runner.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "cases/over-limit/runner.raw.txt",
+      "bytes": 109,
+      "sha256": "4a501c0b41b10b41edb3a825c031ed972c40dc95a89dd6805415586bc8cd9b57"
+    },
+    {
+      "path": "harness.sh",
+      "bytes": 5360,
+      "sha256": "667844f313daba89a7aa007e60b630433e809ba5a02367c9fa6c7a66bc295345"
+    },
+    {
+      "path": "mutation-control-harness.sh",
+      "bytes": 5153,
+      "sha256": "d64c1fcfc49356513498550692886f63124831da196975545758396161124b50"
+    },
+    {
+      "path": "spatial-source-extract.sh",
+      "bytes": 4705,
+      "sha256": "6cfef335564836be1d5c6ffe88643d3a4f8f1f4fa33595c87a550a7f89f41547"
+    },
+    {
+      "path": "stub-bdrate-svc.sh",
+      "bytes": 332,
+      "sha256": "fa2cdb2b2f709a78b3b7518ae56f028930abe100ad02ae97109929fd68c8091a"
+    }
+  ],
+  "registered_scratch": {
+    "id": "spatial-invalid-measurement-9e478b13",
+    "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/spatial-invalid-measurement-9e478b13",
+    "disposition": "Deltic-registered scratch; task integration removes it after the durable evidence copy is verified."
+  }
+}
