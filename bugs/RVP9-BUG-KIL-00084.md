@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00084 — F02 strict comparison omits three advertised fields
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/f02 oracle
 - **Raised:** 2026-08-22T13:20:52Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T162838Z-907066ed
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00084-run-verify-20261018T162838Z-907066ed
-- **Owner base:** 19a0e5d901745b2344add62fed51ab341be9f8aa
-- **Owner fingerprint:** sha256:1741df1edd10bbefba0c424f182654eabce35208237fb9401566effc5582118e
-- **Owner since:** 2026-10-18T16:28:38Z
-- **Owner until:** 2026-10-18T20:28:38Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T04:47:41Z, deltic:auto role=fix run=fix-20261016T044334Z-7aa5f4a5 branch=task/bug-RVP9-BUG-KIL-00084-run-fix-20261016T044334Z-7aa5f4a5 code=cf7305e6c3454b17e73803cbf56826841d6edb5f gate=manual)
+- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T04:47:41Z, deltic:auto role=fix run=fix-20261016T044334Z-7aa5f4a5 branch=task/bug-RVP9-BUG-KIL-00084-run-fix-20261016T044334Z-7aa5f4a5 code=cf7305e6c3454b17e73803cbf56826841d6edb5f gate=manual) -> Closed (2026-10-18T16:34:02Z, deltic:manual role=verify run=verify-20261018T162838Z-907066ed verified_fix_run=fix-20261016T044334Z-7aa5f4a5 verdict=close)
 
 ## Observation
 
@@ -39,6 +39,10 @@ divergence is silently accepted.
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:34:02Z, deltic:auto run=verify-20261018T162838Z-907066ed verified_fix_run=fix-20261016T044334Z-7aa5f4a5 verdict=close)
+
+Verifier note: Manual verify: Independent: three advertised strict-field tests pass; removing only q_index, tx_size and luma_eob_nonzero comparisons makes all three fail (mismatch count 0, expected 1). Restored focused run 3/3; source diff empty. Evidence: .scratch/kil84-proof.txt.
 
 ## Notes
 
