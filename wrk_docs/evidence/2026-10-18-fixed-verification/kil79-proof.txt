@@ -1,0 +1,108 @@
+INITIAL COMMAND: deltic timeout 300 cargo test -p rvp9-core --lib inter::scale::tests:: </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 07s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 22 tests
+test inter::scale::tests::constants_match_libvpx ... ok
+test inter::scale::tests::half_times_downscale ... ok
+test inter::scale::tests::identity_scale_is_not_scaled ... ok
+test inter::scale::tests::identity_scaled_x_y_q4 ... ok
+test inter::scale::tests::invalid_scale_is_propagated ... ok
+test inter::scale::tests::resize_vector_scale_factors ... ok
+test inter::scale::tests::rounding_boundary_off_by_one ... ok
+test inter::scale::tests::inter_predictor_identity_with_subpel_x_uses_horiz ... ok
+test inter::scale::tests::scaled_horiz_with_step_16_matches_unscaled ... ok
+test inter::scale::tests::tight_scaled_prediction_matches_normative_fractional_pixels ... ok
+test inter::scale::tests::inter_predictor_identity_with_subpel_xy_uses_full_2d ... ok
+test inter::scale::tests::asymmetric_scale ... ok
+test inter::scale::tests::inter_predictor_identity_passthrough ... ok
+test inter::scale::tests::inter_predictor_height_only_scale_matches_libvpx_vert_avg ... ok
+test inter::scale::tests::inter_predictor_width_only_scale_matches_libvpx_horiz ... ok
+test inter::scale::tests::inter_predictor_scaled_uses_scaled_2d ... ok
+test inter::scale::tests::inter_predictor_compound_avg_passthrough ... ok
+test inter::scale::tests::differential_random_scaled_2d ... ok
+test inter::scale::tests::two_times_upscale ... ok
+test inter::scale::tests::valid_ref_frame_size_envelope ... ok
+test inter::scale::tests::valid_ref_frame_size_rejects_zero_dimensions ... ok
+test inter::scale::tests::zero_dimensions_produce_invalid_scale_sentinel ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1705 filtered out; finished in 0.00s
+
+
+EXIT: 0
+ROOT MUTANT removes zero-axis guard COMMAND: deltic timeout 300 cargo test -p rvp9-core --lib zero_dimensions </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 34.22s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 4 tests
+test bitstream::tile::tests::write_tile_buffers_zero_dimensions_are_rejected ... ok
+test frame::tests::alloc_zero_dimensions_rejected ... ok
+test inter::scale::tests::valid_ref_frame_size_rejects_zero_dimensions ... FAILED
+test inter::scale::tests::zero_dimensions_produce_invalid_scale_sentinel ... FAILED
+
+failures:
+
+---- inter::scale::tests::valid_ref_frame_size_rejects_zero_dimensions stdout ----
+
+thread 'inter::scale::tests::valid_ref_frame_size_rejects_zero_dimensions' (285793091) panicked at crates/rvp9-core/src/inter/scale.rs:666:13:
+accepted zero dimensions for (0, 0, 0, 0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- inter::scale::tests::zero_dimensions_produce_invalid_scale_sentinel stdout ----
+
+thread 'inter::scale::tests::zero_dimensions_produce_invalid_scale_sentinel' (285793092) panicked at crates/rvp9-core/src/inter/scale.rs:178:5:
+fixed_point_scale_factor: this == 0
+
+thread 'inter::scale::tests::zero_dimensions_produce_invalid_scale_sentinel' (285793092) panicked at crates/rvp9-core/src/inter/scale.rs:677:13:
+ScaleFactors::new panicked for (0, 0, 0, 0)
+
+
+failures:
+    inter::scale::tests::valid_ref_frame_size_rejects_zero_dimensions
+    inter::scale::tests::zero_dimensions_produce_invalid_scale_sentinel
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 1723 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-core --lib`
+
+EXIT: 101
+
+Verifier harness count correction: zero_dimensions selected FOUR tests, two scale failures plus two unrelated passing controls. Expected assertion failures were observed; harness count expectation of two was wrong. finally restored original source bytes.
+RESTORED COMMAND: deltic timeout 300 cargo test -p rvp9-core --lib inter::scale::tests:: </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 17.10s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 22 tests
+test inter::scale::tests::asymmetric_scale ... ok
+test inter::scale::tests::constants_match_libvpx ... ok
+test inter::scale::tests::identity_scale_is_not_scaled ... ok
+test inter::scale::tests::identity_scaled_x_y_q4 ... ok
+test inter::scale::tests::half_times_downscale ... ok
+test inter::scale::tests::resize_vector_scale_factors ... ok
+test inter::scale::tests::inter_predictor_identity_passthrough ... ok
+test inter::scale::tests::inter_predictor_height_only_scale_matches_libvpx_vert_avg ... ok
+test inter::scale::tests::valid_ref_frame_size_envelope ... ok
+test inter::scale::tests::inter_predictor_identity_with_subpel_x_uses_horiz ... ok
+test inter::scale::tests::inter_predictor_width_only_scale_matches_libvpx_horiz ... ok
+test inter::scale::tests::inter_predictor_identity_with_subpel_xy_uses_full_2d ... ok
+test inter::scale::tests::rounding_boundary_off_by_one ... ok
+test inter::scale::tests::invalid_scale_is_propagated ... ok
+test inter::scale::tests::scaled_horiz_with_step_16_matches_unscaled ... ok
+test inter::scale::tests::inter_predictor_compound_avg_passthrough ... ok
+test inter::scale::tests::two_times_upscale ... ok
+test inter::scale::tests::tight_scaled_prediction_matches_normative_fractional_pixels ... ok
+test inter::scale::tests::inter_predictor_scaled_uses_scaled_2d ... ok
+test inter::scale::tests::valid_ref_frame_size_rejects_zero_dimensions ... ok
+test inter::scale::tests::zero_dimensions_produce_invalid_scale_sentinel ... ok
+test inter::scale::tests::differential_random_scaled_2d ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1705 filtered out; finished in 0.00s
+
+
+EXIT: 0

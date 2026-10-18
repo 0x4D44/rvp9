@@ -1,0 +1,140 @@
+INITIAL parser/writer focused suite COMMAND: deltic timeout 300 cargo test -p rvp9-core --lib bitstream::sub_parsers:: </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling libc v0.2.186
+   Compiling getrandom v0.3.4
+   Compiling zerocopy v0.8.48
+   Compiling rustix v1.1.4
+   Compiling getrandom v0.4.2
+   Compiling bitflags v2.11.1
+   Compiling autocfg v1.5.0
+   Compiling once_cell v1.21.4
+   Compiling fastrand v2.4.1
+   Compiling quick-error v1.2.3
+   Compiling bit-vec v0.8.0
+   Compiling fnv v1.0.7
+   Compiling regex-syntax v0.8.10
+   Compiling unarray v0.1.4
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling bit-set v0.8.0
+   Compiling num-traits v0.2.19
+   Compiling errno v0.3.14
+   Compiling wait-timeout v0.2.1
+   Compiling rand_core v0.9.5
+   Compiling rand_xorshift v0.4.0
+   Compiling rand v0.9.4
+   Compiling tempfile v3.27.0
+   Compiling rusty-fork v0.3.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling proptest v1.11.0
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 31s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 19 tests
+test bitstream::sub_parsers::tests::get_unsigned_bits_matches_libvpx ... ok
+test bitstream::sub_parsers::tests::quantization_with_deltas ... ok
+test bitstream::sub_parsers::tests::loopfilter_partial_delta_update ... ok
+test bitstream::sub_parsers::tests::write_segmentation_various_patterns ... ok
+test bitstream::sub_parsers::tests::write_loopfilter_ignores_invalid_deltas_when_they_are_not_emitted ... ok
+test bitstream::sub_parsers::tests::segmentation_disabled ... ok
+test bitstream::sub_parsers::tests::segmentation_feature_data_signed_and_unsigned ... ok
+test bitstream::sub_parsers::tests::write_tile_info_all_combinations ... ok
+test bitstream::sub_parsers::tests::write_tile_info_rejects_invalid_geometry_before_writing ... ok
+test bitstream::sub_parsers::tests::segmentation_map_update_no_data ... ok
+test bitstream::sub_parsers::tests::quantization_lossless ... ok
+test bitstream::sub_parsers::tests::write_loopfilter_all_delta_combos ... ok
+test bitstream::sub_parsers::tests::tile_info_helpers_match_libvpx ... ok
+test bitstream::sub_parsers::tests::tile_info_increment_to_max ... ok
+test bitstream::sub_parsers::tests::write_loopfilter_rejects_invalid_fields_before_writing ... ok
+test bitstream::sub_parsers::tests::loopfilter_disabled_deltas ... ok
+test bitstream::sub_parsers::tests::write_quantization_rejects_invalid_deltas_before_writing ... ok
+test bitstream::sub_parsers::tests::tile_info_min_only ... ok
+test bitstream::sub_parsers::tests::write_quantization_delta_extremes ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 1708 filtered out; finished in 0.00s
+
+
+EXIT: 0
+MUTANT loopfilter remove complete writer preflight COMMAND: deltic timeout 300 cargo test -p rvp9-core --lib bitstream::sub_parsers::tests::write_loopfilter_rejects_invalid_fields_before_writing -- --exact </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 30.96s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 1 test
+test bitstream::sub_parsers::tests::write_loopfilter_rejects_invalid_fields_before_writing ... FAILED
+
+failures:
+
+---- bitstream::sub_parsers::tests::write_loopfilter_rejects_invalid_fields_before_writing stdout ----
+
+thread 'bitstream::sub_parsers::tests::write_loopfilter_rejects_invalid_fields_before_writing' (285781194) panicked at crates/rvp9-core/src/bitstream/sub_parsers.rs:897:42:
+invalid header field must fail: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    bitstream::sub_parsers::tests::write_loopfilter_rejects_invalid_fields_before_writing
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1726 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-core --lib`
+
+EXIT: 101
+MUTANT quantization remove complete writer preflight COMMAND: deltic timeout 300 cargo test -p rvp9-core --lib bitstream::sub_parsers::tests::write_quantization_rejects_invalid_deltas_before_writing -- --exact </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 45.69s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 1 test
+test bitstream::sub_parsers::tests::write_quantization_rejects_invalid_deltas_before_writing ... FAILED
+
+failures:
+
+---- bitstream::sub_parsers::tests::write_quantization_rejects_invalid_deltas_before_writing stdout ----
+
+thread 'bitstream::sub_parsers::tests::write_quantization_rejects_invalid_deltas_before_writing' (285808432) panicked at crates/rvp9-core/src/bitstream/sub_parsers.rs:911:42:
+invalid header field must fail: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    bitstream::sub_parsers::tests::write_quantization_rejects_invalid_deltas_before_writing
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1726 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-core --lib`
+
+EXIT: 101
+RESTORED parser/writer focused suite COMMAND: deltic timeout 300 cargo test -p rvp9-core --lib bitstream::sub_parsers:: </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 29.09s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 19 tests
+test bitstream::sub_parsers::tests::get_unsigned_bits_matches_libvpx ... ok
+test bitstream::sub_parsers::tests::tile_info_increment_to_max ... ok
+test bitstream::sub_parsers::tests::loopfilter_disabled_deltas ... ok
+test bitstream::sub_parsers::tests::loopfilter_partial_delta_update ... ok
+test bitstream::sub_parsers::tests::quantization_lossless ... ok
+test bitstream::sub_parsers::tests::segmentation_disabled ... ok
+test bitstream::sub_parsers::tests::quantization_with_deltas ... ok
+test bitstream::sub_parsers::tests::segmentation_map_update_no_data ... ok
+test bitstream::sub_parsers::tests::tile_info_helpers_match_libvpx ... ok
+test bitstream::sub_parsers::tests::segmentation_feature_data_signed_and_unsigned ... ok
+test bitstream::sub_parsers::tests::tile_info_min_only ... ok
+test bitstream::sub_parsers::tests::write_loopfilter_ignores_invalid_deltas_when_they_are_not_emitted ... ok
+test bitstream::sub_parsers::tests::write_loopfilter_all_delta_combos ... ok
+test bitstream::sub_parsers::tests::write_loopfilter_rejects_invalid_fields_before_writing ... ok
+test bitstream::sub_parsers::tests::write_quantization_delta_extremes ... ok
+test bitstream::sub_parsers::tests::write_quantization_rejects_invalid_deltas_before_writing ... ok
+test bitstream::sub_parsers::tests::write_segmentation_various_patterns ... ok
+test bitstream::sub_parsers::tests::write_tile_info_all_combinations ... ok
+test bitstream::sub_parsers::tests::write_tile_info_rejects_invalid_geometry_before_writing ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 1708 filtered out; finished in 0.00s
+
+
+EXIT: 0

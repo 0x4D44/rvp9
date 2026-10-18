@@ -1,0 +1,84 @@
+ORIGINAL SHA256=0680d26771960f77d484172a17ee629eb6e97689418d9d5c748c0307a8525885
+CURRENT_BASELINE COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --test w_buffer_pool -- --nocapture < /dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 21s
+     Running tests/w_buffer_pool.rs (target/debug/deps/w_buffer_pool-a12db633cfb9fee1)
+
+running 2 tests
+A10 byte-identity: len = 6446, fnv1a = 0x20793807d02f6e58
+test a10_byte_identity_pre_vs_post_refactor ... ok
+test a10_pool_stream_decodes_cleanly ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+CURRENT_BASELINE EXIT=0
+ROOT REVERSAL: pin historical pre-f5d2de1c golden7053/0x0d37_a3ba_8258_9d9a; preserve assertions and current encoder.
+HISTORICAL_GOLDEN_REVERSED COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --test w_buffer_pool a10_byte_identity_pre_vs_post_refactor -- --exact --nocapture < /dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 30.62s
+     Running tests/w_buffer_pool.rs (target/debug/deps/w_buffer_pool-a12db633cfb9fee1)
+
+running 1 test
+A10 byte-identity: len = 6446, fnv1a = 0x20793807d02f6e58
+
+thread 'a10_byte_identity_pre_vs_post_refactor' (285784101) panicked at crates/rvp9-encoder/tests/w_buffer_pool.rs:395:5:
+assertion `left == right` failed: encoded stream length changed — the refactor altered the bitstream
+  left: 6446
+ right: 7053
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test a10_byte_identity_pre_vs_post_refactor ... FAILED
+
+failures:
+
+failures:
+    a10_byte_identity_pre_vs_post_refactor
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p rvp9-encoder --test w_buffer_pool`
+HISTORICAL_GOLDEN_REVERSED EXIT=101
+RESTORED SHA256=0680d26771960f77d484172a17ee629eb6e97689418d9d5c748c0307a8525885
+CURRENT_RESTORED COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --test w_buffer_pool -- --nocapture < /dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 46.74s
+     Running tests/w_buffer_pool.rs (target/debug/deps/w_buffer_pool-a12db633cfb9fee1)
+
+running 2 tests
+A10 byte-identity: len = 6446, fnv1a = 0x20793807d02f6e58
+test a10_byte_identity_pre_vs_post_refactor ... ok
+test a10_pool_stream_decodes_cleanly ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+CURRENT_RESTORED EXIT=0
+EXACT_ORIGINAL_COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --test w_buffer_pool a10_byte_identity_pre_vs_post_refactor < /dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 18.78s
+     Running tests/w_buffer_pool.rs (target/debug/deps/w_buffer_pool-a12db633cfb9fee1)
+
+running 1 test
+test a10_byte_identity_pre_vs_post_refactor ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.02s
+
+EXACT_ORIGINAL_EXIT=0

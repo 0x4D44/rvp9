@@ -1,0 +1,152 @@
+   Compiling crossbeam-utils v0.8.21
+   Compiling proc-macro2 v1.0.106
+   Compiling version_check v0.9.5
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling libc v0.2.186
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling memchr v2.8.0
+   Compiling itoa v1.0.18
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling cpufeatures v0.2.17
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 33.30s
+     Running unittests src/bin/soak.rs (target/debug/deps/soak-10c1363a956ac441)
+
+running 5 tests
+test tests::cli_accepts_bounded_runs_and_preserves_defaults ... ok
+test tests::cli_rejects_zero_frames_and_unbounded_run ... ok
+test tests::cross_decode_temp_dirs_are_isolated_and_cleaned ... ok
+test tests::empty_iteration_fails_and_single_frame_round_trips ... ok
+test tests::cross_decoder_timeout_kills_child ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+MUTANT1: remove zero-frame parser validation.
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 03s
+     Running unittests src/bin/soak.rs (target/debug/deps/soak-10c1363a956ac441)
+
+running 1 test
+test tests::cli_rejects_zero_frames_and_unbounded_run ... FAILED
+
+failures:
+
+---- tests::cli_rejects_zero_frames_and_unbounded_run stdout ----
+
+thread 'tests::cli_rejects_zero_frames_and_unbounded_run' (285771683) panicked at crates/rvp9-bench/src/bin/soak.rs:679:9:
+got Ok(Args { duration_secs: 60, iterations: 0, frames_per_iter: 0, report_every_secs: 30, cross_decode: false, vpxdec_path: "D:\\language\\libvpx-stock\\vpxdec.exe" })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::cli_rejects_zero_frames_and_unbounded_run
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --bin soak`
+
+MUTANT2: restore zero-frame guard; remove no-finite-bounds parser validation. Parser test only, never main loop.
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 25.03s
+     Running unittests src/bin/soak.rs (target/debug/deps/soak-10c1363a956ac441)
+
+running 1 test
+test tests::cli_rejects_zero_frames_and_unbounded_run ... FAILED
+
+failures:
+
+---- tests::cli_rejects_zero_frames_and_unbounded_run stdout ----
+
+thread 'tests::cli_rejects_zero_frames_and_unbounded_run' (285786065) panicked at crates/rvp9-bench/src/bin/soak.rs:685:9:
+got Ok(Args { duration_secs: 0, iterations: 0, frames_per_iter: 30, report_every_secs: 30, cross_decode: false, vpxdec_path: "D:\\language\\libvpx-stock\\vpxdec.exe" })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::cli_rejects_zero_frames_and_unbounded_run
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --bin soak`
+
+MUTANT3: restore parser guards; remove positive decoded-frame validation, retaining equality check.
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 40.53s
+     Running unittests src/bin/soak.rs (target/debug/deps/soak-10c1363a956ac441)
+
+running 1 test
+test tests::empty_iteration_fails_and_single_frame_round_trips ... FAILED
+
+failures:
+
+---- tests::empty_iteration_fails_and_single_frame_round_trips stdout ----
+
+thread 'tests::empty_iteration_fails_and_single_frame_round_trips' (285818587) panicked at crates/rvp9-bench/src/bin/soak.rs:730:9:
+got Ok(IterStats { encoded_bytes: 0, y_checksum: 0, decoded_frames: 0 })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::empty_iteration_fails_and_single_frame_round_trips
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --bin soak`
+
+RESTORED: exact original soak.rs bytes; final focused green follows.
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 20.04s
+     Running unittests src/bin/soak.rs (target/debug/deps/soak-10c1363a956ac441)
+
+running 5 tests
+test tests::cli_accepts_bounded_runs_and_preserves_defaults ... ok
+test tests::cli_rejects_zero_frames_and_unbounded_run ... ok
+test tests::cross_decode_temp_dirs_are_isolated_and_cleaned ... ok
+test tests::empty_iteration_fails_and_single_frame_round_trips ... ok
+test tests::cross_decoder_timeout_kills_child ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
