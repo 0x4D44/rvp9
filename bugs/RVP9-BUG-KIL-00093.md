@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00093 — Unknown-size WebM Clusters are mistaken for nested containers
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** io/webm packet reader
 - **Raised:** 2026-08-22T14:33:24Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T155636Z-287856fc
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00093-run-verify-20261018T155636Z-287856fc
-- **Owner base:** 283ea9293f87eb88d82f0aa1f1219b2420bb5e57
-- **Owner fingerprint:** sha256:3b03b9413bc7d3e9cded6b155eb5effb68f1eba4de70b5ca4c1ec9f202f6b819
-- **Owner since:** 2026-10-18T15:56:36Z
-- **Owner until:** 2026-10-18T19:56:36Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T14:33:24Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:02:21Z, deltic:auto role=fix run=fix-20261015T225626Z-402753f6 branch=task/bug-RVP9-BUG-KIL-00093-run-fix-20261015T225626Z-402753f6 code=0359a602e11b758090db28644b08b19f77713dcf gate=manual)
+- **State history:** Open (2026-08-22T14:33:24Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:02:21Z, deltic:auto role=fix run=fix-20261015T225626Z-402753f6 branch=task/bug-RVP9-BUG-KIL-00093-run-fix-20261015T225626Z-402753f6 code=0359a602e11b758090db28644b08b19f77713dcf gate=manual) -> Closed (2026-10-18T16:00:23Z, deltic:manual role=verify run=verify-20261018T155636Z-287856fc verified_fix_run=fix-20261015T225626Z-402753f6 verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ RFC 8794 section 6.2 requires an unknown-sized element to end when the next vali
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:00:23Z, deltic:auto run=verify-20261018T155636Z-287856fc verified_fix_run=fix-20261015T225626Z-402753f6 verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer; base283ea929 includes0359a602. Original >32 unknown Cluster siblings: both readers return66 exact packets across64 siblings plus successors under finite/unknown Segments; real nesting cap retained. Reverse streaming sibling-boundary handler: exact stream regression fails nesting-depth BadEbml. Reverse memory handler: exact memory regression fails same symptom. Exact source restored/diff empty; restored IO140 pass. Lead source review and direct executable rerun2 pass. Shared gate limits and raw proof in2026.10.18 verification journal.
 
 ## Notes
