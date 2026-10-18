@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00037 — AArch64 dependent-library Miri builds cannot resolve scalar transform helpers
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/transforms-miri
 - **Raised:** 2026-10-15T22:32:06Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T195040Z-e3bd6992
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00037-run-fix-20261018T195040Z-e3bd6992
-- **Owner base:** 74b0f2d2074414ec5b0996875dac764c7478ed56
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T19:50:40Z
-- **Owner until:** 2026-10-18T23:50:40Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-15T22:32:06Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium)
+- **State history:** Open (2026-10-15T22:32:06Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:54:31Z, deltic:auto role=fix run=fix-20261018T195040Z-e3bd6992 branch=task/bug-RVP9-BUG-FLU-00037-run-fix-20261018T195040Z-e3bd6992 code=019f28983fa563954233d1b99892578d4c123657 gate=manual)
 
 ## Observation
 
