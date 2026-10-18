@@ -6,15 +6,15 @@
 - **Area:** encoder/config validation
 - **Raised:** 2026-08-22T18:32:50Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T154633Z-8728e103
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00103-run-verify-20261018T154633Z-8728e103
+- **Owner base:** eca70aaea5b14214150bf56613086080bd7011ca
+- **Owner fingerprint:** sha256:2189022885e656f477040f41ccb86b807309d3b132b844965a01108536fe76c9
+- **Owner since:** 2026-10-18T15:46:33Z
+- **Owner until:** 2026-10-18T19:46:33Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
