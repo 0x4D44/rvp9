@@ -9,6 +9,11 @@ readonly PINNED_LIBVPX_REVISION="12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+source "$repo_root/scripts/qualification-file-size.sh"
+
+file_size() {
+    qualification_file_size "$1"
+}
 
 frames="${RVP9_ALPHA_FRAMES:-60}"
 source_dir="${RVP9_ALPHA_SOURCE_DIR:-$repo_root/tests/corpus}"
@@ -223,8 +228,8 @@ run_row() {
         -i "$ivf" -pix_fmt yuv420p -f rawvideo "$ffmpeg_yuv"
 
     for decoded in "$rvp_yuv" "$vpx_yuv" "$ffmpeg_yuv"; do
-        actual_bytes="$(stat -f '%z' "$decoded" 2>/dev/null || stat -c '%s' "$decoded")"
-        if [ "$actual_bytes" -ne "$expected_bytes" ]; then
+        actual_bytes="$(file_size "$decoded")" || return 1
+        if [ "$actual_bytes" != "$expected_bytes" ]; then
             echo "$label: decoded byte count $actual_bytes, expected $expected_bytes: $decoded" >&2
             return 1
         fi

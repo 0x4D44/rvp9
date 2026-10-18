@@ -27,6 +27,10 @@ Current scripts/qualify-alpha-encoder.sh and qualify-reference-decoder.sh compar
 
 ## Fix
 
-<unfixed — raised only>
+Both qualifiers now use a shared, validated BSD/GNU stat adapter. They propagate measurement errors before PASS and compare canonical decimal strings, avoiding false acceptance from nonnumeric or oversized arithmetic inputs.
+
+Regression: `python3 scripts/test_qualification_file_size.py` selected the production row checks and failed before the fix on six malformed-measurement acceptance subcases. After the fix, all six tests passed, covering BSD/GNU success, GNU filesystem-text fallback, empty/nonnumeric/failed output, failed stat with numeric stdout, leading zeros, mismatch and oversized values. Bash syntax checks and a native stat smoke with a space-containing filename passed.
+
+Evidence: `wrk_journals/2026.10.18 - JRN - RVP9-BUG-FLU-00045 qualification size validation.md`. This repairs acceptance behavior; it does not revalidate prior invalid codec qualification evidence or claim a new full codec matrix run.
 
 ## Notes

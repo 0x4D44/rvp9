@@ -16,6 +16,7 @@ readonly FPS="30/1"
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+source "$repo_root/scripts/qualification-file-size.sh"
 
 frames="${RVP9_REFERENCE_DECODER_FRAMES:-12}"
 target_bitrate="${RVP9_REFERENCE_DECODER_TARGET_BITRATE:-512}"
@@ -119,7 +120,7 @@ sha256_file() {
 }
 
 file_size() {
-    stat -f '%z' "$1" 2>/dev/null || stat -c '%s' "$1"
+    qualification_file_size "$1"
 }
 
 version_line() {
@@ -215,8 +216,8 @@ run_row() {
             echo "$label: decoder produced no output: $decoded" >&2
             return 1
         fi
-        actual_bytes="$(file_size "$decoded")"
-        if [ "$actual_bytes" -ne "$expected_bytes" ]; then
+        actual_bytes="$(file_size "$decoded")" || return 1
+        if [ "$actual_bytes" != "$expected_bytes" ]; then
             echo "$label: decoded byte count $actual_bytes, expected $expected_bytes: $decoded" >&2
             return 1
         fi
