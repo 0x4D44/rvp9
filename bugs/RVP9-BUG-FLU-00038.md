@@ -27,6 +27,8 @@ At candidate code 1a84f60a24e8d82e8e6454743fbb80521280df0e (documentation/ledger
 
 ## Fix
 
-<unfixed — raised only>
+The decoder and encoder Cargo package manifests exclude their workspace-only integration tests; the encoder archive also excludes the harness-based `sad_simd_oracle` example. The encoder's existing `rvp9-decoder` dev-dependency now includes a compatible registry version as well as its workspace path, so extracted archive unit tests can resolve it. The crate READMEs direct maintainers to run integration tests from a workspace checkout.
+
+Validated both `cargo package --locked --offline` commands and `cargo test --locked` from each extracted archive. Decoder archive tests passed (224 unit tests and one compile-fail doctest); encoder archive tests passed (824 unit tests, one ignored). The excluded `panic_safety` and `quality_gate` integration targets still compile in the workspace. Fix landed in `1322be6091e42b7789c34443cfbdbb2364f99386`.
 
 ## Notes
