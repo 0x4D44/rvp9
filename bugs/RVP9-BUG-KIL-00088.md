@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00088 — dump-frame-diff panics at small and partial frame edges
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** harness/dump-frame-diff
 - **Raised:** 2026-08-22T13:20:53Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T172231Z-523935bf
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00088-run-verify-20261018T172231Z-523935bf
-- **Owner base:** 001b217b8f1cb628c80829ff452911cc48af7487
-- **Owner fingerprint:** sha256:bc037b81f64de1437080d160295a51528e1d2f1bd8cad05cf3de17b24cf6b5bc
-- **Owner since:** 2026-10-18T17:22:31Z
-- **Owner until:** 2026-10-18T21:22:31Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T08:40:30Z, deltic:auto role=fix run=fix-20261016T083030Z-646473d7 branch=task/bug-RVP9-BUG-KIL-00088-run-fix-20261016T083030Z-646473d7 code=bb7a759f5fb20bc7bd05f83a3e0af0fdc8c6556a gate=manual)
+- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T08:40:30Z, deltic:auto role=fix run=fix-20261016T083030Z-646473d7 branch=task/bug-RVP9-BUG-KIL-00088-run-fix-20261016T083030Z-646473d7 code=bb7a759f5fb20bc7bd05f83a3e0af0fdc8c6556a gate=manual) -> Closed (2026-10-18T17:25:23Z, deltic:manual role=verify run=verify-20261018T172231Z-523935bf verified_fix_run=fix-20261016T083030Z-646473d7 verdict=close)
 
 ## Observation
 
@@ -37,6 +37,10 @@ small or edge-aligned inputs can crash exactly when a divergence is found.
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T17:25:23Z, deltic:auto run=verify-20261018T172231Z-523935bf verified_fix_run=fix-20261016T083030Z-646473d7 verdict=close)
+
+Verifier note: Manual verify: The two retained dump-frame-diff regressions pass on the fixed build. Restoring the unbounded 12x8 window and unconditional 4x4 difference blocks makes the small/partial-frame tests fail with bounds panics and row-wrapping mismatches. Exact source restored. Coverage uses synthetic visible-plane fixtures on ARM64, not an end-to-end corpus decode.
 
 ## Notes
 
