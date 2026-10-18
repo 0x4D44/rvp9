@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00110 — Tile profiler exits successfully without valid profiling evidence
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** bench/decode-profile-tiles
 - **Raised:** 2026-08-22T19:31:08Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T175426Z-7f0a0821
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00110-run-verify-20261018T175426Z-7f0a0821
-- **Owner base:** 2b6141aabfec94f0fb0d104133348c487f8e447e
-- **Owner fingerprint:** sha256:640ffc4e52f8678e7c73114d59a08797eb9544ac5f35204c80ed58ea90001b91
-- **Owner since:** 2026-10-18T17:54:26Z
-- **Owner until:** 2026-10-18T21:54:26Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:31:08Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T01:23:35Z, deltic:auto role=fix run=fix-20261016T011011Z-413aab2b branch=task/bug-RVP9-BUG-KIL-00110-run-fix-20261016T011011Z-413aab2b code=a74227e178e46016a2d5c628243b9dc183962664 gate=manual)
+- **State history:** Open (2026-08-22T19:31:08Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T01:23:35Z, deltic:auto role=fix run=fix-20261016T011011Z-413aab2b branch=task/bug-RVP9-BUG-KIL-00110-run-fix-20261016T011011Z-413aab2b code=a74227e178e46016a2d5c628243b9dc183962664 gate=manual) -> Closed (2026-10-18T17:59:32Z, deltic:manual role=verify run=verify-20261018T175426Z-7f0a0821 verified_fix_run=fix-20261016T011011Z-413aab2b verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ crates/rvp9-bench/src/bin/decode-profile-tiles.rs:72-106 accepts zero runs or ze
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T17:59:32Z, deltic:auto run=verify-20261018T175426Z-7f0a0821 verified_fix_run=fix-20261016T011011Z-413aab2b verdict=close)
+
+Verifier note: Manual verify: Native ARM64 unsupported-instrumentation test and nine x86_64 Rosetta profiling tests pass. Removing the positive --runs gate makes the retained zero-runs assertion fail after the child reports exit 0, zero timed rows, and NaN; exact restore returns all tests to passing. Bug record Fix placeholder left unchanged.
 
 ## Notes
