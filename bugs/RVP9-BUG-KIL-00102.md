@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00102 — Lookahead peek panics on i32 minimum index
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** encoder/lookahead API
 - **Raised:** 2026-08-22T18:32:49Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T154043Z-b834f5ae
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00102-run-verify-20261018T154043Z-b834f5ae
-- **Owner base:** c18e8c55af689f5cb1ea43644d7c0e2a1c9e35c0
-- **Owner fingerprint:** sha256:7045161fa4ca57dbc04f9c752e41379c1ecda513712efbcfcfe74e1f64ad3477
-- **Owner since:** 2026-10-18T15:40:43Z
-- **Owner until:** 2026-10-18T19:40:43Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T18:32:49Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T07:32:36Z, deltic:auto role=fix run=fix-20261016T072410Z-43317dc5 branch=task/bug-RVP9-BUG-KIL-00102-run-fix-20261016T072410Z-43317dc5 code=66fce968fbb9419634e58123953c870f6413acbc gate=manual)
+- **State history:** Open (2026-08-22T18:32:49Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T07:32:36Z, deltic:auto role=fix run=fix-20261016T072410Z-43317dc5 branch=task/bug-RVP9-BUG-KIL-00102-run-fix-20261016T072410Z-43317dc5 code=66fce968fbb9419634e58123953c870f6413acbc gate=manual) -> Closed (2026-10-18T15:47:20Z, deltic:manual role=verify run=verify-20261018T154043Z-b834f5ae verified_fix_run=fix-20261016T072410Z-43317dc5 verdict=close)
 
 ## Observation
 
@@ -30,6 +30,10 @@ Expected: `peek(i32::MIN)` behaves like every other too-far-back index and retur
 ## Fix
 
 Compute the magnitude without signed negation, for example with `index.unsigned_abs()`, and reject magnitudes above `MAX_PRE_FRAMES` before slot arithmetic. Add an `i32::MIN` regression alongside the existing `peek(-2)` out-of-range case. Estimated effort: small.
+
+### Verification summary (2026-10-18T15:47:20Z, deltic:auto run=verify-20261018T154043Z-b834f5ae verified_fix_run=fix-20261016T072410Z-43317dc5 verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer; base09697b55 contains66fce968. Original i32::MIN peek observation: exact peek_out_of_range_indices_never_panic selects1, passes across empty/populated/popped states. Reverse unsigned_abs to (-index): selected1 fails exit101, negate overflow at lookahead.rs:313 and assertion peek(-2147483648) panicked with empty context. Exact bytes restored, git diff empty, same exact test passes. Checked unsigned magnitude rejects before slot arithmetic. Fmt/clippy pass. Workspace suite had transient F02 timeout-marker failure; exact retry and all30 F02 t...
 
 ## Notes
 
