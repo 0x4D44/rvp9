@@ -6,15 +6,15 @@
 - **Area:** qualification/conformance
 - **Raised:** 2026-10-16T14:14:38Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T164749Z-c620903f
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00043-run-verify-20261018T164749Z-c620903f
+- **Owner base:** 5483818ad15b0a87b23207e213f054d7c11eeb55
+- **Owner fingerprint:** sha256:44e3c6425dc1edcbd595d459fad67e71c1693e085050b05af132454c3caddeeb
+- **Owner since:** 2026-10-18T16:47:49Z
+- **Owner until:** 2026-10-18T20:47:49Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
