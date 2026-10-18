@@ -6,15 +6,15 @@
 - **Area:** core/inter scaling
 - **Raised:** 2026-08-22T08:57:01Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T161001Z-d8fb7c20
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00079-run-verify-20261018T161001Z-d8fb7c20
+- **Owner base:** 4d1c3c8108d7f2ea9a2e03329602fd019846127e
+- **Owner fingerprint:** sha256:370829cb6fdc071ba7b71dc5a20cd75b8e2e7a3bac5adbaab5a8964f47201c51
+- **Owner since:** 2026-10-18T16:10:01Z
+- **Owner until:** 2026-10-18T20:10:01Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
