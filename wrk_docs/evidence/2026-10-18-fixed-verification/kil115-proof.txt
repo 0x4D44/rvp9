@@ -1,0 +1,118 @@
+RVP9-BUG-KIL-00115 verification transcript
+==========================================
+
+Scope: independently verify serialized concurrent throughput CSV appends, exercise the retained cross-process lock and concurrent-first-writer tests, reverse only the production file-lock call, restore exact source bytes, and rerun those tests. No source change is committed; no Deltic verdict or bug-record edit is made.
+
+Claim: `deltic bugs claim RVP9-BUG-KIL-00115 --role verify`
+Owner run: `verify-20261018T181112Z-64c7264d`
+Claim branch from Deltic: `task/bug-RVP9-BUG-KIL-00115-run-verify-20261018T181112Z-64c7264d`
+Fix commit: `0feeb38012da67e486be4c2eea11883783ffb282`
+Fix commit ancestry: single parent `c2a9690e433cdb520a8e199f67076216d967175d`; `git merge-base --is-ancestor <fix> HEAD` and the same check against `origin/main` both exited 0. Fresh verifier worktree HEAD: `bb00e6ded9e6d75d595b69b9dc68ecaf11d27e63`; `origin/main` at final pre-test ancestry check: `75181473e9a41309d2fbf64b69f6956460b4508c`.
+
+Overlap disposition: KIL-00114 is Closed and covered exact host/profile baseline selection; KIL-00108 is Closed and covered CSV escaping/schema/metrics; both are distinct from append serialization. Archived KILN-00057/00066 concern decode-throughput CLI exit status and partial measurement reporting, not concurrent writes. No same-defect overlap was found. The KIL-00115 record was unowned before claim. Its `## Fix` placeholder `<unfixed — raised only>` remains unchanged.
+
+Environment:
+- Worktree: `/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00115-concurrent-csv`
+- Host: macOS Darwin 25.6.0, arm64, hostname `flux.home.arpa`
+- `rustc 1.95.0 (59807616e 2026-04-14)`; `cargo 1.95.0 (f2d3ce0bd 2026-03-21)`; `deltic 7.1.0`
+- Tests execute natively on arm64. The retained tests spawn local child processes and use OS advisory file locks; no codec SIMD or remote-host behavior is in scope.
+
+Initial tracked worktree state was clean. Initial source SHA-256:
+- `crates/rvp9-bench/src/throughput.rs`: `68aa7f746dd631ac59116488ad7d6bd257ebf0694adf877c6e1077bdb91dc1a6`
+- `crates/rvp9-bench/tests/throughput_csv_concurrent.rs`: `49782f36bb5747ccf997c4ab7f0b08a3185eaacfa96c3ee0ba4ded241fae372c`
+- `bugs/RVP9-BUG-KIL-00115.md`: `403d45c1b78ccb16cfea24ee2cf8e8eb809c3f38e4521ab3814d1645337f6b9d`
+
+The production fix is `f.lock()?` inside `append_csv`; tests first hold the same file lock in a parent process, then verify appenders do not change the file before release. Commands and raw output follow. Each Cargo command is bounded by `deltic timeout 300` and has stdin closed.
+
+
+Baseline selected tests
+----------------------
+Command: `deltic timeout 300 cargo test -p rvp9-bench --test throughput_csv_concurrent append_blocks_until_another_process_releases_the_file_lock -- --exact </dev/null`
+Exit: 0
+Selected test-harness output (routine compiler progress omitted):
+```
+Running tests/throughput_csv_concurrent.rs
+running 1 test
+test append_blocks_until_another_process_releases_the_file_lock ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 1.02s
+```
+
+Command: `deltic timeout 300 cargo test -p rvp9-bench --test throughput_csv_concurrent concurrent_first_writers_preserve_one_header_and_complete_batches -- --exact </dev/null`
+Exit: 0
+Selected test-harness output (routine compiler progress omitted):
+```
+Running tests/throughput_csv_concurrent.rs
+running 1 test
+test concurrent_first_writers_preserve_one_header_and_complete_batches ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 1.03s
+```
+
+Fails-before mutation
+--------------------
+Mutation: removed only the production `f.lock()?;` call from `append_csv`. The test-side parent locks, append/header logic, and all other source bytes were unchanged.
+Mutant `throughput.rs` SHA-256: `9956797564a9cb84f0d334dd98787c1be82208d6f8a3bb81eeb2614d3eb2dc29`.
+
+Command: `deltic timeout 300 cargo test -p rvp9-bench --test throughput_csv_concurrent append_blocks_until_another_process_releases_the_file_lock -- --exact </dev/null`
+Exit: 101
+Selected test output:
+```
+running 1 test
+test append_blocks_until_another_process_releases_the_file_lock ... FAILED
+thread 'append_blocks_until_another_process_releases_the_file_lock' panicked at crates/rvp9-bench/tests/throughput_csv_concurrent.rs:303:5:
+append must remain blocked while another process holds the CSV lock
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out
+```
+
+Command: `deltic timeout 300 cargo test -p rvp9-bench --test throughput_csv_concurrent concurrent_first_writers_preserve_one_header_and_complete_batches -- --exact </dev/null`
+Exit: 101
+Selected test output:
+```
+running 1 test
+test concurrent_first_writers_preserve_one_header_and_complete_batches ... FAILED
+thread 'concurrent_first_writers_preserve_one_header_and_complete_batches' panicked at crates/rvp9-bench/tests/throughput_csv_concurrent.rs:387:5:
+first writers must wait for the held lock before initializing the CSV
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out
+```
+Both mutant tests compiled and reached the retained assertion named for lock blocking; neither failure was a compile or test-selection failure.
+
+Restore: copied the saved exact baseline bytes from the Deltic-registered backup to `crates/rvp9-bench/src/throughput.rs`. Restored file and backup SHA-256 both equal `68aa7f746dd631ac59116488ad7d6bd257ebf0694adf877c6e1077bdb91dc1a6`; `git diff -- crates/rvp9-bench/src/throughput.rs` was empty immediately after restore.
+
+Restored rerun
+--------------
+After exact-byte restoration, reran the same selected tests:
+
+Command: `deltic timeout 300 cargo test -p rvp9-bench --test throughput_csv_concurrent append_blocks_until_another_process_releases_the_file_lock -- --exact </dev/null`
+Exit: 0
+Selected test output:
+```
+running 1 test
+test append_blocks_until_another_process_releases_the_file_lock ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 1.02s
+```
+
+Command: `deltic timeout 300 cargo test -p rvp9-bench --test throughput_csv_concurrent concurrent_first_writers_preserve_one_header_and_complete_batches -- --exact </dev/null`
+Exit: 0
+Selected test output:
+```
+running 1 test
+test concurrent_first_writers_preserve_one_header_and_complete_batches ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 1.03s
+```
+
+Final source SHA-256 after restore:
+- `crates/rvp9-bench/src/throughput.rs`: `68aa7f746dd631ac59116488ad7d6bd257ebf0694adf877c6e1077bdb91dc1a6` (matches the saved pre-mutation bytes)
+- `crates/rvp9-bench/tests/throughput_csv_concurrent.rs`: `49782f36bb5747ccf997c4ab7f0b08a3185eaacfa96c3ee0ba4ded241fae372c`
+- `bugs/RVP9-BUG-KIL-00115.md`: `403d45c1b78ccb16cfea24ee2cf8e8eb809c3f38e4521ab3814d1645337f6b9d`
+
+Final status checks pending below.
+
+Final status checks
+-------------------
+- `git diff --check`: exit 0, no output.
+- `git diff --name-only`: no output.
+- Path-specific `git diff --quiet` checks for `throughput.rs`, `throughput_csv_concurrent.rs`, and `bugs/RVP9-BUG-KIL-00115.md` each exited 0.
+- `git status --short --branch`: `## task/20261018-TSK-HUM-verify-rvp9-bug-kil-00115-concurrent-csv...origin/main [behind 1]`; no worktree file changes are listed. The requested proof is under ignored `.scratch`.
+- No generated `throughput-csv-concurrent-*` test directories remained in `.scratch`.
+- No source changes were committed, and no bug-record verdict or content edit was made. The verify claim remains open for the lead's review.
+
+Scope limit: only the two retained cross-process CSV-locking tests were run, before mutation, under mutation, and after exact restoration. No wider crate/workspace sweep or performance benchmark was run.
