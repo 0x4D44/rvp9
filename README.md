@@ -124,6 +124,11 @@ rvp9/
 
 ## Quick start
 
+The canonical corpus fetch currently stops at Parkrun because its configured
+URL returns HTTP 404 (RVP9-BUG-FLU-00036). See the [current release-readiness
+status](wrk_docs/2026.10.15%20-%20STATUS%20-%20final%20release%20readiness.md)
+before treating corpus setup as complete.
+
 ```bash
 # 1. Clone with submodules (libvpx is a submodule).
 git clone --recurse-submodules https://github.com/0x4D44/rvp9
@@ -150,8 +155,9 @@ corpus downloader is also available as `scripts/fetch-corpus.ps1`.
 
 ### Production encoder build
 
-The parity-qualified encoder uses host-trained LLVM profile-guided
-optimization in addition to the workspace's native-CPU release settings.
+The production encoder build uses host-trained LLVM profile-guided optimization
+in addition to the workspace's native-CPU release settings. Candidate quality
+and performance qualification remain pending.
 Build it on the host that will run it; profiles are not portable across source
 revisions, Rust/LLVM versions, or machines.
 

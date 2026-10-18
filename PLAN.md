@@ -72,7 +72,7 @@ These are committed and should not be revisited without explicit Arthur approval
 |---|---|---|
 | D1 | Real-time priority (cpu-used 6–8) | WebRTC + livestream use cases |
 | D2 | Encoder + decoder both in v1 | Decoder gives spec-defined oracle; shared infra benefits both |
-| D3 | Temporal and spatial SVC ship in v0.2.0; temporal SVC and spatial VBR are experimental | Spatial CBR is production-green; the fresh temporal and VBR corpus tails do not support a broader parity claim |
+| D3 | Temporal and spatial SVC ship in v0.2.0; temporal SVC and spatial VBR are experimental | Spatial CBR remains in the production-quality acceptance surface, but the current candidate is not yet qualified; the fresh temporal and VBR corpus tails do not support a broader parity claim |
 | D4 | Denoiser + AQ in v1 | Required for production-grade quality |
 | D5 | SIMD via `core::arch` intrinsics + scalar fallback | Stable Rust, max performance, mirrors libvpx structure |
 | D6 | Threading: mirror libvpx tile-based pthread model | Maximize byte-parity tractability; idiomatize later |
