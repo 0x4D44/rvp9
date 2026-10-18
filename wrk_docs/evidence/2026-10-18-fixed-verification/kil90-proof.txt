@@ -1,0 +1,126 @@
+Claim verify-20261018T170758Z-4264e2c4
+PROVENANCE git rev-parse HEAD
+d7cf0fb03de8514507837d5696551f3188180841
+EXIT: 0
+PROVENANCE git merge-base --is-ancestor 0ef46d9c724f69c97ba73587ff1695ec371c00ef HEAD
+EXIT: 0
+INITIAL F02 schema suite COMMAND: deltic timeout 300 cargo test -p rvp9-harness --lib f02_schema:: </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 25.32s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-3eec11113be8f940)
+
+running 24 tests
+test f02_schema::tests::bad_bsize_tag_rejected ... ok
+test f02_schema::tests::intra_mode_with_non_intra_ref_rejected ... ok
+test f02_schema::tests::comparison_aligns_by_key_and_ignores_rate_placeholders ... ok
+test f02_schema::tests::luma_eob_nonzero_is_a_strict_oracle_field ... ok
+test f02_schema::tests::identical_and_diagnostic_only_fields_are_nongating ... ok
+test f02_schema::tests::missing_and_duplicate_keys_are_mismatches ... ok
+test f02_schema::tests::duplicate_field_error_propagates_through_stream_parser ... ok
+test f02_schema::tests::missing_field_reports_field_name ... ok
+test f02_schema::tests::divergent_live_field_is_a_strict_oracle_failure ... ok
+test f02_schema::tests::newmv_analysis_aligns_different_partition_trees_by_covered_cell ... ok
+test f02_schema::tests::round_trip_inter ... ok
+test f02_schema::tests::unknown_field_is_forward_compatible ... ok
+test f02_schema::tests::newmv_analysis_distinguishes_different_and_zero_candidates ... ok
+test f02_schema::tests::winner_cell_analysis_is_partition_independent_and_hierarchical ... ok
+test f02_schema::tests::newmv_analysis_reports_the_winner_and_same_leaf_candidate_costs ... ok
+test f02_schema::tests::newmv_search_stage_comparison_localizes_first_divergence ... ok
+test f02_schema::tests::newmv_search_stage_comparison_requires_every_exact_input ... ok
+test f02_schema::tests::q_index_is_a_strict_oracle_field ... ok
+test f02_schema::tests::paired_jsonl_contains_both_legs_and_mismatch_fields ... ok
+test f02_schema::tests::paired_jsonl_includes_strict_field_values_and_names ... ok
+test f02_schema::tests::round_trip_intra ... ok
+test f02_schema::tests::tx_size_is_a_strict_oracle_field ... ok
+test f02_schema::tests::round_trip_stream_multi_record ... ok
+test f02_schema::tests::duplicate_known_fields_are_rejected ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 42 filtered out; finished in 0.00s
+
+
+EXIT: 0
+MUTANT remove shared duplicate guard (restore last-value-wins) COMMAND: deltic timeout 300 cargo test -p rvp9-harness --lib f02_schema::tests::duplicate </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 24.43s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-3eec11113be8f940)
+
+running 2 tests
+test f02_schema::tests::duplicate_field_error_propagates_through_stream_parser ... FAILED
+test f02_schema::tests::duplicate_known_fields_are_rejected ... FAILED
+
+failures:
+
+---- f02_schema::tests::duplicate_field_error_propagates_through_stream_parser stdout ----
+
+thread 'f02_schema::tests::duplicate_field_error_propagates_through_stream_parser' (287944802) panicked at crates/rvp9-harness/src/f02_schema.rs:2066:9:
+stream parser should propagate duplicate field errors, got Ok([BlockDecision { frame_idx: 0, spatial_id: 0, mi_row: 0, mi_col: 0, bsize: Block8x8, mode: Intra(Dc), ref_frame: IntraFrame, mv_row: 0, mv_col: 0, mode_bits_est: 90, mv_bits_est: 0, ref_bits_est: 2473, filter_bits_est: 0, skip_bits_est: 0, coef_bits_est: 0, picker_rate: 900, picker_dist: 1234, picker_rd_cost: 5678, model_var_y: 0, model_tx_size: Tx8x8, model_skip_txfm: 2, luma_coef_rate: 0, luma_coef_dist: 0, uv_model_rate: 0, uv_model_dist: 0, uv_u_sensitive: false, uv_v_sensitive: false, partition_u_sensitive: false, partition_v_sensitive: false, last_candidates: [CandidateProbe { available: false, mv_row: 0, mv_col: 0, rate: 0, dist: 0, rd_cost: 0, luma_rate: 0, luma_dist: 0, uv_rate: 0, uv_dist: 0, skip_txfm: 0, model_var_y: 0, model_sse_y: 0, model_tx_size: 0, model_dc_thr: 0, model_ac_thr: 0, model_var_tx: 0, model_sse_tx: 0, model_dc_quant: 0, model_ac_quant: 0, yrd_dc_round: 0, yrd_ac_round: 0, yrd_dc_quant: 0, yrd_ac_quant: 0, model_skip_txfm: 0, yrd_skippable: false, yrd_residual_hash: 0, yrd_had_coeff_hash: 0, yrd_qcoeff_hash: 0, yrd_qcoeff_nonzero: 0, newmv_gate: Unknown, newmv_search: None }, CandidateProbe { available: false, mv_row: 0, mv_col: 0, rate: 0, dist: 0, rd_cost: 0, luma_rate: 0, luma_dist: 0, uv_rate: 0, uv_dist: 0, skip_txfm: 0, model_var_y: 0, model_sse_y: 0, model_tx_size: 0, model_dc_thr: 0, model_ac_thr: 0, model_var_tx: 0, model_sse_tx: 0, model_dc_quant: 0, model_ac_quant: 0, yrd_dc_round: 0, yrd_ac_round: 0, yrd_dc_quant: 0, yrd_ac_quant: 0, model_skip_txfm: 0, yrd_skippable: false, yrd_residual_hash: 0, yrd_had_coeff_hash: 0, yrd_qcoeff_hash: 0, yrd_qcoeff_nonzero: 0, newmv_gate: Unknown, newmv_search: None }, CandidateProbe { available: false, mv_row: 0, mv_col: 0, rate: 0, dist: 0, rd_cost: 0, luma_rate: 0, luma_dist: 0, uv_rate: 0, uv_dist: 0, skip_txfm: 0, model_var_y: 0, model_sse_y: 0, model_tx_size: 0, model_dc_thr: 0, model_ac_thr: 0, model_var_tx: 0, model_sse_tx: 0, model_dc_quant: 0, model_ac_quant: 0, yrd_dc_round: 0, yrd_ac_round: 0, yrd_dc_quant: 0, yrd_ac_quant: 0, model_skip_txfm: 0, yrd_skippable: false, yrd_residual_hash: 0, yrd_had_coeff_hash: 0, yrd_qcoeff_hash: 0, yrd_qcoeff_nonzero: 0, newmv_gate: Unknown, newmv_search: None }, CandidateProbe { available: false, mv_row: 0, mv_col: 0, rate: 0, dist: 0, rd_cost: 0, luma_rate: 0, luma_dist: 0, uv_rate: 0, uv_dist: 0, skip_txfm: 0, model_var_y: 0, model_sse_y: 0, model_tx_size: 0, model_dc_thr: 0, model_ac_thr: 0, model_var_tx: 0, model_sse_tx: 0, model_dc_quant: 0, model_ac_quant: 0, yrd_dc_round: 0, yrd_ac_round: 0, yrd_dc_quant: 0, yrd_ac_quant: 0, model_skip_txfm: 0, yrd_skippable: false, yrd_residual_hash: 0, yrd_had_coeff_hash: 0, yrd_qcoeff_hash: 0, yrd_qcoeff_nonzero: 0, newmv_gate: Unknown, newmv_search: None }], sse_after_pred: 0, interp_filter: None, skip_flag: true, q_index: 65, tx_size: Tx8x8, luma_eob_nonzero: false }])
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- f02_schema::tests::duplicate_known_fields_are_rejected stdout ----
+
+thread 'f02_schema::tests::duplicate_known_fields_are_rejected' (287944803) panicked at crates/rvp9-harness/src/f02_schema.rs:2056:9:
+known duplicate schema fields were accepted or reported incorrectly: ["bsize identical", "bsize differing", "coef_bits_est identical", "coef_bits_est differing", "filter_bits_est identical", "filter_bits_est differing", "frame_idx identical", "frame_idx differing", "interp_filter identical", "interp_filter differing", "last_candidates identical", "last_candidates differing", "luma_coef_dist identical", "luma_coef_dist differing", "luma_coef_rate identical", "luma_coef_rate differing", "luma_eob_nonzero identical", "luma_eob_nonzero differing", "mi_col identical", "mi_col differing", "mi_row identical", "mi_row differing", "mode identical", "mode differing", "mode_bits_est identical", "mode_bits_est differing", "model_skip_txfm identical", "model_skip_txfm differing", "model_tx_size identical", "model_tx_size differing", "model_var_y identical", "model_var_y differing", "mv_bits_est identical", "mv_bits_est differing", "mv_col identical", "mv_col differing", "mv_row identical", "mv_row differing", "partition_u_sensitive identical", "partition_u_sensitive differing", "partition_v_sensitive identical", "partition_v_sensitive differing", "picker_dist identical", "picker_dist differing", "picker_rate identical", "picker_rate differing", "picker_rd_cost identical", "picker_rd_cost differing", "q_index identical", "q_index differing", "ref_bits_est identical", "ref_bits_est differing", "ref_frame identical", "ref_frame differing", "skip_bits_est identical", "skip_bits_est differing", "skip_flag identical", "skip_flag differing", "spatial_id identical", "spatial_id differing", "sse_after_pred identical", "sse_after_pred differing", "tx_size identical", "tx_size differing", "uv_model_dist identical", "uv_model_dist differing", "uv_model_rate identical", "uv_model_rate differing", "uv_u_sensitive identical", "uv_u_sensitive differing", "uv_v_sensitive identical", "uv_v_sensitive differing", "bsize identical", "bsize differing", "coef_bits_est identical", "coef_bits_est differing", "filter_bits_est identical", "filter_bits_est differing", "frame_idx identical", "frame_idx differing", "interp_filter identical", "interp_filter differing", "last_candidates identical", "last_candidates differing", "luma_coef_dist identical", "luma_coef_dist differing", "luma_coef_rate identical", "luma_coef_rate differing", "luma_eob_nonzero identical", "luma_eob_nonzero differing", "mi_col identical", "mi_col differing", "mi_row identical", "mi_row differing", "mode identical", "mode differing", "mode_bits_est identical", "mode_bits_est differing", "model_skip_txfm identical", "model_skip_txfm differing", "model_tx_size identical", "model_tx_size differing", "model_var_y identical", "model_var_y differing", "mv_bits_est identical", "mv_bits_est differing", "mv_col identical", "mv_col differing", "mv_row identical", "mv_row differing", "partition_u_sensitive identical", "partition_u_sensitive differing", "partition_v_sensitive identical", "partition_v_sensitive differing", "picker_dist identical", "picker_dist differing", "picker_rate identical", "picker_rate differing", "picker_rd_cost identical", "picker_rd_cost differing", "q_index identical", "q_index differing", "ref_bits_est identical", "ref_bits_est differing", "ref_frame identical", "ref_frame differing", "skip_bits_est identical", "skip_bits_est differing", "skip_flag identical", "skip_flag differing", "spatial_id identical", "spatial_id differing", "sse_after_pred identical", "sse_after_pred differing", "tx_size identical", "tx_size differing", "uv_model_dist identical", "uv_model_dist differing", "uv_model_rate identical", "uv_model_rate differing", "uv_u_sensitive identical", "uv_u_sensitive differing", "uv_v_sensitive identical", "uv_v_sensitive differing"]
+
+
+failures:
+    f02_schema::tests::duplicate_field_error_propagates_through_stream_parser
+    f02_schema::tests::duplicate_known_fields_are_rejected
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 64 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-harness --lib`
+
+EXIT: 101
+RESTORED F02 schema suite COMMAND: deltic timeout 300 cargo test -p rvp9-harness --lib f02_schema:: </dev/null
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 23.06s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-3eec11113be8f940)
+
+running 24 tests
+test f02_schema::tests::missing_and_duplicate_keys_are_mismatches ... ok
+test f02_schema::tests::luma_eob_nonzero_is_a_strict_oracle_field ... ok
+test f02_schema::tests::divergent_live_field_is_a_strict_oracle_failure ... ok
+test f02_schema::tests::comparison_aligns_by_key_and_ignores_rate_placeholders ... ok
+test f02_schema::tests::bad_bsize_tag_rejected ... ok
+test f02_schema::tests::intra_mode_with_non_intra_ref_rejected ... ok
+test f02_schema::tests::newmv_analysis_distinguishes_different_and_zero_candidates ... ok
+test f02_schema::tests::newmv_analysis_aligns_different_partition_trees_by_covered_cell ... ok
+test f02_schema::tests::missing_field_reports_field_name ... ok
+test f02_schema::tests::identical_and_diagnostic_only_fields_are_nongating ... ok
+test f02_schema::tests::newmv_analysis_reports_the_winner_and_same_leaf_candidate_costs ... ok
+test f02_schema::tests::newmv_search_stage_comparison_requires_every_exact_input ... ok
+test f02_schema::tests::newmv_search_stage_comparison_localizes_first_divergence ... ok
+test f02_schema::tests::duplicate_field_error_propagates_through_stream_parser ... ok
+test f02_schema::tests::q_index_is_a_strict_oracle_field ... ok
+test f02_schema::tests::paired_jsonl_contains_both_legs_and_mismatch_fields ... ok
+test f02_schema::tests::paired_jsonl_includes_strict_field_values_and_names ... ok
+test f02_schema::tests::round_trip_inter ... ok
+test f02_schema::tests::round_trip_intra ... ok
+test f02_schema::tests::tx_size_is_a_strict_oracle_field ... ok
+test f02_schema::tests::unknown_field_is_forward_compatible ... ok
+test f02_schema::tests::winner_cell_analysis_is_partition_independent_and_hierarchical ... ok
+test f02_schema::tests::round_trip_stream_multi_record ... ok
+test f02_schema::tests::duplicate_known_fields_are_rejected ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 42 filtered out; finished in 0.00s
+
+
+EXIT: 0
+
+Closure tool exit0: Verified RVP9-BUG-KIL-00090 — Fixed -> Closed, verify claim cleared
+Restoration: exact bytes restoredfinally; scoped git diff exit0; git status --short empty. Limits: macOSarm64, selfcontained JSONL inputs; no external sidecar/corpus execution claimed.

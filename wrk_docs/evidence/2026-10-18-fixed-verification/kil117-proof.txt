@@ -1,0 +1,252 @@
+CLAIM verify-20261018T170803Z-05cc4059; fix8bf19aed ancestor; HEAD=06e93811c6ea1a52386395d1d6ad42de8865f421
+Safety: retained fixtures allocate all test inputs/outputs within unique worktree .scratch directories and clean owned entries on Drop; no user input/output paths supplied.
+ORIGINAL SHA256=0c8e166367f00ab114096f7df983723bfaf9de9f823af39fda0aea55bb0f77cd
+BASELINE COMMAND: deltic timeout 180 cargo test -p rvp9-cli --test cli_path_safety -- --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.81s
+     Running tests/cli_path_safety.rs (target/debug/deps/cli_path_safety-5cf128571421f98e)
+
+running 29 tests
+test encoder_hardlinked_input_csv_preserved ... ok
+test encoder_hardlinked_output_csv_preserved ... ok
+test encoder_hardlinked_input_output_preserved ... ok
+test encoder_equal_input_output_preserved ... ok
+test encoder_equal_input_csv_preserved ... ok
+test encoder_symlinked_input_csv_preserved ... ok
+test guarded_open_rechecks_identity_before_truncating ... ok
+test encoder_equal_output_csv_preserved ... ok
+test encoder_spatial_alias_is_rejected_before_input_parsing ... ok
+test encoder_two_pass_alias_is_rejected_before_input_parsing ... ok
+test encoder_symlinked_input_output_preserved ... ok
+test future_case_alias_is_rejected_when_filesystem_folds_case ... ok
+test encoder_symlinked_output_csv_preserved ... ok
+test future_unicode_alias_is_rejected_when_filesystem_normalizes_names ... ok
+test missing_output_and_csv_equal_roles_are_rejected_before_creation ... ok
+test missing_output_and_csv_through_dangling_symlink_are_rejected ... ok
+test missing_output_and_csv_through_relative_symlink_chain_are_rejected ... ok
+test missing_output_and_csv_through_symlink_parent_are_rejected ... ok
+test decoder_hardlinked_noblit_md5_preserved ... ok
+test decoder_equal_md5_preserved ... ok
+test decoder_hardlinked_md5_preserved ... ok
+test decoder_symlinked_noblit_md5_preserved ... ok
+test decoder_hardlinked_pixels_preserved ... ok
+test decoder_symlinked_pixels_preserved ... ok
+test decoder_symlinked_md5_preserved ... ok
+test decoder_equal_noblit_md5_preserved ... ok
+test nonregular_output_sinks_accept_encoder_and_decoder_writes ... ok
+test decoder_equal_pixels_preserved ... ok
+test distinct_roles_stdout_and_ignored_decoder_output_succeed ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+
+BASELINE EXIT=0
+ROOT REVERSAL: ignore only the two detected-alias error returns, retaining identity checks, opened-handle code, truncation timing, fixtures, and preservation assertions.
+ALIAS_REFUSALS_REVERSED COMMAND: deltic timeout 180 cargo test -p rvp9-cli --test cli_path_safety -- --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.31s
+     Running tests/cli_path_safety.rs (target/debug/deps/cli_path_safety-5cf128571421f98e)
+
+running 29 tests
+
+thread 'encoder_equal_output_csv_preserved' (287967297) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:194:5:
+output changed/created for pair 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'encoder_equal_input_output_preserved' (287967296) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:190:5:
+input bytes changed for pair 0
+
+thread 'encoder_spatial_alias_is_rejected_before_input_parsing' (287967301) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:128:5:
+must diagnose destination alias: rvp9enc: raw input length 24 is not a whole number of 64x64 I420 frames (6144 bytes each)
+
+
+thread 'encoder_hardlinked_output_csv_preserved' (287967300) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:194:5:
+output changed/created for pair 2
+
+thread 'encoder_equal_input_csv_preserved' (287967295) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:190:5:
+input bytes changed for pair 1
+test encoder_equal_output_csv_preserved ... FAILED
+test encoder_spatial_alias_is_rejected_before_input_parsing ... FAILED
+test encoder_equal_input_output_preserved ... FAILED
+test encoder_hardlinked_output_csv_preserved ... FAILED
+
+thread 'encoder_symlinked_input_csv_preserved' (287967302) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:190:5:
+input bytes changed for pair 1
+
+thread 'encoder_hardlinked_input_output_preserved' (287967299) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:190:5:
+input bytes changed for pair 0
+test encoder_equal_input_csv_preserved ... FAILED
+test encoder_symlinked_input_csv_preserved ... FAILED
+test encoder_hardlinked_input_output_preserved ... FAILED
+
+thread 'guarded_open_rechecks_identity_before_truncating' (287967742) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:417:5:
+guard truncated before comparing handle identity
+test guarded_open_rechecks_identity_before_truncating ... FAILED
+
+thread 'encoder_hardlinked_input_csv_preserved' (287967298) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:190:5:
+input bytes changed for pair 1
+test encoder_hardlinked_input_csv_preserved ... FAILED
+
+thread 'encoder_two_pass_alias_is_rejected_before_input_parsing' (287967720) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:128:5:
+must diagnose destination alias: rvp9enc: raw input length 24 is not a whole number of 64x64 I420 frames (6144 bytes each)
+
+
+thread 'encoder_symlinked_input_output_preserved' (287967718) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:190:5:
+input bytes changed for pair 0
+test encoder_two_pass_alias_is_rejected_before_input_parsing ... FAILED
+test encoder_symlinked_input_output_preserved ... FAILED
+
+thread 'missing_output_and_csv_through_relative_symlink_chain_are_rejected' (287967764) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:400:5:
+relative alias target must never receive bytes
+test missing_output_and_csv_through_relative_symlink_chain_are_rejected ... FAILED
+
+thread 'future_case_alias_is_rejected_when_filesystem_folds_case' (287967721) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:443:5:
+future filesystem alias received bytes before rejection
+test future_case_alias_is_rejected_when_filesystem_folds_case ... FAILED
+
+thread 'future_unicode_alias_is_rejected_when_filesystem_normalizes_names' (287967725) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:443:5:
+future filesystem alias received bytes before rejection
+
+thread 'missing_output_and_csv_equal_roles_are_rejected_before_creation' (287967745) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:280:5:
+aliased output must never be created
+
+thread 'encoder_symlinked_output_csv_preserved' (287967719) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:194:5:
+output changed/created for pair 2
+test missing_output_and_csv_equal_roles_are_rejected_before_creation ... FAILED
+test future_unicode_alias_is_rejected_when_filesystem_normalizes_names ... FAILED
+test encoder_symlinked_output_csv_preserved ... FAILED
+
+thread 'missing_output_and_csv_through_dangling_symlink_are_rejected' (287967756) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:354:5:
+dangling alias target must never receive bytes
+test missing_output_and_csv_through_dangling_symlink_are_rejected ... FAILED
+
+thread 'missing_output_and_csv_through_symlink_parent_are_rejected' (287967794) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:339:5:
+aliased future output must never receive bytes
+test missing_output_and_csv_through_symlink_parent_are_rejected ... FAILED
+
+thread 'decoder_equal_pixels_preserved' (287967287) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:233:5:
+decoder changed input for []
+test decoder_equal_pixels_preserved ... FAILED
+
+thread 'decoder_symlinked_noblit_md5_preserved' (287967292) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:233:5:
+decoder changed input for ["--noblit", "--framemd5"]
+test decoder_symlinked_noblit_md5_preserved ... FAILED
+
+thread 'decoder_hardlinked_md5_preserved' (287967288) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:233:5:
+decoder changed input for ["--md5"]
+test decoder_hardlinked_md5_preserved ... FAILED
+
+thread 'decoder_symlinked_md5_preserved' (287967291) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:233:5:
+decoder changed input for ["--md5"]
+test decoder_symlinked_md5_preserved ... FAILED
+
+thread 'decoder_equal_noblit_md5_preserved' (287967286) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:233:5:
+decoder changed input for ["--noblit", "--framemd5"]
+
+thread 'decoder_hardlinked_pixels_preserved' (287967290) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:233:5:
+decoder changed input for []
+test decoder_equal_noblit_md5_preserved ... FAILED
+test decoder_hardlinked_pixels_preserved ... FAILED
+
+thread 'decoder_symlinked_pixels_preserved' (287967293) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:233:5:
+decoder changed input for []
+test nonregular_output_sinks_accept_encoder_and_decoder_writes ... ok
+test decoder_symlinked_pixels_preserved ... FAILED
+
+thread 'decoder_hardlinked_noblit_md5_preserved' (287967289) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:233:5:
+decoder changed input for ["--noblit", "--framemd5"]
+test decoder_hardlinked_noblit_md5_preserved ... FAILED
+
+thread 'decoder_equal_md5_preserved' (287967285) panicked at crates/rvp9-cli/tests/cli_path_safety.rs:233:5:
+decoder changed input for ["--md5"]
+test decoder_equal_md5_preserved ... FAILED
+test distinct_roles_stdout_and_ignored_decoder_output_succeed ... ok
+
+failures:
+
+failures:
+    decoder_equal_md5_preserved
+    decoder_equal_noblit_md5_preserved
+    decoder_equal_pixels_preserved
+    decoder_hardlinked_md5_preserved
+    decoder_hardlinked_noblit_md5_preserved
+    decoder_hardlinked_pixels_preserved
+    decoder_symlinked_md5_preserved
+    decoder_symlinked_noblit_md5_preserved
+    decoder_symlinked_pixels_preserved
+    encoder_equal_input_csv_preserved
+    encoder_equal_input_output_preserved
+    encoder_equal_output_csv_preserved
+    encoder_hardlinked_input_csv_preserved
+    encoder_hardlinked_input_output_preserved
+    encoder_hardlinked_output_csv_preserved
+    encoder_spatial_alias_is_rejected_before_input_parsing
+    encoder_symlinked_input_csv_preserved
+    encoder_symlinked_input_output_preserved
+    encoder_symlinked_output_csv_preserved
+    encoder_two_pass_alias_is_rejected_before_input_parsing
+    future_case_alias_is_rejected_when_filesystem_folds_case
+    future_unicode_alias_is_rejected_when_filesystem_normalizes_names
+    guarded_open_rechecks_identity_before_truncating
+    missing_output_and_csv_equal_roles_are_rejected_before_creation
+    missing_output_and_csv_through_dangling_symlink_are_rejected
+    missing_output_and_csv_through_relative_symlink_chain_are_rejected
+    missing_output_and_csv_through_symlink_parent_are_rejected
+
+test result: FAILED. 2 passed; 27 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+
+error: test failed, to rerun pass `-p rvp9-cli --test cli_path_safety`
+ALIAS_REFUSALS_REVERSED EXIT=101
+RESTORED SHA256=0c8e166367f00ab114096f7df983723bfaf9de9f823af39fda0aea55bb0f77cd
+RESTORED COMMAND: deltic timeout 180 cargo test -p rvp9-cli --test cli_path_safety -- --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.48s
+     Running tests/cli_path_safety.rs (target/debug/deps/cli_path_safety-5cf128571421f98e)
+
+running 29 tests
+test encoder_hardlinked_input_output_preserved ... ok
+test encoder_hardlinked_input_csv_preserved ... ok
+test encoder_symlinked_input_csv_preserved ... ok
+test encoder_equal_input_csv_preserved ... ok
+test encoder_spatial_alias_is_rejected_before_input_parsing ... ok
+test encoder_hardlinked_output_csv_preserved ... ok
+test guarded_open_rechecks_identity_before_truncating ... ok
+test encoder_equal_input_output_preserved ... ok
+test encoder_equal_output_csv_preserved ... ok
+test encoder_symlinked_input_output_preserved ... ok
+test encoder_two_pass_alias_is_rejected_before_input_parsing ... ok
+test encoder_symlinked_output_csv_preserved ... ok
+test future_case_alias_is_rejected_when_filesystem_folds_case ... ok
+test missing_output_and_csv_through_dangling_symlink_are_rejected ... ok
+test missing_output_and_csv_equal_roles_are_rejected_before_creation ... ok
+test future_unicode_alias_is_rejected_when_filesystem_normalizes_names ... ok
+test missing_output_and_csv_through_symlink_parent_are_rejected ... ok
+test missing_output_and_csv_through_relative_symlink_chain_are_rejected ... ok
+test decoder_hardlinked_md5_preserved ... ok
+test decoder_equal_pixels_preserved ... ok
+test nonregular_output_sinks_accept_encoder_and_decoder_writes ... ok
+test decoder_symlinked_md5_preserved ... ok
+test decoder_equal_md5_preserved ... ok
+test decoder_symlinked_noblit_md5_preserved ... ok
+test decoder_symlinked_pixels_preserved ... ok
+test decoder_equal_noblit_md5_preserved ... ok
+test decoder_hardlinked_noblit_md5_preserved ... ok
+test decoder_hardlinked_pixels_preserved ... ok
+test distinct_roles_stdout_and_ignored_decoder_output_succeed ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.03s
+
+RESTORED EXIT=0
+FINAL_DIFF_EXIT=0
+FINAL_STATUS=''
