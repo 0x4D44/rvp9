@@ -6,15 +6,15 @@
 - **Area:** core/dsp/convolve8-neon
 - **Raised:** 2026-10-17T09:23:28Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T214336Z-b2440949
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00046-run-verify-20261018T214336Z-b2440949
+- **Owner base:** 326f675e6f55fa987bc55aa4580691f49c656df9
+- **Owner fingerprint:** sha256:0d7c3d08a2b59eed0bbd0b9112cd2348624ee8c5427b9b655cd6b7ce58d54b48
+- **Owner since:** 2026-10-18T21:43:36Z
+- **Owner until:** 2026-10-19T01:43:36Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
