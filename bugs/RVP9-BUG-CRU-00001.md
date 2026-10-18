@@ -6,15 +6,15 @@
 - **Area:** core/dsp dispatch
 - **Raised:** 2026-08-23T17:09:40Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T162636Z-6b73a151
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-CRU-00001-run-verify-20261018T162636Z-6b73a151
+- **Owner base:** abbbe119ae672f0087845000420f0983916b53fa
+- **Owner fingerprint:** sha256:37badc0f1814120888c2c124b97a15a54ecb0469b03712f78897d0b3fa2c2e9b
+- **Owner since:** 2026-10-18T16:26:36Z
+- **Owner until:** 2026-10-18T20:26:36Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
