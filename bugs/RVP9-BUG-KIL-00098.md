@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00098 — WebM track discovery has unbounded pending-container growth
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** io/webm track discovery
 - **Raised:** 2026-08-22T14:34:14Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T161843Z-3f8a2c3d
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00098-run-verify-20261018T161843Z-3f8a2c3d
-- **Owner base:** 80fce593c364e3a87b5950a53bee502e1293728f
-- **Owner fingerprint:** sha256:59f587fc08d2cd74fe8139970b8ac08d64459b9f93dce0bb93c6c7bdc3146ea8
-- **Owner since:** 2026-10-18T16:18:43Z
-- **Owner until:** 2026-10-18T20:18:43Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T14:34:14Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T01:57:18Z, deltic:auto role=fix run=fix-20261016T014916Z-059eed45 branch=task/bug-RVP9-BUG-KIL-00098-run-fix-20261016T014916Z-059eed45 code=d7966e45956ad70dae2088a9901dc504adf45042 gate=manual)
+- **State history:** Open (2026-08-22T14:34:14Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T01:57:18Z, deltic:auto role=fix run=fix-20261016T014916Z-059eed45 branch=task/bug-RVP9-BUG-KIL-00098-run-fix-20261016T014916Z-059eed45 code=d7966e45956ad70dae2088a9901dc504adf45042 gate=manual) -> Closed (2026-10-18T16:25:35Z, deltic:manual role=verify run=verify-20261018T161843Z-3f8a2c3d verified_fix_run=fix-20261016T014916Z-059eed45 verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ find_vp9_video_track at crates/rvp9-io/src/container.rs:962-999 scans a containe
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:25:35Z, deltic:auto run=verify-20261018T161843Z-3f8a2c3d verified_fix_run=fix-20261016T014916Z-059eed45 verdict=close)
+
+Verifier note: Manual verify: Independent: original 4 WebM discovery regressions pass; parent pending-sibling walker makes 3 fail, including 6,291,384 cumulative bytes versus 16,384 budget. Restored IO lib+integration suite: 140 tests pass. Exact source restored (diff empty). Evidence: .scratch/kil98-proof.txt.
 
 ## Notes
