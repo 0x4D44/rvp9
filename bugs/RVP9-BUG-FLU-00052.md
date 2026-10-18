@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00052 — Loop-filter safety contracts omit whole-plane exclusivity
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/loopfilter safety
 - **Raised:** 2026-10-17T20:46:58Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T195450Z-79f847db
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00052-run-fix-20261018T195450Z-79f847db
-- **Owner base:** 7c1a5bbb50dacbefd431f4c046cb49f301c8b36a
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T19:54:50Z
-- **Owner until:** 2026-10-18T23:54:50Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T20:46:58Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium)
+- **State history:** Open (2026-10-17T20:46:58Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T20:03:00Z, deltic:auto role=fix run=fix-20261018T195450Z-79f847db branch=task/bug-RVP9-BUG-FLU-00052-run-fix-20261018T195450Z-79f847db code=8f50c768e2b94ee5b4b68fd5c4e59f7e18e0cf0a gate=manual)
 
 ## Observation
 
