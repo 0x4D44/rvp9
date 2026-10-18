@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00024 — Encoder diagnostic environment variables race parallel tests
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/test isolation
 - **Raised:** 2026-08-13T03:42:41Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T171221Z-48a8dd1f
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00024-run-verify-20261018T171221Z-48a8dd1f
-- **Owner base:** 2d9d2ebd06e369521cd80f97e81733ad3f97bfec
-- **Owner fingerprint:** sha256:609ec556b55ccd6d0349beb9fdc78355abd6a7f63e54345cc7d81a63e19142e1
-- **Owner since:** 2026-10-18T17:12:21Z
-- **Owner until:** 2026-10-18T21:12:21Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-13T03:42:41Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:26:01Z, deltic:auto role=fix run=fix-20261015T231847Z-e15a9711 branch=task/bug-RVP9-BUG-FLUX-00024-run-fix-20261015T231847Z-e15a9711 code=123b0a1c4ff33de4eb3841c3f78d98aba0a53de8 gate=manual)
+- **State history:** Open (2026-08-13T03:42:41Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:26:01Z, deltic:auto role=fix run=fix-20261015T231847Z-e15a9711 branch=task/bug-RVP9-BUG-FLUX-00024-run-fix-20261015T231847Z-e15a9711 code=123b0a1c4ff33de4eb3841c3f78d98aba0a53de8 gate=manual) -> Closed (2026-10-18T17:18:19Z, deltic:manual role=verify run=verify-20261018T171221Z-48a8dd1f verified_fix_run=fix-20261015T231847Z-e15a9711 verdict=close)
 
 ## Observation
 
@@ -43,6 +43,10 @@ encodes differ and fail the full regression gate nondeterministically.
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T17:18:19Z, deltic:auto run=verify-20261018T171221Z-48a8dd1f verified_fix_run=fix-20261015T231847Z-e15a9711 verdict=close)
+
+Verifier note: Manual verify: Fixed diagnostic override isolation verified on native arm64: three baseline/restored diagnostic regressions and the existing tight/strided regression passed. Replacing only cfg(test) thread-local storage with a mutex-protected process-shared map made the retained cross-thread regression fail (observed 100 instead of 4); source restored byte-for-byte. Scope: deterministic functional proof; no release stress run.
 
 ## Notes
 
