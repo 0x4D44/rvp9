@@ -6,15 +6,15 @@
 - **Area:** core/loopfilter safety
 - **Raised:** 2026-10-17T20:46:58Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T214401Z-9404c950
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00052-run-verify-20261018T214401Z-9404c950
+- **Owner base:** fafdcbfddbbfa1a8859eae4a0a3e854f5e542e62
+- **Owner fingerprint:** sha256:9003101467d71ae7d81f602675da317aad02874df548b33e1a0c0e508fabde42
+- **Owner since:** 2026-10-18T21:44:01Z
+- **Owner until:** 2026-10-19T01:44:01Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
