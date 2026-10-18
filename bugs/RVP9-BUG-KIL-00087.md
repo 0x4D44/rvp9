@@ -6,15 +6,15 @@
 - **Area:** harness/bdrate
 - **Raised:** 2026-08-22T13:20:52Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T165858Z-f3876347
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00087-run-verify-20261018T165858Z-f3876347
+- **Owner base:** e3ca07aa934274ab2a10e0621c46c5221ccf5ec4
+- **Owner fingerprint:** sha256:8a6ce181e5c4d814932a3aa3286b48b2fd80f6df55abe1b184e8d22f33c44fea
+- **Owner since:** 2026-10-18T16:58:58Z
+- **Owner until:** 2026-10-18T20:58:58Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
