@@ -6,15 +6,15 @@
 - **Area:** encoder/e12 diagnostic API
 - **Raised:** 2026-08-22T18:32:52Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T174232Z-b6fcf8f9
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00105-run-verify-20261018T174232Z-b6fcf8f9
+- **Owner base:** fb331fcf58dbaecf2f4370bc55ede44c6dfe36ee
+- **Owner fingerprint:** sha256:755ab6a8813dabeafe3ec4ea10271dd3214a13334e9940156bffeb8ff2f97b99
+- **Owner since:** 2026-10-18T17:42:32Z
+- **Owner until:** 2026-10-18T21:42:32Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
