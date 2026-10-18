@@ -6,15 +6,15 @@
 - **Area:** cli/rvp9enc raw input validation
 - **Raised:** 2026-08-22T20:44:04Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T165319Z-b9cbb5e9
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00123-run-verify-20261018T165319Z-b9cbb5e9
+- **Owner base:** 0e8668520ca984aed50f6e44ff41f3a9ed9f91ec
+- **Owner fingerprint:** sha256:094e788849c14c27633e7a0cefe45c008d2fe89eda6a52aaf7e6d5a4247e8fa8
+- **Owner since:** 2026-10-18T16:53:19Z
+- **Owner until:** 2026-10-18T20:53:19Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
