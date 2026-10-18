@@ -6,23 +6,23 @@
 # execution phases -- the resumable QUALITY phase, the relative-SPEED phase,
 # the absolute-LATENCY phase, and the ALL fan-out that runs the three in order.
 #
-# Quality rows are resumable. Speed and latency permit only a sealed restart
-# before their first measurement, so deterministic input preparation can finish
-# and the host can cool before timing begins. A timing attempt or published
-# result makes resume fail closed; measurements from two host states are never
-# spliced. The `all` fan-out is never resumable. For trustworthy cold-host
+# Quality rows are resumable. Speed groups and latency configuration groups
+# are resumable only after each whole group has a sealed receipt; an interrupted
+# group is retained and rerun from its beginning. The run fingerprint binds
+# resumed groups to the same host, tools, inputs, and matrix, while each group
+# keeps its own load guard and matched measurements. The `all` fan-out is never
+# resumable. For trustworthy cold-host
 # timing, run speed and latency as their own runs rather than as the tail of an
 # `--phase all` campaign.
 #
 # A normal real run is fresh. --work-dir must be outside the repository, its
 # parent must exist, and the directory itself must be absent or empty. An
 # explicit --resume reopens only a run whose sealed fingerprint matches the
-# exact committed tree, matrix, tools, corpus, and prepared inputs. Rows publish
-# atomically after their retained artifacts and result fragments are sealed.
-# Partial attempts are never deleted or reused. Reused rows are decoded again;
-# a receipt is not permission to trust an old decoder observation. Receipts are
-# checksums for a trusted local evidence tree, not signatures against a
-# malicious editor; the sealed quality measurement itself is replayed.
+# exact committed tree, matrix, tools, corpus, and prepared inputs. Quality rows
+# publish atomically and are decoded again on reuse. Timing groups publish only
+# after their complete matched measurements and load evidence are sealed;
+# incomplete attempts are retained and never reused. Receipts are checksums for
+# a trusted local evidence tree, not signatures against a malicious editor.
 #
 # Spatial SVC is deliberately absent. It is qualified separately and on its
 # own experimental terms by scripts/qualify-spatial-svc.sh; no spatial row,
@@ -188,6 +188,7 @@ readonly EXPECTED_CANDIDATE_STREAMS=2640
 readonly EXPECTED_DECODER_RUNS=7920
 readonly EXPECTED_PREPARED_INPUTS=16
 readonly EXPECTED_SPEED_GROUPS=75
+readonly EXPECTED_LATENCY_GROUPS=75
 readonly EXPECTED_LATENCY_ROWS=200
 readonly EXPECTED_LATENCY_MEASURED_RUNS=1000
 readonly EXPECTED_REQUIRED_ORACLES=1
@@ -616,13 +617,12 @@ phase_supported() {
 }
 
 # Which phases a --resume may reopen. Quality rows are sealed, content-addressed
-# evidence that a fresh decode can revalidate. Speed and latency may reopen only
-# before the first timing attempt, to reuse sealed deterministic inputs after
-# the fresh run's load check refuses a host warmed by preprocessing.
+# evidence that a fresh decode can revalidate. Speed and latency additionally
+# reuse only whole timing groups with valid batch receipts.
 phase_resumable() {
     case "$1" in
         quality)       printf 'resumable\n' ;;
-        speed|latency) printf 'pre-measurement-only\n' ;;
+        speed|latency) printf 'resumable\n' ;;
         all)           printf 'not-resumable\n' ;;
         *)             printf 'unknown\n' ;;
     esac
@@ -636,9 +636,9 @@ phase_resumable() {
 # separately by path (--test-encoder, --vpxenc, --temporal-anchor, --bdrate,
 # --bdrate-svc, --rvp9dec, --vpxdec, --ffmpeg).
 #
-# Deliberately absent: sort, comm, uniq, and tail, which only --self-test
-# invokes, and ls, which nothing invokes any more. Requiring a command a phase
-# never runs would turn a healthy host into a spurious refusal. cat is listed
+# Deliberately absent: comm and uniq, which only --self-test invokes, and ls,
+# which nothing invokes any more. Requiring a command a phase never runs would
+# turn a healthy host into a spurious refusal. cat is listed
 # because usage() invokes it, even though every usage path precedes this check.
 #
 # sysctl is absent on purpose too: the host-load reader prefers /proc/loadavg
@@ -646,9 +646,9 @@ phase_resumable() {
 # up front would refuse a healthy Linux host. A host where neither works fails
 # closed at the first load check, which is the correct place for that refusal.
 #
-# The timing phases add no command of their own -- both drive one checked-in
-# runner binary and parse its output with awk -- so their sets are the common
-# real-run set. Every phase records the Cargo toolchain in its manifest.
+# Timing batches use sort for deterministic receipts; latency aggregation uses
+# tail to append fragments without duplicating CSV headers. Every phase records
+# the Cargo toolchain in its manifest.
 # Quality additionally uses cmp and env for the AQ oracle and resumed-row
 # decoder recheck, which makes the `all` set exactly quality's.
 #
@@ -656,11 +656,17 @@ phase_resumable() {
 # and stays runnable with an empty PATH.
 phase_required_commands() {
     case "$1" in
-        quality|all)
+        quality)
             printf 'awk basename cargo cat cmp date deltic dirname env find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc\n'
             ;;
-        speed|latency)
-            printf 'awk basename cargo cat date deltic dirname find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc\n'
+        speed)
+            printf 'awk basename cargo cat date deltic dirname find git grep head mkdir mv rmdir rustc shasum sort tr uname unlink wc\n'
+            ;;
+        latency)
+            printf 'awk basename cargo cat date deltic dirname find git grep head mkdir mv rmdir rustc shasum sort tail tr uname unlink wc\n'
+            ;;
+        all)
+            printf 'awk basename cargo cat cmp date deltic dirname env find git grep head mkdir mv rmdir rustc shasum sort tail tr uname unlink wc\n'
             ;;
         *) printf 'unknown phase: %s\n' "$1" >&2; return 1 ;;
     esac
@@ -688,6 +694,8 @@ command_purpose() {
         rmdir)    printf 'releasing the exact invocation lock directory\n' ;;
         rustc)    printf 'the host triple and the recorded toolchain version\n' ;;
         shasum)   printf 'every artifact SHA-256, both decoded-output hashes, and per-run IVF stability\n' ;;
+        sort)     printf 'deterministic ordering when fingerprinting a timing batch\n' ;;
+        tail)     printf 'replaying sealed timing-group fragments without duplicate CSV headers\n' ;;
         tr)       printf 'flattening lists into manifest and CSV fields\n' ;;
         uname)    printf 'the recorded host description\n' ;;
         unlink)   printf 'releasing the exact invocation lock owner file\n' ;;
@@ -1013,7 +1021,7 @@ headtohead_hash_stability() {
 
 print_plan() {
     local curves=0 aggregate_groups=0 aggregate_gates=0 clip_guards=0
-    local streams=0 runs=0 groups=0 rows=0 measured=0 oracles=0 configs=0
+    local streams=0 runs=0 groups=0 latency_groups=0 rows=0 measured=0 oracles=0 configs=0
     local feature mode target clip cpu aq denoiser layers
     local fps width height threads tiles speed_kbps p50 p99
     local grid clips per_point curve_streams curve_runs max_frame quality_limit
@@ -1081,6 +1089,7 @@ print_plan() {
         clips="$(target_clips "$target")"
         clips="${clips// /,}"
         groups=$(( groups + 1 ))
+        latency_groups=$(( latency_groups + 1 ))
         printf 'speed %s %s %s cpu%s aq=%s denoiser=%s temporal_layers=%s clips=%s target_kbps=%s fps=%s res=%sx%s threads=%s tiles=%s warmups=%s pairs=%s rotations=%s max_ratio=%s max_load1=%s\n' \
             "$feature" "$mode" "$target" "$cpu" \
             "$aq" "$denoiser" "$layers" "$clips" "$speed_kbps" \
@@ -1122,6 +1131,7 @@ print_plan() {
         [ "$streams" -ne "$EXPECTED_CANDIDATE_STREAMS" ] ||
         [ "$runs" -ne "$EXPECTED_DECODER_RUNS" ] ||
         [ "$groups" -ne "$EXPECTED_SPEED_GROUPS" ] ||
+        [ "$latency_groups" -ne "$EXPECTED_LATENCY_GROUPS" ] ||
         [ "$rows" -ne "$EXPECTED_LATENCY_ROWS" ] ||
         [ "$measured" -ne "$EXPECTED_LATENCY_MEASURED_RUNS" ] ||
         [ "$oracles" -ne "$EXPECTED_REQUIRED_ORACLES" ]
@@ -1129,9 +1139,9 @@ print_plan() {
         fail "matrix iterators disagree with the declared non-spatial v1 totals"
     fi
 
-    printf 'TOTALS config_rows=%s quality_curves=%s quality_aggregate_groups=%s quality_aggregate_layer_gates=%s quality_clip_layer_guards=%s candidate_streams=%s decoder_runs=%s speed_groups=%s latency_rows=%s latency_measured_runs=%s required_oracles=%s\n' \
+    printf 'TOTALS config_rows=%s quality_curves=%s quality_aggregate_groups=%s quality_aggregate_layer_gates=%s quality_clip_layer_guards=%s candidate_streams=%s decoder_runs=%s speed_groups=%s latency_groups=%s latency_rows=%s latency_measured_runs=%s required_oracles=%s\n' \
         "$configs" "$curves" "$aggregate_groups" "$aggregate_gates" \
-        "$clip_guards" "$streams" "$runs" "$groups" "$rows" \
+        "$clip_guards" "$streams" "$runs" "$groups" "$latency_groups" "$rows" \
         "$measured" "$oracles"
 }
 
@@ -1246,6 +1256,8 @@ self_test() {
         "$(totals_field "$plan" decoder_runs)" "$EXPECTED_DECODER_RUNS"
     expect_equal "speed_groups" \
         "$(totals_field "$plan" speed_groups)" "$EXPECTED_SPEED_GROUPS"
+    expect_equal "latency_groups" \
+        "$(totals_field "$plan" latency_groups)" "$EXPECTED_LATENCY_GROUPS"
     expect_equal "latency_rows" \
         "$(totals_field "$plan" latency_rows)" "$EXPECTED_LATENCY_ROWS"
     expect_equal "latency_measured_runs" \
@@ -1275,6 +1287,9 @@ self_test() {
         "$(plan_count "$plan" '^quality_aggregate ')" "$(totals_field "$plan" quality_aggregate_groups)"
     expect_equal "emitted speed groups match TOTALS" \
         "$(plan_count "$plan" '^speed ')" "$(totals_field "$plan" speed_groups)"
+    expect_equal "emitted latency configuration groups match TOTALS" \
+        "$(emit_clip_rows | awk -F'|' '{ group=$1 "-" $2 "-" $3 "-cpu" $5; if (!seen[group]++) n++ } END { print n + 0 }')" \
+        "$(totals_field "$plan" latency_groups)"
     expect_equal "emitted latency rows match TOTALS" \
         "$(plan_count "$plan" '^latency ')" "$(totals_field "$plan" latency_rows)"
     expect_equal "emitted oracle rows match TOTALS" \
@@ -1676,16 +1691,16 @@ self_test() {
         "$(for phase_name in quality speed latency all; do
               if [ "$(phase_supported "$phase_name")" = "implemented" ]; then printf 'x'; fi
           done | wc -c | tr -d ' ')" 4
-    expect_equal "only the quality phase is resumable" \
+    expect_equal "quality, speed, and latency phases are resumable" \
         "$(for phase_name in quality speed latency all; do
               if [ "$(phase_resumable "$phase_name")" = "resumable" ]; then
                   printf '%s,' "$phase_name"
               fi
           done)" \
-        "quality,"
+        "quality,speed,latency,"
     for phase_name in speed latency; do
-        expect_equal "the $phase_name phase permits only a pre-measurement restart" \
-            "$(phase_resumable "$phase_name")" "pre-measurement-only"
+        expect_equal "the $phase_name phase resumes sealed batches" \
+            "$(phase_resumable "$phase_name")" "resumable"
     done
     expect_equal "the all phase is not resumable" \
         "$(phase_resumable all)" "not-resumable"
@@ -1717,10 +1732,10 @@ self_test() {
         "$(parse_args_error --phase nonsense --work-dir /w --pgo-manifest /m)" \
         "--phase must be one of quality, speed, latency, all"
 
-    expect_equal "--resume accepts a sealed pre-measurement speed restart" \
+    expect_equal "--resume accepts a sealed speed-batch restart" \
         "$(parse_args_error --resume --phase speed --work-dir /w --pgo-manifest /m)" \
         "accepted"
-    expect_equal "--resume accepts a sealed pre-measurement latency restart" \
+    expect_equal "--resume accepts a sealed latency-batch restart" \
         "$(parse_args_error --resume --phase latency --work-dir /w --pgo-manifest /m)" \
         "accepted"
     expect_equal "--resume still refuses the all fan-out" \
@@ -1765,8 +1780,8 @@ self_test() {
         "$(plan_count "$(usage)" 'optimized_binary= and optimized_binary_sha256= must')" 1
     expect_equal "usage states all four phases execute" \
         "$(plan_count "$(usage)" 'All four execute:')" 1
-    expect_equal "usage confines timing resume to the pre-measurement boundary" \
-        "$(plan_count "$(usage)" 'any timing attempt or result makes resume refuse')" 1
+    expect_equal "usage limits timing resume to complete sealed groups" \
+        "$(plan_count "$(usage)" 'Speed and latency reuse only complete sealed groups')" 1
     expect_equal "usage recommends separate fresh runs for cold-host timing" \
         "$(plan_count "$(usage)" 'run --phase speed and --phase latency as')" 1
     expect_equal "usage says why --phase all is warm rather than wrong" \
@@ -1871,20 +1886,21 @@ self_test() {
         "awk basename cargo cat cmp date deltic dirname env find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc"
     expect_equal "the speed phase declares the commands it invokes" \
         "$(phase_required_commands speed)" \
-        "awk basename cargo cat date deltic dirname find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc"
+        "awk basename cargo cat date deltic dirname find git grep head mkdir mv rmdir rustc shasum sort tr uname unlink wc"
     expect_equal "the latency phase declares the commands it invokes" \
         "$(phase_required_commands latency)" \
-        "awk basename cargo cat date deltic dirname find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc"
+        "awk basename cargo cat date deltic dirname find git grep head mkdir mv rmdir rustc shasum sort tail tr uname unlink wc"
     expect_equal "the all phase declares the union of the three" \
         "$(phase_required_commands all)" \
-        "awk basename cargo cat cmp date deltic dirname env find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc"
-    expect_equal "the timing phases add no command the quality phase lacks" \
+        "awk basename cargo cat cmp date deltic dirname env find git grep head mkdir mv rmdir rustc shasum sort tail tr uname unlink wc"
+    expect_equal "timing phases add only the batch receipt and aggregation commands" \
         "$(for tool in $(phase_required_commands speed) $(phase_required_commands latency); do
               printf '%s\n' "$(phase_required_commands quality)" |
                   tr ' ' '\n' | grep -qx "$tool" || printf 'x'
-          done | wc -c | tr -d ' ')" 0
-    expect_equal "the all set is exactly the quality set" \
-        "$(phase_required_commands all)" "$(phase_required_commands quality)"
+          done | wc -c | tr -d ' ')" 3
+    expect_equal "the all set includes quality and timing batch commands" \
+        "$(phase_required_commands all)" \
+        "awk basename cargo cat cmp date deltic dirname env find git grep head mkdir mv rmdir rustc shasum sort tail tr uname unlink wc"
     expect_equal "only the quality-side commands are absent from a timing phase" \
         "$(for tool in $(phase_required_commands quality); do
               printf '%s\n' "$(phase_required_commands speed)" |
@@ -1898,12 +1914,19 @@ self_test() {
               done
           done | wc -c | tr -d ' ')" 0
     expect_equal "an uninvoked command declares no purpose" \
-        "[$(command_purpose sort)]" "[]"
-    expect_equal "sort is never required by a real phase, so no locale can order a median" \
+        "[$(command_purpose comm)]" "[]"
+    expect_equal "sort is required only by timing phases and the all fan-out" \
         "$(for phase_name in quality speed latency all; do
-              printf '%s\n' "$(phase_required_commands "$phase_name")" |
-                  tr ' ' '\n' | grep -qx sort && printf 'x'
-          done | wc -c | tr -d ' ')" 0
+              if printf '%s\n' "$(phase_required_commands "$phase_name")" |
+                  tr ' ' '\n' | grep -qx sort; then printf '%s,' "$phase_name"; fi
+          done)" "speed,latency,all,"
+    expect_equal "tail is required only by latency aggregation and the all fan-out" \
+        "$(for phase_name in quality speed latency all; do
+              if printf '%s\n' "$(phase_required_commands "$phase_name")" |
+                  tr ' ' '\n' | grep -qx tail; then printf '%s,' "$phase_name"; fi
+          done)" "latency,all,"
+    expect_equal "timing batch fingerprints sort paths with a fixed locale" \
+        "$(grep -F -c 'LC_ALL=C sort' "$0")" 2
     expect_equal "an unknown phase declares no command set" \
         "$(if phase_required_commands nonsense >/dev/null 2>&1; then
               printf 'declared'
@@ -2248,8 +2271,8 @@ Real-run options:
                          absent or empty unless --resume is explicit
   --resume               reopen this exact sealed run. Quality rows are
                          validated and cross-decoded again before reuse.
-                         Speed/latency accept only a pre-measurement restart;
-                         any timing attempt or result makes resume refuse.
+                         Speed and latency reuse only complete sealed groups;
+                         interrupted groups are retained and measured again.
   --phase PHASE          required; no phase is assumed. All four execute:
                          quality, speed, latency, and the all fan-out.
   --pgo-manifest PATH    required; the manifest scripts/build-encoder-pgo.sh
@@ -2272,8 +2295,8 @@ Path options (repo-relative defaults, all validated before a real run):
   --libvpx-source PATH     pinned libvpx checkout
 
 A normal real run is fresh. --resume accepts only a sealed matching run,
-leaves partial attempts untouched, and never reuses an unsealed row or any
-timing measurement.
+leaves partial attempts untouched, revalidates quality rows with fresh decodes,
+and reuses timing only from complete speed or latency groups with valid receipts.
 
 For trustworthy cold-host timing, run --phase speed and --phase latency as
 their own fresh runs. --phase all is exact and complete, but it measures wall
@@ -2353,11 +2376,10 @@ parse_args() {
     esac
 
     # The all fan-out cannot distinguish a completed quality phase from a
-    # not-yet-started timing phase. Individual timing phases may reopen their
-    # sealed inputs, but validate_resume_contract refuses as soon as a timing
-    # attempt exists, so no measurements can cross host states.
+    # not-yet-started timing phase. Only individual quality, speed, or latency
+    # phases can validate and reopen their own sealed evidence.
     if [ "$resume" = "yes" ] && [ "$(phase_resumable "$phase")" = "not-resumable" ]; then
-        fail "--resume is not supported for --phase $phase; resume quality rows directly, or restart one sealed speed/latency phase before its first measurement"
+        fail "--resume is not supported for --phase $phase; resume one quality, speed, or latency phase directly"
     fi
     if [ -z "$work_dir" ]; then
         usage >&2
@@ -3103,12 +3125,12 @@ validate_resume_inputs() {
     done
 }
 
-# A timing restart is safe only before its first attempt directory exists.
-# Input preparation and manifest sealing are deterministic setup, not timing;
-# anything under the phase result directory is evidence that measurement may
-# have begun and therefore makes a cross-host-state restart ambiguous.
+# A timing phase can resume from its one unpublished attempt directory. Batch
+# receipts below decide which complete speed groups or latency configuration
+# groups may be reused; any batch without a valid receipt is preserved and
+# measured again into a new attempt directory.
 timing_resume_state() {
-    local dir="$1" entries
+    local dir="$1" entries attempts
     [ ! -e "$dir/completed" ] || { printf 'published\n'; return; }
     if [ ! -d "$dir" ]; then
         printf 'clean\n'
@@ -3118,8 +3140,130 @@ timing_resume_state() {
     if [ "$entries" -eq 0 ]; then
         printf 'clean\n'
     else
-        printf 'existing-evidence\n'
+        attempts="$(find "$dir" -mindepth 1 -maxdepth 1 -type d \
+            -name '.result-attempt-*' -print | awk 'END { print NR + 0 }')"
+        if [ "$attempts" -eq 1 ]; then
+            printf 'resumable\n'
+        elif [ "$attempts" -gt 1 ]; then
+            printf 'ambiguous\n'
+        else
+            printf 'existing-evidence\n'
+        fi
     fi
+}
+
+# Hash each retained file in a timing batch in stable path order. Inputs and
+# executable identities are already bound by run_fingerprint; this receipt
+# protects the completed group's summaries, runner manifests, and raw outputs
+# against accidental edits before a later lease reuses them.
+timing_batch_artifact_sha256() {
+    local dir="$1" path relative
+    find "$dir" -type f ! -name receipt ! -name receipt.partial -print |
+        LC_ALL=C sort |
+        while IFS= read -r path; do
+            relative="${path#"$dir"/}"
+            printf '%s|%s|%s\n' "$relative" \
+                "$(wc -c < "$path" | tr -d ' ')" "$(sha256_file "$path")"
+        done | shasum -a 256 | awk '{ print $1 }'
+}
+
+write_timing_batch_receipt() {
+    local batch_id="$1" dir="$2" artifact_sha
+    artifact_sha="$(timing_batch_artifact_sha256 "$dir")"
+    [ -n "$artifact_sha" ] || fail "$batch_id: could not fingerprint timing batch"
+    {
+        printf 'run_fingerprint_sha256=%s\n' "$run_fingerprint"
+        printf 'batch_id=%s\n' "$batch_id"
+        printf 'artifact_sha256=%s\n' "$artifact_sha"
+        printf 'completed_utc=%s\n' "$(utc_now)"
+    } > "$dir/receipt.partial"
+    mv "$dir/receipt.partial" "$dir/receipt"
+}
+
+timing_batch_receipt_status() {
+    local expected_batch="$1" dir="$2" artifact_sha
+    [ -f "$dir/receipt" ] || { printf 'incomplete\n'; return; }
+    artifact_sha="$(timing_batch_artifact_sha256 "$dir")"
+    awk -v run="$run_fingerprint" -v batch="$expected_batch" \
+        -v artifact="$artifact_sha" '
+        index($0, "run_fingerprint_sha256=") == 1 {
+            run_n++; run_v = substr($0, 24)
+        }
+        index($0, "batch_id=") == 1 {
+            batch_n++; batch_v = substr($0, 10)
+        }
+        index($0, "artifact_sha256=") == 1 {
+            artifact_n++; artifact_v = substr($0, 17)
+        }
+        index($0, "completed_utc=") == 1 { completed_n++ }
+        END {
+            if (run_n != 1 || batch_n != 1 || artifact_n != 1 || completed_n != 1) {
+                print "malformed"; exit
+            }
+            if (run_v != run) { print "wrong-run"; exit }
+            if (batch_v != batch) { print "wrong-batch"; exit }
+            if (artifact_v != artifact) { print "wrong-artifact"; exit }
+            print "valid"
+        }' "$dir/receipt"
+}
+
+find_timing_batch() {
+    local phase_attempt="$1" batch_id="$2" batch_root
+    local dir status found=""
+    batch_root="$phase_attempt/batches/$batch_id"
+    [ -d "$batch_root" ] || return 0
+    for dir in "$batch_root"/attempt-*; do
+        [ -d "$dir" ] || continue
+        [ -f "$dir/receipt" ] || continue
+        status="$(timing_batch_receipt_status "$batch_id" "$dir")"
+        [ "$status" = "valid" ] ||
+            fail "$batch_id: timing batch receipt is not reusable ($status): $dir"
+        [ -z "$found" ] ||
+            fail "$batch_id: more than one sealed timing batch exists; refusing ambiguous reuse"
+        found="$dir"
+    done
+    printf '%s\n' "$found"
+}
+
+new_timing_batch_dir() {
+    local phase_attempt="$1" batch_id="$2" batch_root="" candidate number=1
+    batch_root="$phase_attempt/batches/$batch_id"
+    mkdir -p "$batch_root"
+    while :; do
+        candidate="$batch_root/attempt-$number"
+        if [ ! -e "$candidate" ]; then
+            mkdir "$candidate"
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+        number=$(( number + 1 ))
+    done
+}
+
+timing_phase_attempt_dir() {
+    local phase_root="$1" invocation_id="$2" attempts count
+    if [ "$resume" = "yes" ]; then
+        attempts="$(find "$phase_root" -mindepth 1 -maxdepth 1 -type d \
+            -name '.result-attempt-*' -print 2>/dev/null || true)"
+        count="$(printf '%s\n' "$attempts" | awk 'NF { n++ } END { print n + 0 }')"
+        if [ "$count" -eq 1 ]; then
+            printf '%s\n' "$attempts"
+            return 0
+        fi
+        [ "$count" -eq 0 ] || fail "--resume found $count timing attempt directories under $phase_root"
+    fi
+    mkdir -p "$phase_root"
+    printf '%s\n' "$phase_root/.result-attempt-$invocation_id"
+}
+
+preserve_interrupted_file() {
+    local path="$1" invocation_id="$2" preserved
+    [ ! -e "$path" ] || {
+        preserved="$path.interrupted-$invocation_id"
+        [ ! -e "$preserved" ] || fail "interrupted timing evidence path already exists: $preserved"
+        mv "$path" "$preserved"
+        printf '%s\n' "$preserved"
+    }
 }
 
 validate_resume_contract() {
@@ -3145,9 +3289,9 @@ validate_resume_contract() {
                 timing_dir="$latency_dir"
             fi
             timing_state="$(timing_resume_state "$timing_dir")"
-            [ "$timing_state" = "clean" ] ||
+            [ "$timing_state" = "clean" ] || [ "$timing_state" = "resumable" ] ||
                 fail "--resume refuses the $phase phase after timing may have begun ($timing_state): $timing_dir
-start a fresh --work-dir; timing samples from separate host states are never combined"
+only one unpublished phase attempt with sealed complete groups can resume"
             ;;
         *) fail "--resume has no contract for phase: $phase" ;;
     esac
@@ -3974,6 +4118,7 @@ speed_group_count=0
 speed_failure_count=0
 speed_output_dir=""
 speed_summary=""
+speed_expected_groups="$EXPECTED_SPEED_GROUPS"
 
 # The single child invocation, isolated so --self-test-timing can substitute a
 # deterministic observation while every recording, validation, classification,
@@ -4003,19 +4148,37 @@ run_speed_group() {
     local fps width height threads tiles speed_kbps p50 p99
     local group_id dir run_dir log anchor_bin anchor_kind test_kind input_kind
     local clip input clip_list="" clip_count=0 layers_arg
-    local ratios separate paired stability gate status reason rc=0
+    local ratios separate paired stability gate status reason rc=0 batch_dir="" batch_status=""
     local -a clip_args
     local -a layer_args
 
     IFS='|' read -r fps width height threads tiles speed_kbps p50 p99 \
         <<< "$(target_spec "$target")"
     group_id="${feature}-${mode}-${target}-cpu${cpu}"
-    dir="$speed_output_dir/groups/$group_id"
+    if [ "$resume" = "yes" ]; then
+        batch_dir="$(find_timing_batch "$speed_output_dir" "$group_id")"
+    fi
+    speed_group_count=$(( speed_group_count + 1 ))
+    if [ -n "$batch_dir" ]; then
+        batch_status="$(awk -F, -v id="$group_id" \
+            'NR == 1 && $1 == id && NF == 26 { print $25 "," $26 }' \
+            "$batch_dir/group.csv")"
+        [ -n "$batch_status" ] ||
+            fail "$group_id: sealed speed batch has a malformed group.csv: $batch_dir"
+        cat "$batch_dir/group.csv" >> "$speed_summary"
+        case "$batch_status" in
+            FAIL,*) speed_failure_count=$(( speed_failure_count + 1 )) ;;
+            PASS,*) ;;
+            *) fail "$group_id: sealed speed batch has an unknown verdict: $batch_status" ;;
+        esac
+        printf '[speed %2d/%d] %s (reusing sealed batch)\n' \
+            "$speed_group_count" "$speed_expected_groups" "$group_id"
+        return 0
+    fi
+    batch_dir="$(new_timing_batch_dir "$speed_output_dir" "$group_id")"
+    dir="$batch_dir"
     run_dir="$dir/run"
     log="$dir/headtohead.log"
-    [ ! -e "$dir" ] ||
-        fail "$group_id: speed group directory already exists: $dir"
-    mkdir -p "$dir"
 
     anchor_kind="$(speed_anchor_kind "$feature")"
     test_kind="$(speed_test_kind "$feature")"
@@ -4049,9 +4212,8 @@ run_speed_group() {
     layers_arg="$(timing_temporal_layers_arg "$feature")"
     [ -z "$layers_arg" ] || layer_args+=(--temporal-layers "$layers_arg")
 
-    speed_group_count=$(( speed_group_count + 1 ))
     printf '[speed %2d/%d] %s (%s clips, %s anchor, %s input)\n' \
-        "$speed_group_count" "$EXPECTED_SPEED_GROUPS" "$group_id" \
+        "$speed_group_count" "$speed_expected_groups" "$group_id" \
         "$clip_count" "$anchor_kind" "$input_kind"
 
     # The test arm's recorded revision is the PGO source commit, not HEAD: that
@@ -4127,30 +4289,33 @@ run_speed_group() {
         "$SPEED_WARMUPS" "$SPEED_PAIRS" "$SPEED_ROTATIONS" \
         "$separate" "$paired" "$MAX_RATIO" "$MAX_LOAD1" "$rc" \
         "$status" "$reason" \
-        >> "$speed_summary"
+        > "$dir/group.csv"
+    write_timing_batch_receipt "$group_id" "$dir"
+    cat "$dir/group.csv" >> "$speed_summary"
 }
 
 run_speed() {
     local feature mode target cpu aq denoiser layers
-    local completed_dir invocation_id
+    local completed_dir invocation_id preserved
 
+    invocation_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
     # Check before creating any result path. If deterministic preprocessing
-    # warmed the host, the sealed run remains eligible for a later
-    # pre-measurement --resume after the host cools.
-    enforce_load "speed-start"
+    # warmed the host, the sealed run remains eligible for a later --resume;
+    # already-completed groups remain content-addressed in the same attempt.
+    enforce_load "speed-start-$invocation_id"
 
     completed_dir="$speed_dir/completed"
     [ ! -e "$completed_dir" ] ||
         fail "relative-speed result is already published: $completed_dir"
-    mkdir -p "$speed_dir"
-    invocation_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
-    speed_output_dir="$speed_dir/.result-attempt-$invocation_id"
-    [ ! -e "$speed_output_dir" ] ||
-        fail "relative-speed result attempt already exists: $speed_output_dir"
-    mkdir "$speed_output_dir"
-    mkdir "$speed_output_dir/groups"
+    speed_output_dir="$(timing_phase_attempt_dir "$speed_dir" "$invocation_id")"
+    if [ ! -d "$speed_output_dir" ]; then
+        mkdir "$speed_output_dir"
+    fi
+    mkdir -p "$speed_output_dir/batches"
     active_attempt_dir="$speed_output_dir"
     speed_summary="$speed_output_dir/speed-summary.csv"
+    preserved="$(preserve_interrupted_file "$speed_summary" "$invocation_id")"
+    [ -z "$preserved" ] || manifest_kv speed_interrupted_summary "$preserved"
 
     printf 'group_id,feature,mode,target,cpu_used,aq_mode,noise_sensitivity,temporal_layers,input_kind,anchor_kind,test_kind,clips,clip_count,target_kbps,threads,tile_columns,warmups,pairs,rotations,corpus_separate_ratio,corpus_paired_ratio,max_ratio,max_load1,runner_exit_code,status,failure_reason\n' \
         > "$speed_summary"
@@ -4161,8 +4326,8 @@ run_speed() {
     done < <(emit_speed_groups)
     enforce_load "speed-complete"
 
-    [ "$speed_group_count" -eq "$EXPECTED_SPEED_GROUPS" ] ||
-        fail "ran $speed_group_count relative-speed groups, expected $EXPECTED_SPEED_GROUPS"
+    [ "$speed_group_count" -eq "$speed_expected_groups" ] ||
+        fail "ran $speed_group_count relative-speed groups, expected $speed_expected_groups"
 
     # One directory rename publishes the complete result set, so an interrupted
     # campaign leaves a hidden attempt directory and never a `completed` tree
@@ -4211,6 +4376,10 @@ latency_failure_count=0
 latency_output_dir=""
 latency_raw=""
 latency_summary=""
+latency_current_batch_dir=""
+latency_expected_groups="$EXPECTED_LATENCY_GROUPS"
+latency_expected_rows="$EXPECTED_LATENCY_ROWS"
+latency_expected_measured_runs="$EXPECTED_LATENCY_MEASURED_RUNS"
 
 invoke_realtime() {
     local log="$1"
@@ -4223,7 +4392,7 @@ run_latency_row() {
     local feature="$1" mode="$2" target="$3" clip="$4" cpu="$5"
     local aq="$6" denoiser="$7" layers="$8"
     local fps width height threads tiles speed_kbps p50_budget p99_budget
-    local row_id dir input input_kind layers_arg max_frame_budget
+    local row_id dir row_root input input_kind layers_arg max_frame_budget
     local run role log ivf frametimes rc p50 p99 observed csv_status run_max
     local run_status distinct median_p50 median_p99 max_frame
     local budget_status frame_status status reason
@@ -4236,7 +4405,8 @@ run_latency_row() {
     IFS='|' read -r fps width height threads tiles speed_kbps p50_budget p99_budget \
         <<< "$(target_spec "$target")"
     row_id="${feature}-${mode}-${target}-${clip}-cpu${cpu}"
-    dir="$latency_output_dir/rows/$row_id"
+    row_root="${latency_current_batch_dir:-$latency_output_dir}"
+    dir="$row_root/rows/$row_id"
     [ ! -e "$dir" ] || fail "$row_id: latency row directory already exists: $dir"
     mkdir -p "$dir"
 
@@ -4256,7 +4426,7 @@ run_latency_row() {
 
     latency_row_count=$(( latency_row_count + 1 ))
     printf '[latency %3d/%d] %s (%s input, max frame budget %s)\n' \
-        "$latency_row_count" "$EXPECTED_LATENCY_ROWS" "$row_id" \
+        "$latency_row_count" "$latency_expected_rows" "$row_id" \
         "$input_kind" "$max_frame_budget"
 
     p50_samples=()
@@ -4387,51 +4557,181 @@ run_latency_row() {
         >> "$latency_summary"
 }
 
+validate_latency_batch() {
+    local feature="$1" mode="$2" target="$3" cpu="$4" aq="$5"
+    local denoiser="$6" layers="$7" dir="$8"
+    local expected_rows actual_rows clip row_id row_count raw_count identity_status
+    local guard_metric guard_load guard_limit guard_batch
+    local summary="$dir/latency-summary-fragment.csv"
+    local raw="$dir/latency-raw-fragment.csv"
+
+    [ -f "$summary" ] && [ -f "$raw" ] && [ -f "$dir/guard.txt" ] ||
+        fail "$feature-$mode-$target-cpu$cpu: sealed latency batch is missing its summary, raw rows, or load guard"
+    expected_rows="$(target_clips "$target" | awk '{ n += NF } END { print n + 0 }')"
+    actual_rows="$(awk 'NR > 1 { n++ } END { print n + 0 }' "$summary")"
+    [ "$actual_rows" -eq "$expected_rows" ] ||
+        fail "$feature-$mode-$target-cpu$cpu: latency batch has $actual_rows rows, expected $expected_rows"
+
+    for clip in $(target_clips "$target"); do
+        row_id="${feature}-${mode}-${target}-${clip}-cpu${cpu}"
+        identity_status="$(awk -F, -v id="$row_id" -v feature="$feature" \
+            -v mode="$mode" -v target="$target" -v clip="$clip" \
+            -v cpu="$cpu" -v aq="$aq" -v denoiser="$denoiser" \
+            -v layers="$layers" \
+            '$1 == id { n++; if ($2 != feature || $3 != mode || $4 != target ||
+                $5 != clip || $6 != cpu || $7 != aq || $8 != denoiser ||
+                $9 != layers) bad=1 }
+             END { if (n == 1 && !bad) print "valid"; else print "invalid" }' \
+            "$summary")"
+        [ "$identity_status" = "valid" ] ||
+            fail "$row_id: sealed latency batch has a missing, duplicate, or mismatched summary row"
+        raw_count="$(awk -F, -v id="$row_id" -v warmups="$LATENCY_WARMUP_RUNS" \
+            -v total="$(( LATENCY_WARMUP_RUNS + LATENCY_MEASURED_RUNS ))" \
+            '$1 == id { n++; expected_role=(n <= warmups ? "warmup" : "measured");
+                if ($11 != n - 1 || $12 != expected_role) bad=1 }
+             END { if (n == total && !bad) print "valid"; else print "invalid" }' \
+            "$raw")"
+        [ "$raw_count" = "valid" ] ||
+            fail "$row_id: sealed latency batch has $raw_count raw runs"
+    done
+
+    guard_batch="$(awk -F= '$1 == "batch_id" { n++; value=$2 } END { if (n == 1) print value }' "$dir/guard.txt")"
+    guard_metric="$(awk -F= '$1 == "metric" { n++; value=$2 } END { if (n == 1) print value }' "$dir/guard.txt")"
+    guard_load="$(awk -F= '$1 == "load" { n++; value=$2 } END { if (n == 1) print value }' "$dir/guard.txt")"
+    guard_limit="$(awk -F= '$1 == "max_load1" { n++; value=$2 } END { if (n == 1) print value }' "$dir/guard.txt")"
+    [ "$guard_batch" = "${feature}-${mode}-${target}-cpu${cpu}" ] &&
+        [ "$guard_metric" = "$(load_metric_name)" ] &&
+        [ "$guard_limit" = "$MAX_LOAD1" ] ||
+        fail "$feature-$mode-$target-cpu$cpu: sealed latency batch has an incompatible load guard"
+    require_number "$feature-$mode-$target-cpu$cpu saved load" "$guard_load"
+    number_le "$guard_load" "$MAX_LOAD1" ||
+        fail "$feature-$mode-$target-cpu$cpu: sealed latency batch exceeds the load ceiling"
+}
+
+append_latency_batch() {
+    local dir="$1" count_rows="${2:-yes}" rows measured failures
+    tail -n +2 "$dir/latency-raw-fragment.csv" >> "$latency_phase_raw"
+    tail -n +2 "$dir/latency-summary-fragment.csv" >> "$latency_phase_summary"
+    [ "$count_rows" = "yes" ] || return 0
+    rows="$(awk 'NR > 1 { n++ } END { print n + 0 }' "$dir/latency-summary-fragment.csv")"
+    measured="$(awk -F, 'NR > 1 && $12 == "measured" { n++ } END { print n + 0 }' "$dir/latency-raw-fragment.csv")"
+    failures="$(awk -F, 'NR > 1 && $23 == "FAIL" { n++ } END { print n + 0 }' "$dir/latency-summary-fragment.csv")"
+    latency_row_count=$(( latency_row_count + rows ))
+    latency_measured_count=$(( latency_measured_count + measured ))
+    latency_failure_count=$(( latency_failure_count + failures ))
+}
+
 run_latency() {
     local feature mode target clip cpu aq denoiser layers
-    local completed_dir invocation_id group previous_group=""
+    local completed_dir invocation_id group previous_group="" batch_dir
+    local batch_reused="no" batch_count=0 attempt point load_value
+    local preserved
+    local previous_feature previous_mode previous_target previous_cpu
+    local previous_aq previous_denoiser previous_layers
+    local latency_phase_raw latency_phase_summary
 
-    # As in speed, refuse a busy host before any timing result path exists so
-    # the sealed deterministic inputs can be reopened after the host cools.
-    enforce_load "latency-start"
+    invocation_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+    # A resumed phase gets a fresh start guard, then reuses only complete
+    # groups whose receipts bind the exact run and whose own load guard passed.
+    enforce_load "latency-start-$invocation_id"
 
     completed_dir="$latency_dir/completed"
     [ ! -e "$completed_dir" ] ||
         fail "absolute-latency result is already published: $completed_dir"
-    mkdir -p "$latency_dir"
-    invocation_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
-    latency_output_dir="$latency_dir/.result-attempt-$invocation_id"
-    [ ! -e "$latency_output_dir" ] ||
-        fail "absolute-latency result attempt already exists: $latency_output_dir"
-    mkdir "$latency_output_dir"
-    mkdir "$latency_output_dir/rows"
+    latency_output_dir="$(timing_phase_attempt_dir "$latency_dir" "$invocation_id")"
+    if [ ! -d "$latency_output_dir" ]; then
+        mkdir "$latency_output_dir"
+    fi
+    mkdir -p "$latency_output_dir/batches"
     active_attempt_dir="$latency_output_dir"
-    latency_raw="$latency_output_dir/latency-raw.csv"
-    latency_summary="$latency_output_dir/latency-summary.csv"
-
+    preserved="$(preserve_interrupted_file "$latency_output_dir/latency-raw.csv" "$invocation_id")"
+    [ -z "$preserved" ] || manifest_kv latency_interrupted_raw "$preserved"
+    preserved="$(preserve_interrupted_file "$latency_output_dir/latency-summary.csv" "$invocation_id")"
+    [ -z "$preserved" ] || manifest_kv latency_interrupted_summary "$preserved"
+    latency_phase_raw="$latency_output_dir/latency-raw.csv"
+    latency_phase_summary="$latency_output_dir/latency-summary.csv"
     printf 'row_id,feature,mode,target,clip,cpu_used,aq_mode,noise_sensitivity,temporal_layers,input_kind,run_index,role,exit_code,p50_ms,p99_ms,max_frame_ms,status\n' \
-        > "$latency_raw"
+        > "$latency_phase_raw"
     printf 'row_id,feature,mode,target,clip,cpu_used,aq_mode,noise_sensitivity,temporal_layers,input_kind,threads,tile_columns,target_kbps,warmup_runs,measured_runs,median_p50_ms,p50_budget_ms,median_p99_ms,p99_budget_ms,max_frame_ms,max_frame_budget_ms,distinct_ivf_hashes,status,failure_reason\n' \
-        > "$latency_summary"
+        > "$latency_phase_summary"
 
-    # `realtime` has no load check of its own, so this phase performs the one
-    # the speed runner performs for itself: at the start, whenever the group
-    # changes, and at completion.
     while IFS='|' read -r feature mode target clip cpu aq denoiser layers; do
         group="${feature}-${mode}-${target}-cpu${cpu}"
         if [ "$group" != "$previous_group" ]; then
-            enforce_load "latency-group-$group"
+            if [ -n "$previous_group" ] && [ "$batch_reused" = "no" ]; then
+                validate_latency_batch "$previous_feature" "$previous_mode" \
+                    "$previous_target" "$previous_cpu" "$previous_aq" \
+                    "$previous_denoiser" "$previous_layers" "$batch_dir"
+                write_timing_batch_receipt "$previous_group" "$batch_dir"
+                append_latency_batch "$batch_dir" no
+            fi
+
+            batch_count=$(( batch_count + 1 ))
             previous_group="$group"
+            previous_feature="$feature"
+            previous_mode="$mode"
+            previous_target="$target"
+            previous_cpu="$cpu"
+            previous_aq="$aq"
+            previous_denoiser="$denoiser"
+            previous_layers="$layers"
+            batch_dir=""
+            batch_reused="no"
+            if [ "$resume" = "yes" ]; then
+                batch_dir="$(find_timing_batch "$latency_output_dir" "$group")"
+            fi
+            if [ -n "$batch_dir" ]; then
+                validate_latency_batch "$feature" "$mode" "$target" "$cpu" \
+                    "$aq" "$denoiser" "$layers" "$batch_dir"
+                append_latency_batch "$batch_dir" yes
+                batch_reused="yes"
+                printf '[latency groups %2d/%d] %s (reusing sealed batch)\n' \
+                    "$batch_count" "$latency_expected_groups" "$group"
+            else
+                batch_dir="$(new_timing_batch_dir "$latency_output_dir" "$group")"
+                latency_current_batch_dir="$batch_dir"
+                latency_raw="$batch_dir/latency-raw-fragment.csv"
+                latency_summary="$batch_dir/latency-summary-fragment.csv"
+                printf 'row_id,feature,mode,target,clip,cpu_used,aq_mode,noise_sensitivity,temporal_layers,input_kind,run_index,role,exit_code,p50_ms,p99_ms,max_frame_ms,status\n' \
+                    > "$latency_raw"
+                printf 'row_id,feature,mode,target,clip,cpu_used,aq_mode,noise_sensitivity,temporal_layers,input_kind,threads,tile_columns,target_kbps,warmup_runs,measured_runs,median_p50_ms,p50_budget_ms,median_p99_ms,p99_budget_ms,max_frame_ms,max_frame_budget_ms,distinct_ivf_hashes,status,failure_reason\n' \
+                    > "$latency_summary"
+                attempt="${batch_dir##*/attempt-}"
+                point="latency-group-$group-attempt$attempt"
+                enforce_load "$point"
+                load_value="$(manifest_field "load_observation_$point" < "$manifest")"
+                printf 'batch_id=%s\nmetric=%s\nload=%s\nmax_load1=%s\n' \
+                    "$group" \
+                    "$(load_metric_name)" "$load_value" "$MAX_LOAD1" \
+                    > "$batch_dir/guard.txt"
+                printf '[latency groups %2d/%d] %s\n' \
+                    "$batch_count" "$latency_expected_groups" "$group"
+            fi
         fi
+        if [ "$batch_reused" = "yes" ]; then
+            continue
+        fi
+        latency_raw="$batch_dir/latency-raw-fragment.csv"
+        latency_summary="$batch_dir/latency-summary-fragment.csv"
         run_latency_row "$feature" "$mode" "$target" "$clip" "$cpu" \
             "$aq" "$denoiser" "$layers"
     done < <(emit_clip_rows)
+
+    if [ -n "$previous_group" ] && [ "$batch_reused" = "no" ]; then
+        validate_latency_batch "$previous_feature" "$previous_mode" \
+            "$previous_target" "$previous_cpu" "$previous_aq" \
+            "$previous_denoiser" "$previous_layers" "$batch_dir"
+        write_timing_batch_receipt "$previous_group" "$batch_dir"
+        append_latency_batch "$batch_dir" no
+    fi
     enforce_load "latency-complete"
 
-    [ "$latency_row_count" -eq "$EXPECTED_LATENCY_ROWS" ] ||
-        fail "ran $latency_row_count latency rows, expected $EXPECTED_LATENCY_ROWS"
-    [ "$latency_measured_count" -eq "$EXPECTED_LATENCY_MEASURED_RUNS" ] ||
-        fail "ran $latency_measured_count measured latency runs, expected $EXPECTED_LATENCY_MEASURED_RUNS"
+    [ "$batch_count" -eq "$latency_expected_groups" ] ||
+        fail "ran $batch_count latency groups, expected $latency_expected_groups"
+    [ "$latency_row_count" -eq "$latency_expected_rows" ] ||
+        fail "ran $latency_row_count latency rows, expected $latency_expected_rows"
+    [ "$latency_measured_count" -eq "$latency_expected_measured_runs" ] ||
+        fail "ran $latency_measured_count measured latency runs, expected $latency_expected_measured_runs"
 
     mv "$latency_output_dir" "$completed_dir"
     [ -f "$completed_dir/latency-summary.csv" ] &&
@@ -4442,6 +4742,7 @@ run_latency() {
     latency_raw="$completed_dir/latency-raw.csv"
     latency_summary="$completed_dir/latency-summary.csv"
 
+    manifest_kv latency_groups "$batch_count"
     manifest_kv latency_rows "$latency_row_count"
     manifest_kv latency_measured_runs "$latency_measured_count"
     manifest_kv latency_row_failures "$latency_failure_count"
@@ -4500,20 +4801,19 @@ resume_self_test() {
     fi
     release_run_lock
 
-    # Timing setup may be reopened only before any result path exists. These
-    # fixtures exercise all three filesystem states without running a timer.
+    # Timing phases may resume from sealed batch boundaries without running a
+    # timer. Interrupted batches remain evidence and are never overwritten.
     timing_fixture="$test_root/timing-restart"
     [ "$(timing_resume_state "$timing_fixture")" = "clean" ] ||
         fail "resume self-test: absent timing directory was not restartable"
-    mkdir -p "$timing_fixture/.result-attempt-test"
-    [ "$(timing_resume_state "$timing_fixture")" = "existing-evidence" ] ||
-        fail "resume self-test: partial timing evidence was restartable"
-    rmdir "$timing_fixture/.result-attempt-test"
+    mkdir -p "$timing_fixture/.result-attempt-test/groups/group-a/attempt-1"
+    printf 'sealed batch\n' > \
+        "$timing_fixture/.result-attempt-test/groups/group-a/attempt-1/receipt"
+    [ "$(timing_resume_state "$timing_fixture")" = "resumable" ] ||
+        fail "resume self-test: sealed timing batch could not resume"
     mkdir "$timing_fixture/completed"
     [ "$(timing_resume_state "$timing_fixture")" = "published" ] ||
         fail "resume self-test: published timing evidence was restartable"
-    rmdir "$timing_fixture/completed"
-    rmdir "$timing_fixture"
 
     row_id="baseline-cbr-720p30-in_to_tree-cpu6"
     quality_rows_dir="$test_root/rows"
@@ -4616,7 +4916,9 @@ timing_self_test() {
     local argv_file
     local stub_mode stub_separate stub_paired stub_test_hashes stub_anchor_hashes
     local stub_rc stub_run stub_p50_list stub_p99_list stub_peak_list
-    local stub_rc_list stub_payload_list stub_load
+    local stub_rc_list stub_payload_list stub_load stub_row_run
+    local stub_headtohead_calls stub_headtohead_fail_call
+    local stub_realtime_calls stub_realtime_fail_call
 
     [ -n "${TMPDIR-}" ] || fail "--self-test-timing requires TMPDIR"
     temp_parent="${TMPDIR%/}"
@@ -4686,6 +4988,8 @@ timing_self_test() {
     stub_test_hashes=1
     stub_anchor_hashes=1
     stub_rc=0
+    stub_headtohead_calls=0
+    stub_headtohead_fail_call=0
 
     invoke_headtohead() {
         local log="$1" arg next="" work=""
@@ -4700,7 +5004,11 @@ timing_self_test() {
                 next="work"
             fi
         done
+        stub_headtohead_calls=$(( stub_headtohead_calls + 1 ))
         printf 'stub encode-headtohead mode=%s\n' "$stub_mode" > "$log"
+        if [ "$stub_headtohead_calls" -eq "$stub_headtohead_fail_call" ]; then
+            return 1
+        fi
         case "$stub_mode" in
             no-summary)
                 return 1
@@ -4731,6 +5039,8 @@ timing_self_test() {
     stub_peak_list="1000000 1000000 1000000 1000000 1000000 1000000"
     stub_rc_list="0 0 0 0 0 0"
     stub_payload_list="ivf ivf ivf ivf ivf ivf"
+    stub_realtime_calls=0
+    stub_realtime_fail_call=0
 
     stub_list_item() {
         printf '%s\n' "$1" | awk -v index_wanted="$(( $2 + 1 ))" \
@@ -4755,12 +5065,18 @@ timing_self_test() {
                 next="csv"
             fi
         done
-        p50="$(stub_list_item "$stub_p50_list" "$stub_run")"
-        p99="$(stub_list_item "$stub_p99_list" "$stub_run")"
-        peak="$(stub_list_item "$stub_peak_list" "$stub_run")"
-        rc="$(stub_list_item "$stub_rc_list" "$stub_run")"
-        payload="$(stub_list_item "$stub_payload_list" "$stub_run")"
+        stub_row_run=$(( stub_run % 6 ))
+        p50="$(stub_list_item "$stub_p50_list" "$stub_row_run")"
+        p99="$(stub_list_item "$stub_p99_list" "$stub_row_run")"
+        peak="$(stub_list_item "$stub_peak_list" "$stub_row_run")"
+        rc="$(stub_list_item "$stub_rc_list" "$stub_row_run")"
+        payload="$(stub_list_item "$stub_payload_list" "$stub_row_run")"
+        stub_realtime_calls=$(( stub_realtime_calls + 1 ))
         stub_run=$(( stub_run + 1 ))
+        if [ "$stub_realtime_calls" -eq "$stub_realtime_fail_call" ]; then
+            printf 'injected interrupted latency batch\n' > "$log"
+            return 1
+        fi
         {
             printf 'stub realtime run %s\n' "$stub_run"
             printf 'encode p50:      %s ms\n' "$p50"
@@ -5133,6 +5449,106 @@ timing_self_test() {
               awk 'END { print ($0 ~ /wrote no per-frame timing CSV/) ? "refused" : "not-refused" }')" \
         "refused"
     stub_peak_list="1000000 1000000 1000000 1000000 1000000 1000000"
+
+    # --- timing resume: speed groups are atomic -----------------------------
+    emit_speed_groups() {
+        printf 'baseline|cbr|720p30|6|0|0|1\n'
+        printf 'aq3|vbr|720p30|7|3|0|1\n'
+    }
+    speed_dir="$test_root/speed-resume"
+    speed_expected_groups=2
+    speed_group_count=0
+    speed_failure_count=0
+    stub_load="0.500000"
+    stub_mode="normal"
+    stub_rc=0
+    stub_headtohead_calls=0
+    stub_headtohead_fail_call=2
+    resume="no"
+    expect_equal "an interrupted speed phase leaves one sealed group" \
+        "$(abort_reason run_speed | awk 'END { print ($0 ~ /relative-speed measurement failed/) ? "interrupted" : $0 }')" \
+        "interrupted"
+    speed_attempt_root="$(find "$speed_dir" -mindepth 1 -maxdepth 1 -type d \
+        -name '.result-attempt-*' -print)"
+    expect_equal "the interrupted speed phase retains exactly one completed batch" \
+        "$(find "$speed_attempt_root/batches" -type f -name receipt -print | awk 'END { print NR + 0 }')" 1
+    expect_equal "the second speed group's partial attempt remains on disk" \
+        "$(test -d "$speed_attempt_root/batches/aq3-vbr-720p30-cpu7/attempt-1" &&
+              test ! -f "$speed_attempt_root/batches/aq3-vbr-720p30-cpu7/attempt-1/receipt" &&
+              printf 'retained')" "retained"
+
+    resume="yes"
+    stub_headtohead_calls=0
+    stub_headtohead_fail_call=0
+    speed_group_count=0
+    speed_failure_count=0
+    expect_equal "speed resumes by reusing its sealed group and retrying the partial group" \
+        "$(abort_reason run_speed)" "completed"
+    expect_equal "resumed speed publishes both groups exactly once" \
+        "$(awk 'END { print NR + 0 }' "$speed_dir/completed/speed-summary.csv")" 3
+    expect_equal "resumed speed preserves the failed attempt and writes a fresh retry" \
+        "$(test -f "$speed_dir/completed/batches/aq3-vbr-720p30-cpu7/attempt-1/headtohead.log" &&
+              test -f "$speed_dir/completed/batches/aq3-vbr-720p30-cpu7/attempt-2/receipt" &&
+              printf 'preserved')" "preserved"
+
+    # --- timing resume: latency configuration groups are atomic -------------
+    emit_clip_rows() {
+        local feature mode target clip cpu aq denoiser layers
+        for feature in baseline aq3; do
+            if [ "$feature" = "baseline" ]; then
+                mode="cbr"; cpu=6; aq=0
+            else
+                mode="vbr"; cpu=7; aq=3
+            fi
+            target="720p30"; denoiser=0; layers=1
+            for clip in $(target_clips "$target"); do
+                printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
+                    "$feature" "$mode" "$target" "$clip" "$cpu" \
+                    "$aq" "$denoiser" "$layers"
+            done
+        done
+    }
+    latency_dir="$test_root/latency-resume"
+    latency_expected_groups=2
+    latency_expected_rows=6
+    latency_expected_measured_runs=30
+    latency_row_count=0
+    latency_measured_count=0
+    latency_failure_count=0
+    stub_realtime_calls=0
+    stub_realtime_fail_call=19
+    stub_run=0
+    stub_rc_list="0 0 0 0 0 0"
+    resume="no"
+    expect_equal "an interrupted latency phase leaves one sealed group" \
+        "$(abort_reason run_latency | awk 'END { print ($0 ~ /realtime failed with exit 1/) ? "interrupted" : $0 }')" \
+        "interrupted"
+    latency_attempt_root="$(find "$latency_dir" -mindepth 1 -maxdepth 1 -type d \
+        -name '.result-attempt-*' -print)"
+    expect_equal "the interrupted latency phase retains exactly one completed batch" \
+        "$(find "$latency_attempt_root/batches" -type f -name receipt -print | awk 'END { print NR + 0 }')" 1
+    expect_equal "the interrupted latency group is preserved without a receipt" \
+        "$(test -d "$latency_attempt_root/batches/aq3-vbr-720p30-cpu7/attempt-1" &&
+              test ! -f "$latency_attempt_root/batches/aq3-vbr-720p30-cpu7/attempt-1/receipt" &&
+              printf 'retained')" "retained"
+
+    resume="yes"
+    stub_realtime_calls=0
+    stub_realtime_fail_call=0
+    stub_run=0
+    latency_row_count=0
+    latency_measured_count=0
+    latency_failure_count=0
+    expect_equal "latency resumes by reusing its sealed group and retrying the partial group" \
+        "$(abort_reason run_latency)" "completed"
+    expect_equal "resumed latency publishes all six rows exactly once" \
+        "$(awk 'END { print NR + 0 }' "$latency_dir/completed/latency-summary.csv")" 7
+    expect_equal "resumed latency keeps five measured runs per row" \
+        "$(awk 'END { print NR - 1 }' "$latency_dir/completed/latency-raw.csv")" 36
+    expect_equal "resumed latency preserves the failed attempt and writes a fresh retry" \
+        "$(test -f "$latency_dir/completed/batches/aq3-vbr-720p30-cpu7/attempt-1/rows/aq3-vbr-720p30-in_to_tree-cpu7/run0.log" &&
+              test -f "$latency_dir/completed/batches/aq3-vbr-720p30-cpu7/attempt-2/receipt" &&
+              printf 'preserved')" "preserved"
 
     # --- host load fails closed ---------------------------------------------
     stub_load="0.750000"
