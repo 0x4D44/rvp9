@@ -6,15 +6,15 @@
 - **Area:** core/entropy detokenize
 - **Raised:** 2026-10-17T20:46:58Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261018T164502Z-6acc6ec1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00051-run-fix-20261018T164502Z-6acc6ec1
+- **Owner base:** fe44b8c8b3a0da9d29c4a45219f0ceacc1f93da0
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-18T16:45:02Z
+- **Owner until:** 2026-10-18T20:45:02Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
