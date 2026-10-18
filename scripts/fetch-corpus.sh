@@ -16,31 +16,33 @@ mkdir -p "$DEST"
 
 XIPH_BASE="https://media.xiph.org/video/derf/y4m"
 
-# Each line: <source relative path>:<local filename>
+# Each line: <source filename>:<local filename>
 CLIPS=(
-    "parkrun_ter_720p50.y4m"
-    "in_to_tree_420_720p50.y4m"
-    "old_town_cross_420_720p50.y4m"
-    "ducks_take_off_420_720p50.y4m"
+    "720p50_parkrun_ter.y4m:parkrun_ter_720p50.y4m"
+    "in_to_tree_420_720p50.y4m:in_to_tree_420_720p50.y4m"
+    "old_town_cross_420_720p50.y4m:old_town_cross_420_720p50.y4m"
+    "ducks_take_off_420_720p50.y4m:ducks_take_off_420_720p50.y4m"
 )
 
 fetched=0
 skipped=0
 failed=0
 
-for clip in "${CLIPS[@]}"; do
-    target="$DEST/$clip"
+for mapping in "${CLIPS[@]}"; do
+    source_clip="${mapping%%:*}"
+    local_clip="${mapping#*:}"
+    target="$DEST/$local_clip"
     if [ -s "$target" ]; then
         skipped=$((skipped + 1))
         continue
     fi
     size_estimate="(several hundred MB; large download)"
-    echo "[fetch] $clip $size_estimate"
-    if curl -fL --retry 3 -o "$target" "$XIPH_BASE/$clip"; then
+    echo "[fetch] $local_clip $size_estimate"
+    if curl -fL --retry 3 -o "$target" "$XIPH_BASE/$source_clip"; then
         echo "  done."
         fetched=$((fetched + 1))
     else
-        echo "  FAILED."
+        echo "  FAILED: $local_clip"
         rm -f "$target"
         failed=$((failed + 1))
     fi

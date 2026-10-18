@@ -59,12 +59,12 @@ if (-not (Test-Path $destDir)) {
 
 $xiphBase = 'https://media.xiph.org/video/derf/y4m'
 
-# Stage-0 clip list — same set as scripts/fetch-corpus.sh.
+# Stage-0 source-to-local filename map — same as scripts/fetch-corpus.sh.
 $clips = @(
-    'parkrun_ter_720p50.y4m',
-    'in_to_tree_420_720p50.y4m',
-    'old_town_cross_420_720p50.y4m',
-    'ducks_take_off_420_720p50.y4m'
+    [pscustomobject]@{ Source = '720p50_parkrun_ter.y4m'; Local = 'parkrun_ter_720p50.y4m' },
+    [pscustomobject]@{ Source = 'in_to_tree_420_720p50.y4m'; Local = 'in_to_tree_420_720p50.y4m' },
+    [pscustomobject]@{ Source = 'old_town_cross_420_720p50.y4m'; Local = 'old_town_cross_420_720p50.y4m' },
+    [pscustomobject]@{ Source = 'ducks_take_off_420_720p50.y4m'; Local = 'ducks_take_off_420_720p50.y4m' }
 )
 
 $fetched = 0
@@ -72,17 +72,17 @@ $skipped = 0
 $failed = 0
 
 foreach ($clip in $clips) {
-    $target = Join-Path $destDir $clip
-    $url = "$xiphBase/$clip"
+    $target = Join-Path $destDir $clip.Local
+    $url = "$xiphBase/$($clip.Source)"
 
     if ((Test-Path $target) -and ((Get-Item $target).Length -gt 0)) {
-        Write-Host "[skip] $clip (already present)"
+        Write-Host "[skip] $($clip.Local) (already present)"
         $skipped++
         continue
     }
 
     if ($PSCmdlet.ShouldProcess($target, "Download $url")) {
-        Write-Host "[fetch] $clip (several hundred MB; large download)"
+        Write-Host "[fetch] $($clip.Local) (several hundred MB; large download)"
         try {
             # Invoke-WebRequest streams to disk; Progress UI off for
             # large downloads (massive speedup on PowerShell 5/7).
@@ -103,7 +103,7 @@ foreach ($clip in $clips) {
             $failed++
         }
     } else {
-        Write-Host "[plan] $clip <- $url"
+        Write-Host "[plan] $($clip.Local) <- $url"
     }
 }
 

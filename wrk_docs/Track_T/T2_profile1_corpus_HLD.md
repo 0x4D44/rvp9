@@ -103,7 +103,7 @@ Mechanism: extend `D:\language\rvp9-2\scripts\encode-corpus.ps1` (or factor a th
 - Reuse `foreman_c444.y4m` / `foreman_c422.y4m` already in `tests/corpus/profile1/`.
 - Generate `foreman_c440.y4m` via `ffmpeg -i foreman_cif.y4m -pix_fmt yuv440p foreman_c440.y4m` (one-shot, lossless within the chroma-resampling envelope — ffmpeg is a Wave-O-vetted oracle so it's a justified source).
 - For *larger* sources, generate from `testsrc_720p30.y4m` (already in tree, 4:2:0) via `ffmpeg -pix_fmt yuv4{22,40,44}p` — cheap, deterministic, no new download.
-- If we want a real-content 720p vector beyond `testsrc`, fetch `parkrun_ter_720p50.y4m` from Xiph (script `fetch-corpus.ps1` already knows the URL pattern); but recommend NOT for first-slice because of the multi-hundred-MB download cost and the marginal extra coverage over `testsrc_720p30` for a robustness gate.
+- If we want a real-content 720p vector beyond `testsrc`, fetch Xiph's `720p50_parkrun_ter.y4m`; `fetch-corpus.ps1` stores it under the local name `parkrun_ter_720p50.y4m`. Recommend NOT for first-slice because of the multi-hundred-MB download cost and the marginal extra coverage over `testsrc_720p30` for a robustness gate.
 
 ### 4.4 Bytes estimate
 A `vpxenc` 10-frame encode at 352×288 with default settings produces ≤35 KB per vector (proven by the existing `foreman_c4xx.ivf` set). For the proposed N≈15-vector first slice (§7), that's <600 KB of new binary in `tests/corpus/profile1/`, plus their two ledger sidecars each (≤1.5 KB each), total under 1 MB committed. A 720p×10-frame encode is ≤200 KB; for N≈3 such vectors, total under 600 KB. **Aggregate corpus growth is well under 2 MB even at the upper bound** — comfortably below any LFS threshold.
