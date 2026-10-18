@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00078 — Tile-info writer accepts invalid geometry in release builds
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/bitstream header writer
 - **Raised:** 2026-08-22T08:56:49Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T163531Z-60b355f1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00078-run-verify-20261018T163531Z-60b355f1
-- **Owner base:** 7a08aa2444d61c38cba02e095b45994909e4ca73
-- **Owner fingerprint:** sha256:5f67dc2ca9c522c5025298526831385470db88a78088b70a3c369f057f9a11ed
-- **Owner since:** 2026-10-18T16:35:31Z
-- **Owner until:** 2026-10-18T20:35:31Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T08:56:49Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:26:41Z, deltic:auto role=fix run=fix-20260822T132113Z-b15a1b7a branch=task/bug-RVP9-BUG-KIL-00078-run-fix-20260822T132113Z-b15a1b7a code=bdb22b49 gate=manual)
+- **State history:** Open (2026-08-22T08:56:49Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:26:41Z, deltic:auto role=fix run=fix-20260822T132113Z-b15a1b7a branch=task/bug-RVP9-BUG-KIL-00078-run-fix-20260822T132113Z-b15a1b7a code=bdb22b49 gate=manual) -> Closed (2026-10-18T16:50:15Z, deltic:manual role=verify run=verify-20261018T163531Z-60b355f1 verified_fix_run=fix-20260822T132113Z-b15a1b7a verdict=close)
 
 ## Observation
 
@@ -38,5 +38,9 @@ Confirmed independently by the reliability reviewer, the lead's source trace, an
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:50:15Z, deltic:auto run=verify-20261018T163531Z-60b355f1 verified_fix_run=fix-20260822T132113Z-b15a1b7a verdict=close)
+
+Verifier note: Manual verify: Independent verification passed both retained release tests on the fixed build. Restoring debug-only column validation and unchecked rows makes the selected regression fail because invalid geometry returns Ok. Release public-header probes return typed InvalidTileInfo errors for below-minimum columns, above-maximum columns and rows=3; the helper emits no tile bits, while the streaming header writer has already emitted its 95-bit prefix. The final duplicate Cargo rebuild timed out at 300s; source was restored byte-for-byte and the same retained tests passed in the optimized assert...
 
 ## Notes
