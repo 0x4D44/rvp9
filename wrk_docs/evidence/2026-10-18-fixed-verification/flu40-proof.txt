@@ -1,0 +1,95 @@
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-flu-00051-short-transform-scan/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-flu-00051-short-transform-scan/crates/rvp9-decoder)
+    Checking static_assertions v1.1.0
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+    Checking crossbeam-channel v0.5.15
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+warning: target feature `x87` must be enabled to ensure that the ABI of the current target can be implemented correctly
+  |
+  = note: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+  = note: for more information, see issue #116344 <https://github.com/rust-lang/rust/issues/116344>
+
+warning: `rvp9-core` (lib) generated 1 warning
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+warning: `rvp9-decoder` (lib) generated 1 warning (1 duplicate)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 26.43s
+
+MUTANT: remove only returned timestamp binding at both worker_pool.scope calls, retain all cfg gates/closure return values. Baseline exact x86 feature check passed with cross-target native apple-m4/x87 configuration warnings.
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-flu-00051-short-transform-scan/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-flu-00051-short-transform-scan/crates/rvp9-decoder)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+warning: target feature `x87` must be enabled to ensure that the ABI of the current target can be implemented correctly
+  |
+  = note: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+  = note: for more information, see issue #116344 <https://github.com/rust-lang/rust/issues/116344>
+
+warning: `rvp9-core` (lib) generated 1 warning
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+error[E0425]: cannot find value `_submit_done_cycles` in this scope
+    --> crates/rvp9-decoder/src/lib.rs:2184:29
+     |
+2184 |                     submit: _submit_done_cycles.wrapping_sub(t_submit_start),
+     |                             ^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `_submit_done_cycles` in this scope
+    --> crates/rvp9-decoder/src/lib.rs:2185:52
+     |
+2185 |                     join: t_scope_end.wrapping_sub(_submit_done_cycles),
+     |                                                    ^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `_submit_done_cycles` in this scope
+    --> crates/rvp9-decoder/src/lib.rs:3404:29
+     |
+3404 |                     submit: _submit_done_cycles.wrapping_sub(t_submit_start),
+     |                             ^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `_submit_done_cycles` in this scope
+    --> crates/rvp9-decoder/src/lib.rs:3405:52
+     |
+3405 |                     join: t_scope_end.wrapping_sub(_submit_done_cycles),
+     |                                                    ^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+For more information about this error, try `rustc --explain E0425`.
+warning: `rvp9-decoder` (lib) generated 1 warning (1 duplicate)
+error: could not compile `rvp9-decoder` (lib) due to 4 previous errors; 1 warning emitted
+
+RESTORED exact original decoder source; same feature check follows.
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-flu-00051-short-transform-scan/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-flu-00051-short-transform-scan/crates/rvp9-decoder)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+warning: target feature `x87` must be enabled to ensure that the ABI of the current target can be implemented correctly
+  |
+  = note: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+  = note: for more information, see issue #116344 <https://github.com/rust-lang/rust/issues/116344>
+
+warning: `rvp9-core` (lib) generated 1 warning
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+'apple-m4' is not a recognized processor for this target (ignoring processor)
+warning: `rvp9-decoder` (lib) generated 1 warning (1 duplicate)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 6.38s
+
+VERDICT recommend close. Claim verify-20261018T171227Z-f6b0f3ce remains for lead ledger handling. Fix2d327e4e5ec5ddecffd8d8bcffcb37730893f35d ancestor testedHEAD confirmed exit0. Exact original oracle cargo check -p rvp9-decoder --target x86_64-apple-darwin --features profile-tiles passes baseline/restored. Removing only both scope-return timestamp bindings reproduces4 E0425 errors in key/inter submit+join snapshots. This bug's observed defect is compilation, so those exact compiler errors are the direct regression oracle. Both closure bodies and feature gates untouched. Exact source restored; scoped git diff --exit-code clean; no permanent edits/commit/ledger verdict.
+Limits: x86 cross-target compile validation on AppleSilicon, no x86 runtime profiling run. Repo target-cpu=native emits pre-existing apple-m4 unrecognized and x87 ABI warnings on cross target in baseline/restored; these did not block check and no warning policy changed.
