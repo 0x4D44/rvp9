@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00051 — decode_coefs accepts a scan shorter than its transform size
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/entropy detokenize
 - **Raised:** 2026-10-17T20:46:58Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T164502Z-6acc6ec1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00051-run-fix-20261018T164502Z-6acc6ec1
-- **Owner base:** fe44b8c8b3a0da9d29c4a45219f0ceacc1f93da0
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T16:45:02Z
-- **Owner until:** 2026-10-18T20:45:02Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T20:46:58Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium)
+- **State history:** Open (2026-10-17T20:46:58Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T16:53:35Z, deltic:auto role=fix run=fix-20261018T164502Z-6acc6ec1 branch=task/bug-RVP9-BUG-FLU-00051-run-fix-20261018T164502Z-6acc6ec1 code=cbc5a550a8956ccc13455ce5ec304fb82428d755 gate=manual)
 
 ## Observation
 
