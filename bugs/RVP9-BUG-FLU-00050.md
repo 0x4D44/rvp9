@@ -6,15 +6,15 @@
 - **Area:** core/dsp x86 IDCT
 - **Raised:** 2026-10-17T20:46:57Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261018T172937Z-b60b783e
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00050-run-fix-20261018T172937Z-b60b783e
+- **Owner base:** 026c348bc482778caca7343ae5d89b914ad20d22
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-18T17:29:37Z
+- **Owner until:** 2026-10-18T21:29:37Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
