@@ -1,25 +1,25 @@
 # RVP9-BUG-KILN-00069 — ALTREF panics on legal partial-height streams
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** encoder/altref geometry
 - **Raised:** 2026-08-16T08:18:59Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T170407Z-eab466a3
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00069-run-verify-20261018T170407Z-eab466a3
-- **Owner base:** 35a80e9d64618de1a111b72c23b3c411921629c3
-- **Owner fingerprint:** sha256:af40d589e4c94af6b673f24bdb68a234ead4420775ea3df3e9690da0fe03a242
-- **Owner since:** 2026-10-18T17:04:07Z
-- **Owner until:** 2026-10-18T21:04:07Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-16T08:18:59Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T22:28:21Z, deltic:auto role=fix run=fix-20261015T222031Z-c71ab272 branch=task/bug-RVP9-BUG-KILN-00069-run-fix-20261015T222031Z-c71ab272 code=4780fcc841d9bba4f467bfaf40dd82b5bcc0365f gate=manual)
+- **State history:** Open (2026-08-16T08:18:59Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T22:28:21Z, deltic:auto role=fix run=fix-20261015T222031Z-c71ab272 branch=task/bug-RVP9-BUG-KILN-00069-run-fix-20261015T222031Z-c71ab272 code=4780fcc841d9bba4f467bfaf40dd82b5bcc0365f gate=manual) -> Closed (2026-10-18T17:07:19Z, deltic:manual role=verify run=verify-20261018T170407Z-eab466a3 verified_fix_run=fix-20261015T222031Z-c71ab272 verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ StreamEncoder accepts every positive even height, but the enabled ALTREF path ca
 ## Fix
 
 Handle visible edge macroblocks in the temporal filter, and allocate the ARF reconstruction with the same padded storage height as the reference pool. Add delayed-encode and flush regressions for 1280×720, 1920×1080, and a height divisible by 32 but not 64. The tests must reach ARF emission and decode the resulting superframe.
+
+### Verification summary (2026-10-18T17:07:19Z, deltic:auto run=verify-20261018T170407Z-eab466a3 verified_fix_run=fix-20261015T222031Z-c71ab272 verdict=close)
+
+Verifier note: Manual verify: Independent Codex verification, native macOS arm64; tested worktree contains fix4780fcc8 by merge-base ancestor proof. cargo test -p rvp9-encoder --test w_altref_partial_height selected7 PASS initially/restored: 1280x720,1920x1080,64x96 delayed and flush reachARF emission and decode all9 show frames plus hidden ARF superframes; patterned34x18,34x38,2x2 edge/stride pixels preserved. Mutant1 original BW/BH alignment assertion: selected720p delayed regression1 FAIL with caught alignment panic and bug-specific assertion. Mutant2 visible-height ARF allocation: selected96-row regressi...
 
 ## Notes
