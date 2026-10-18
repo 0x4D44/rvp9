@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00038 — Decoder and encoder archives omit development dependencies required by included tests
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** packaging/archive-tests
 - **Raised:** 2026-10-15T22:37:30Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T214313Z-eab04ebd
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00038-run-verify-20261018T214313Z-eab04ebd
-- **Owner base:** fd3b5b794cdb2ad8d3f1a93fcc433814336bdd42
-- **Owner fingerprint:** sha256:5c04ea53c353d37e225e18ff359e608d3b483ee96c4c16253f080392b8397144
-- **Owner since:** 2026-10-18T21:43:13Z
-- **Owner until:** 2026-10-19T01:43:13Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-15T22:37:30Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:32:35Z, deltic:auto role=fix run=fix-20261018T191216Z-cbe17809 branch=task/bug-RVP9-BUG-FLU-00038-run-fix-20261018T191216Z-cbe17809 code=1322be6091e42b7789c34443cfbdbb2364f99386 gate=manual)
+- **State history:** Open (2026-10-15T22:37:30Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:32:35Z, deltic:auto role=fix run=fix-20261018T191216Z-cbe17809 branch=task/bug-RVP9-BUG-FLU-00038-run-fix-20261018T191216Z-cbe17809 code=1322be6091e42b7789c34443cfbdbb2364f99386 gate=manual) -> Closed (2026-10-18T21:49:16Z, deltic:manual role=verify run=verify-20261018T214313Z-eab04ebd verified_fix_run=fix-20261018T191216Z-cbe17809 verdict=close)
 
 ## Observation
 
@@ -30,5 +30,9 @@ At candidate code 1a84f60a24e8d82e8e6454743fbb80521280df0e (documentation/ledger
 The decoder and encoder Cargo package manifests exclude their workspace-only integration tests; the encoder archive also excludes the harness-based `sad_simd_oracle` example. The encoder's existing `rvp9-decoder` dev-dependency now includes a compatible registry version as well as its workspace path, so extracted archive unit tests can resolve it. The crate READMEs direct maintainers to run integration tests from a workspace checkout.
 
 Validated both `cargo package --locked --offline` commands and `cargo test --locked` from each extracted archive. Decoder archive tests passed (224 unit tests and one compile-fail doctest); encoder archive tests passed (824 unit tests, one ignored). The excluded `panic_safety` and `quality_gate` integration targets still compile in the workspace. Fix landed in `1322be6091e42b7789c34443cfbdbb2364f99386`.
+
+### Verification summary (2026-10-18T21:49:16Z, deltic:auto run=verify-20261018T214313Z-eab04ebd verified_fix_run=fix-20261018T191216Z-cbe17809 verdict=close)
+
+Verifier note: Manual verify: Independent verification at 5b4b3f62: both cargo package --locked --offline assembly/verification checks pass. Unchanged extracted archives tested externally offline: decoder 224 unit tests plus 1 compile-fail doctest passed (3 ignored); encoder 824 passed (1 ignored). Inspected actual archive exclusions and versioned decoder dev dependency. Four manifest predicates fail against pre-fix bytes and pass fixed; this is content proof, not a claim of pre-fix test assertion execution. README now explicitly limits integration tests to workspace; source panic_safety and quality_gate tar...
 
 ## Notes
