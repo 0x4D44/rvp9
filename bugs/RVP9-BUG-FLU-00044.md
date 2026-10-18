@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00044 — Malformed WebM parent-crossing header panics in overflow-checked packet reader
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** io/webm
 - **Raised:** 2026-10-16T14:24:03Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T214323Z-e80970c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00044-run-verify-20261018T214323Z-e80970c1
-- **Owner base:** 20b5d703d1aa866d65f4abf54e5af64d44bb7fcf
-- **Owner fingerprint:** sha256:265eb7ad4ca6bb1abf1d8a15532cebe66f343df62a3b707fcd0effd2e1e8d1fa
-- **Owner since:** 2026-10-18T21:43:23Z
-- **Owner until:** 2026-10-19T01:43:23Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-16T14:24:03Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T19:50:22Z, deltic:auto role=fix run=fix-20261018T194654Z-740c1eec branch=task/bug-RVP9-BUG-FLU-00044-run-fix-20261018T194654Z-740c1eec code=52a15ed22037ed5fb7b89aa16b452a1d8d877898 gate=manual)
+- **State history:** Open (2026-10-16T14:24:03Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T19:50:22Z, deltic:auto role=fix run=fix-20261018T194654Z-740c1eec branch=task/bug-RVP9-BUG-FLU-00044-run-fix-20261018T194654Z-740c1eec code=52a15ed22037ed5fb7b89aa16b452a1d8d877898 gate=manual) -> Closed (2026-10-18T21:48:31Z, deltic:manual role=verify run=verify-20261018T214323Z-e80970c1 verified_fix_run=fix-20261018T194654Z-740c1eec verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ At exact candidate code ebca64b0, public read_webm_packets called with bytes [18
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T21:48:31Z, deltic:auto run=verify-20261018T214323Z-e80970c1 verified_fix_run=fix-20261018T194654Z-740c1eec verdict=close)
+
+Verifier note: Manual verify: Independent verification on 5b4b3f62: reviewed 52a15ed parent-bounded header reads. Original malformed-input observation is covered by webm_nested_header_crossing_parent_returns_error_without_panicking; cargo test -p rvp9-io --test error_paths webm_nested_header_crossing_parent_returns_error_without_panicking -- --exact --nocapture selected one passing test. Root-cause reversal of both bounded reads selected the same test and failed its parent-crossing-header no-panic assertion; exact source restored and one test passed again. Focused regression and diff checks green; no broader...
 
 ## Notes
