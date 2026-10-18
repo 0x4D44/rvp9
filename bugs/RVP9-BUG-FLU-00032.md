@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00032 — SSE2 square subtraction stride arithmetic can wrap before unsafe loads
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/dsp/subtract_sse2
 - **Raised:** 2026-09-07T19:53:47Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T172040Z-895c46bc
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00032-run-verify-20261018T172040Z-895c46bc
-- **Owner base:** 595bc8401af588246db7988962825e2c09143c01
-- **Owner fingerprint:** sha256:e05532b2daef6820a47b5d9d35db74d0286480096102fde23fd1282e67fedaa9
-- **Owner since:** 2026-10-18T17:20:40Z
-- **Owner until:** 2026-10-18T21:20:40Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-09-07T19:53:47Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:39:40Z, deltic:auto role=fix run=fix-20261015T233530Z-803bc9fe branch=task/bug-RVP9-BUG-FLU-00032-run-fix-20261015T233530Z-803bc9fe code=65fd7a30561c7b2bf065e48141e6a0b1e0d90ae8 gate=manual)
+- **State history:** Open (2026-09-07T19:53:47Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:39:40Z, deltic:auto role=fix run=fix-20261015T233530Z-803bc9fe branch=task/bug-RVP9-BUG-FLU-00032-run-fix-20261015T233530Z-803bc9fe code=65fd7a30561c7b2bf065e48141e6a0b1e0d90ae8 gate=manual) -> Closed (2026-10-18T17:32:55Z, deltic:manual role=verify run=verify-20261018T172040Z-895c46bc verified_fix_run=fix-20261015T233530Z-803bc9fe verdict=close)
 
 ## Observation
 
@@ -28,6 +28,10 @@ On x86_64 release builds, subtract_square_sse2 and subtract_square_sse2_with_non
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T17:32:55Z, deltic:auto run=verify-20261018T172040Z-895c46bc verified_fix_run=fix-20261015T233530Z-803bc9fe verdict=close)
+
+Verifier note: Manual verify: Checked square-input span overflow is verified with the retained rejects_overflowing_input_spans test. The exact source passes on x86_64 under Rosetta; reversing only checked addition makes the retained explicit-rejection assertion fail. A cfg(test) sentinel intercepted the unsafe path before any invalid SSE2 access, and its caught noncanonical panic was rejected by that assertion. Exact source restored; all three module tests pass. Full Cargo test attempts timed out during compilation, so verification used a standalone harness that included the claimed source and only stubbed t...
 
 ## Notes
 
