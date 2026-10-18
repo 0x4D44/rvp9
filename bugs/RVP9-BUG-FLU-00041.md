@@ -6,15 +6,15 @@
 - **Area:** qualification/spatial-summary
 - **Raised:** 2026-10-16T14:08:49Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261018T200522Z-71a33145
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00041-run-fix-20261018T200522Z-71a33145
+- **Owner base:** 4252bb14f44e11050abe60bc3c37d8759fab16b8
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-18T20:05:22Z
+- **Owner until:** 2026-10-19T00:05:22Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
