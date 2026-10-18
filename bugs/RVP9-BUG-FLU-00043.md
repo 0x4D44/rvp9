@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00043 — Conformance forced-scalar rows retain NEON dispatch on AArch64
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** Medium
 - **Area:** qualification/conformance
 - **Raised:** 2026-10-16T14:14:38Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T164749Z-c620903f
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00043-run-verify-20261018T164749Z-c620903f
-- **Owner base:** 5483818ad15b0a87b23207e213f054d7c11eeb55
-- **Owner fingerprint:** sha256:44e3c6425dc1edcbd595d459fad67e71c1693e085050b05af132454c3caddeeb
-- **Owner since:** 2026-10-18T16:47:49Z
-- **Owner until:** 2026-10-18T20:47:49Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-16T14:14:38Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T16:24:54Z, deltic:auto role=fix run=fix-20261018T155935Z-dd09e04f branch=task/bug-RVP9-BUG-FLU-00043-run-fix-20261018T155935Z-dd09e04f code=76481914b3c37b7028df3cb1bc9ab5e293365e23 gate=manual)
+- **State history:** Open (2026-10-16T14:14:38Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T16:24:54Z, deltic:auto role=fix run=fix-20261018T155935Z-dd09e04f branch=task/bug-RVP9-BUG-FLU-00043-run-fix-20261018T155935Z-dd09e04f code=76481914b3c37b7028df3cb1bc9ab5e293365e23 gate=manual) -> Closed (2026-10-18T16:53:53Z, deltic:manual role=verify run=verify-20261018T164749Z-c620903f verified_fix_run=fix-20261018T155935Z-dd09e04f verdict=close)
 
 ## Observation
 
@@ -34,6 +34,10 @@ Regression evidence: isolated capability-routing and actual NEON-entry trace par
 Focused native/forced-scalar decoder smoke at one/two threads selected two official vectors and passed all 20 frames per run, with zero mismatch or skip. This does not retroactively validate prior scalar-labelled runs or claim a fresh full-vector gate.
 
 Evidence: `wrk_journals/2026.10.18 - JRN - RVP9-BUG-FLU-00043 Arm decoder scalar routing.md`. Separate forward-transform Miri issue RVP9-BUG-FLU-00037 remains Open. Incidental native IDCT16 bounds overflow was recorded separately as RVP9-BUG-FLU-00056 without folding its repair into this fix.
+
+### Verification summary (2026-10-18T16:53:53Z, deltic:auto run=verify-20261018T164749Z-c620903f verified_fix_run=fix-20261018T155935Z-dd09e04f verdict=close)
+
+Verifier note: Manual verify: Independent native arm64 verification passed the routing controls and EOB parity. Reversing the Arm force-scalar cap mask makes the retained tests observe neon=true/dotprod=true; restoring IDCT16 routing produces three unexpected NEON entries instead of zero. Restored native and forced-scalar conformance over two official vectors at one and two threads passed 20 checks with zero mismatches or skips. Fix 76481914 is present in the tested origin/main worktree; no full 307-vector claim is made.
 
 ## Notes
 
