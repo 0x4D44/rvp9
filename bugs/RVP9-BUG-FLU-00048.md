@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00048 — Safe x86 SIMD dispatch getters expose kernels with debug-only bounds
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/dsp x86 SIMD
 - **Raised:** 2026-10-17T20:46:57Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T153528Z-cff45905
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00048-run-fix-20261018T153528Z-cff45905
-- **Owner base:** 09697b558205594dcce310c8047827756597fb1a
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T15:35:28Z
-- **Owner until:** 2026-10-18T19:35:28Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T20:46:57Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium)
+- **State history:** Open (2026-10-17T20:46:57Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T15:50:59Z, deltic:auto role=fix run=fix-20261018T153528Z-cff45905 branch=task/bug-RVP9-BUG-FLU-00048-run-fix-20261018T153528Z-cff45905 code=6d2c2ba9e1f53f51085163e43c48af7cd7693010 gate=manual)
 
 ## Observation
 
