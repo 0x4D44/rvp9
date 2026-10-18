@@ -1,0 +1,184 @@
+Claimaccepted beforetests: verify-20261018T174326Z-83f3398a
+Overlap88 differentbin dumpwindow;89 differentbin E1toolfailure; oldKILN36 CLIbounds separateclosed.
+PROVENANCE git rev-parse HEAD
+773503314d360c96f69746c032949076fbd91f42
+EXIT: 0
+PROVENANCE git merge-base --is-ancestor 4aab47c03c0575b314f6fadcd1c3e290f96239b2 HEAD
+EXIT: 0
+INITIAL three priming range regressions COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin diff_bitstream frame_range_primes </dev/null
+error: no bin target named `diff_bitstream` in `rvp9-harness` package
+
+help: a target with a similar name exists: `diff-bitstream`
+
+EXIT: 101
+
+Corrected cargo target: explicitbin diff-bitstream, underscore is sourcefilenameonly. Earlier no-target error selected no tests and is not fails-before evidence. No source mutation preceded correction.
+INITIAL three priming range regressions COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin diff-bitstream frame_range_primes </dev/null
+   Compiling crossbeam-utils v0.8.21
+   Compiling proc-macro2 v1.0.106
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-core)
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling serde_json v1.0.149
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-decoder)
+   Compiling serde v1.0.228
+   Compiling memchr v2.8.0
+   Compiling itoa v1.0.18
+   Compiling static_assertions v1.1.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-harness)
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 57.24s
+     Running unittests src/bin/diff_bitstream.rs (target/debug/deps/diff_bitstream-62240bce34549151)
+
+running 3 tests
+test tests::l3_frame_range_primes_probability_history_without_prefix_records ... ok
+test tests::l4_frame_range_primes_both_legs_after_asymmetric_prefix_error ... ok
+test tests::l4_frame_range_primes_superframe_history_and_reports_only_selected_packet ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 46 filtered out; finished in 0.01s
+
+
+EXIT: 0
+INITIAL real encoded superframe fixture calibration COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin diff-bitstream tests::l4_encoder_superframe_prefix_fixture_calibrates_selected_mi_difference -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 6.42s
+     Running unittests src/bin/diff_bitstream.rs (target/debug/deps/diff_bitstream-62240bce34549151)
+
+running 1 test
+test tests::l4_encoder_superframe_prefix_fixture_calibrates_selected_mi_difference ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 0.00s
+
+
+EXIT: 0
+MUTANT remove L3 probability-bank prefix replay COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin diff-bitstream tests::l3_frame_range_primes_probability_history_without_prefix_records -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-encoder)
+warning: function `prime_l3_entry` is never used
+    --> crates/rvp9-harness/src/bin/diff_bitstream.rs:1439:4
+     |
+1439 | fn prime_l3_entry(entry: &FrameEntry, banks: &mut FrameContextBanks) {
+     |    ^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rvp9-harness` (bin "diff-bitstream" test) generated 1 warning
+    Finished `test` profile [optimized + debuginfo] target(s) in 10.62s
+     Running unittests src/bin/diff_bitstream.rs (target/debug/deps/diff_bitstream-62240bce34549151)
+
+running 1 test
+test tests::l3_frame_range_primes_probability_history_without_prefix_records ... FAILED
+
+failures:
+
+---- tests::l3_frame_range_primes_probability_history_without_prefix_records stdout ----
+
+thread 'tests::l3_frame_range_primes_probability_history_without_prefix_records' (288969498) panicked at crates/rvp9-harness/src/bin/diff_bitstream.rs:3622:9:
+--frame 2 lost the packet-1 probability history needed to report packet 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::l3_frame_range_primes_probability_history_without_prefix_records
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 48 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-harness --bin diff-bitstream`
+
+EXIT: 101
+MUTANT remove L4 decoder prefix replay calls COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin diff-bitstream tests::l4_frame_range_primes_superframe_history_and_reports_only_selected_packet -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-io)
+warning: function `prime_l4_packet` is never used
+    --> crates/rvp9-harness/src/bin/diff_bitstream.rs:2041:4
+     |
+2041 | fn prime_l4_packet(decoder: &mut Decoder, packet: &[u8]) {
+     |    ^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rvp9-harness` (bin "diff-bitstream" test) generated 1 warning
+    Finished `test` profile [optimized + debuginfo] target(s) in 12.73s
+     Running unittests src/bin/diff_bitstream.rs (target/debug/deps/diff_bitstream-62240bce34549151)
+
+running 1 test
+test tests::l4_frame_range_primes_superframe_history_and_reports_only_selected_packet ... FAILED
+
+failures:
+
+---- tests::l4_frame_range_primes_superframe_history_and_reports_only_selected_packet stdout ----
+
+thread 'tests::l4_frame_range_primes_superframe_history_and_reports_only_selected_packet' (288977231) panicked at crates/rvp9-harness/src/bin/diff_bitstream.rs:4078:9:
+--frame 2 lost the packet-1 decoder history needed to report packet 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::l4_frame_range_primes_superframe_history_and_reports_only_selected_packet
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 48 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p rvp9-harness --bin diff-bitstream`
+
+EXIT: 101
+RESTORED three priming range regressions COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin diff-bitstream frame_range_primes </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 14.46s
+     Running unittests src/bin/diff_bitstream.rs (target/debug/deps/diff_bitstream-62240bce34549151)
+
+running 3 tests
+test tests::l3_frame_range_primes_probability_history_without_prefix_records ... ok
+test tests::l4_frame_range_primes_both_legs_after_asymmetric_prefix_error ... ok
+test tests::l4_frame_range_primes_superframe_history_and_reports_only_selected_packet ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 46 filtered out; finished in 0.01s
+
+
+EXIT: 0
+RESTORED real fixture calibration COMMAND: deltic timeout 300 cargo test -p rvp9-harness --bin diff-bitstream tests::l4_encoder_superframe_prefix_fixture_calibrates_selected_mi_difference -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00085-selected-frame-state-pri/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 4.78s
+     Running unittests src/bin/diff_bitstream.rs (target/debug/deps/diff_bitstream-62240bce34549151)
+
+running 1 test
+test tests::l4_encoder_superframe_prefix_fixture_calibrates_selected_mi_difference ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 0.00s
+
+
+EXIT: 0
+FINAL git diff --exit-code -- crates/rvp9-harness/src/bin/diff_bitstream.rs
+EXIT: 0
+FINAL git status --short
+EXIT: 0
+FINAL git hash-object crates/rvp9-harness/src/bin/diff_bitstream.rs
+dfd8e0c8efa25c66c863ee2f9b1bfbcf02f4b3ce
+EXIT: 0
+FINAL git rev-parse HEAD:crates/rvp9-harness/src/bin/diff_bitstream.rs
+dfd8e0c8efa25c66c863ee2f9b1bfbcf02f4b3ce
+EXIT: 0
+Limits: macOSarm64; L3 synthetic standalone compressed-parser fixtures (not complete VP9frames), L4 selfencoded64x64 key+inter prefix superframe and selectedinter; noexternalcorpus orlibvpx run. Noledgerverdict issued.
