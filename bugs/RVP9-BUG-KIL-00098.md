@@ -6,15 +6,15 @@
 - **Area:** io/webm track discovery
 - **Raised:** 2026-08-22T14:34:14Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T161843Z-3f8a2c3d
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00098-run-verify-20261018T161843Z-3f8a2c3d
+- **Owner base:** 80fce593c364e3a87b5950a53bee502e1293728f
+- **Owner fingerprint:** sha256:59f587fc08d2cd74fe8139970b8ac08d64459b9f93dce0bb93c6c7bdc3146ea8
+- **Owner since:** 2026-10-18T16:18:43Z
+- **Owner until:** 2026-10-18T20:18:43Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
