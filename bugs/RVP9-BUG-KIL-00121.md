@@ -6,15 +6,15 @@
 - **Area:** cli/rvp9enc option contract
 - **Raised:** 2026-08-22T20:44:03Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T164147Z-cc410bb6
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00121-run-verify-20261018T164147Z-cc410bb6
+- **Owner base:** fa7184edc531ff9d528828e1824a8acbb8700eb8
+- **Owner fingerprint:** sha256:60259bfcfb93507393758964507f8cf65108cabfc23592b66d18f925e5d9896b
+- **Owner since:** 2026-10-18T16:41:47Z
+- **Owner until:** 2026-10-18T20:41:47Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
