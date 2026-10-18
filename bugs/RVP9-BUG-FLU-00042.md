@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00042 — BD-rate cubic solver loses accuracy on narrow realistic PSNR curves
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** harness/bdrate
 - **Raised:** 2026-10-16T14:10:24Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T162513Z-efad8092
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00042-run-fix-20261018T162513Z-efad8092
-- **Owner base:** aee3070f3578326c339d0c062c874d0ff5940f24
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T16:25:13Z
-- **Owner until:** 2026-10-18T20:25:13Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-16T14:10:24Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-10-16T14:10:24Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T16:34:55Z, deltic:auto role=fix run=fix-20261018T162513Z-efad8092 branch=task/bug-RVP9-BUG-FLU-00042-run-fix-20261018T162513Z-efad8092 code=43fc27dd3d2c28278f5202f48c590c03febbee90 gate=manual)
 
 ## Observation
 
