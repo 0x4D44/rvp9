@@ -1,25 +1,25 @@
 # RVP9-BUG-KILN-00072 — Saturating stream counters stop GOP and keyframe cadence
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Medium
 - **Area:** encoder/GOP cadence
 - **Raised:** 2026-08-16T08:19:23Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T171235Z-d2b55406
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00072-run-verify-20261018T171235Z-d2b55406
-- **Owner base:** 07ddbf5d0120b2b544a23278e03064e36963cbcb
-- **Owner fingerprint:** sha256:d3d6ecf6e80753c1cf9403e35cf0627a0555d0d5a953bf3da839262e0465cb9e
-- **Owner since:** 2026-10-18T17:12:35Z
-- **Owner until:** 2026-10-18T21:12:35Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-16T08:19:23Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T09:00:38Z, deltic:auto role=fix run=fix-20261016T084100Z-a89929bf branch=task/bug-RVP9-BUG-KILN-00072-run-fix-20261016T084100Z-a89929bf code=b2a0e12a17d551719b70cd4443b376fd95bddff2 gate=manual)
+- **State history:** Open (2026-08-16T08:19:23Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T09:00:38Z, deltic:auto role=fix run=fix-20261016T084100Z-a89929bf branch=task/bug-RVP9-BUG-KILN-00072-run-fix-20261016T084100Z-a89929bf code=b2a0e12a17d551719b70cd4443b376fd95bddff2 gate=manual) -> Closed (2026-10-18T17:22:06Z, deltic:manual role=verify run=verify-20261018T171235Z-d2b55406 verified_fix_run=fix-20261016T084100Z-a89929bf verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ StreamEncoder increments its u32 frame_idx with saturating_add at D:\worktrees\r
 ## Fix
 
 Use a non-saturating cadence representation, such as a u64 frame count or explicitly wrapped modulo counters, for both streaming paths. Add tests seeded near u32::MAX that cross the boundary and preserve normal keyframe, golden-frame, and ALTREF scheduling.
+
+### Verification summary (2026-10-18T17:22:06Z, deltic:auto run=verify-20261018T171235Z-d2b55406 verified_fix_run=fix-20261016T084100Z-a89929bf verdict=close)
+
+Verifier note: Manual verify: GOP 10/15 cadence, ALTREF scheduling and spatial SVC cadence pass after u32 counter saturation. Reversing the four GOP-phase schedule reads and spatial keyframe-phase check to the original saturating frame/AU counters makes all four retained cadence tests fail at the boundary; exact sources restored and all four pass again.
 
 ## Notes
