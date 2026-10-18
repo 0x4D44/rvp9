@@ -1,25 +1,25 @@
 # RVP9-BUG-CRU-00001 — RVP9_FORCE_SCALAR no longer yields a scalar encoder on x86_64: new SSE2 kernels bypass SimdDispatch
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/dsp dispatch
 - **Raised:** 2026-08-23T17:09:40Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T162636Z-6b73a151
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-CRU-00001-run-verify-20261018T162636Z-6b73a151
-- **Owner base:** abbbe119ae672f0087845000420f0983916b53fa
-- **Owner fingerprint:** sha256:37badc0f1814120888c2c124b97a15a54ecb0469b03712f78897d0b3fa2c2e9b
-- **Owner since:** 2026-10-18T16:26:36Z
-- **Owner until:** 2026-10-18T20:26:36Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-23T17:09:40Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T02:27:37Z, deltic:auto role=fix run=fix-20261016T020804Z-09df404b branch=task/bug-RVP9-BUG-CRU-00001-run-fix-20261016T020804Z-09df404b code=d9e95399d5db09bcd7651581cbffb61806cf0823 gate=manual)
+- **State history:** Open (2026-08-23T17:09:40Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T02:27:37Z, deltic:auto role=fix run=fix-20261016T020804Z-09df404b branch=task/bug-RVP9-BUG-CRU-00001-run-fix-20261016T020804Z-09df404b code=d9e95399d5db09bcd7651581cbffb61806cf0823 gate=manual) -> Closed (2026-10-18T16:34:52Z, deltic:manual role=verify run=verify-20261018T162636Z-6b73a151 verified_fix_run=fix-20261016T020804Z-09df404b verdict=close)
 
 ## Observation
 
@@ -77,5 +77,9 @@ See also RVP9-REQ-CRU-00006 for the structural version of this.
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:34:52Z, deltic:auto run=verify-20261018T162636Z-6b73a151 verified_fix_run=fix-20261016T020804Z-09df404b verdict=close)
+
+Verifier note: Manual verify: Independent x86_64 Mach-O under Rosetta/SSE2: routing oracle 1/1 with 21 backend entries passes; exact fdct8 bypass reversal triggers forced=true fdct8x8 SIMD assertion (1 expected 0). Restored oracle 1/1 and 13 numerical tests pass; exact source restored. No AVX/full-encode claim. Evidence: .scratch/cru01-proof.txt.
 
 ## Notes
