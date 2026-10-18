@@ -6,15 +6,15 @@
 - **Area:** packaging/archive-tests
 - **Raised:** 2026-10-15T22:37:30Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261018T191216Z-cbe17809
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00038-run-fix-20261018T191216Z-cbe17809
+- **Owner base:** 61006435807ff4551f0f065aeb5cf716b5d7e39c
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-18T19:12:16Z
+- **Owner until:** 2026-10-18T23:12:16Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
