@@ -1,0 +1,107 @@
+RVP9-BUG-FLU-00048 verification proof
+Date: 2026-10-18
+Worktree: /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00048-safe-x86-dispatch-gette
+Claimed HEAD: 9e868a729841a2252945a54b2212685e87e663ab
+
+Claim and ancestry
+------------------
+Command: deltic bugs claim RVP9-BUG-FLU-00048 --role verify
+Result: claim succeeded; run token verify-20261018T173454Z-558f6634
+Fix commit: 6d2c2ba9e1f53f51085163e43c48af7cd7693010
+Fix parent: 9a9d0b2155700533be6be2ebfa87e4eca962f7db
+Ancestry command: git merge-base --is-ancestor 6d2c2ba9e1f53f51085163e43c48af7cd7693010 origin/main
+Result: exit 0. At final check origin/main was b589de58a75d1221070ecd67a92a3dd82f397659; claimed HEAD contains the fix.
+
+Overlap inspected before claim
+------------------------------
+FLU-00032 fixes a checked span in crates/rvp9-core/src/dsp/x86_64/subtract_sse2.rs; FLU-00048's layout guards and retained tests are independent. CRU-00003's oracle changes are in int_pro_sse2.rs and mv_search/int_pro_me.rs; they do not overlap FLU-00048's bounds guards. The claim tool also mentioned KIL-00077 because it touches dispatch routing; its recorded issue is a separate performance-routing bypass, not this bounds defect.
+
+Execution environment and scope
+-------------------------------
+Host uname -m: arm64
+Rosetta check: arch -x86_64 /usr/bin/uname -m -> x86_64; arch -x86_64 /usr/sbin/sysctl -in sysctl.proc_translated -> 1.
+Cargo target: x86_64-apple-darwin, with Cargo runner ["arch", "-x86_64"]. RUSTFLAGS='-C target-cpu=x86-64'; CARGO_PROFILE_DEV_DEBUG_ASSERTIONS=false, CARGO_PROFILE_DEV_OVERFLOW_CHECKS=false, CARGO_PROFILE_DEV_OPT_LEVEL=0. Commands were offline, bounded with deltic timeout 300, and used stdin </dev/null.
+These are executed x86_64 unit tests under Rosetta, not compile-only checks. Selected tests exercise invalid-layout rejection. No unsafe SSE2 or AVX2 kernel operation executed: on the fixed code each case panics in the safe wrapper before its unsafe call; the mutation sentinel also returned before the unsafe SSE2 call. This does not verify valid AVX2 execution or run the workspace suite. Rosetta is confirmed; AVX2 execution was neither assumed nor attempted.
+
+Source hashes before mutation
+-----------------------------
+crates/rvp9-core/src/dsp/x86_64/idct8x8_sse2_64.rs  d919c1ec5285b7cc264ee2370d353aabd019ba8d0d06a11e37dbe4d5e50ea49f
+crates/rvp9-core/src/dsp/x86_64/dc_pred_4x4_avx2.rs  34ecb3883c6eaa2315520bbec779f4ae9ee88f3e2d7dc8e4dd2ac2400ef1ca91
+crates/rvp9-core/src/dsp/x86_64/safety_tests.rs  ecfad2d8b2ca18948981ad8c5ca044afd122027348102b09b4b29b8c1822f934
+
+Baseline 1: forced AVX2 getter rejection tests
+----------------------------------------------
+Command:
+CARGO_PROFILE_DEV_DEBUG_ASSERTIONS=false CARGO_PROFILE_DEV_OVERFLOW_CHECKS=false CARGO_PROFILE_DEV_OPT_LEVEL=0 RUSTFLAGS='-C target-cpu=x86-64' deltic timeout 300 cargo test --offline --target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]' -p rvp9-core --lib forced_avx2_dispatch_getter_rejects_ -- --test-threads=1 </dev/null
+Output:
+running 4 tests
+test dsp::x86_64::dc_pred_4x4_avx2::tests::forced_avx2_dispatch_getter_rejects_overflow_stride_before_avx2_inner - should panic ... ok
+test dsp::x86_64::dc_pred_4x4_avx2::tests::forced_avx2_dispatch_getter_rejects_short_above_before_avx2_inner - should panic ... ok
+test dsp::x86_64::dc_pred_4x4_avx2::tests::forced_avx2_dispatch_getter_rejects_short_dst_before_avx2_inner - should panic ... ok
+test dsp::x86_64::dc_pred_4x4_avx2::tests::forced_avx2_dispatch_getter_rejects_short_left_before_avx2_inner - should panic ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 2126 filtered out; finished in 0.00s
+Exit code: 0
+
+Baseline 2: retained SSE2 safe-wrapper bounds test
+-------------------------------------------------
+Command:
+CARGO_PROFILE_DEV_DEBUG_ASSERTIONS=false CARGO_PROFILE_DEV_OVERFLOW_CHECKS=false CARGO_PROFILE_DEV_OPT_LEVEL=0 RUSTFLAGS='-C target-cpu=x86-64' deltic timeout 300 cargo test --offline --target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]' -p rvp9-core --lib safety_bounds_sse2_transform_overlapping_stride -- --exact dsp::x86_64::safety_tests::safety_bounds_sse2_transform_overlapping_stride --test-threads=1 </dev/null
+Output:
+running 1 test
+test dsp::x86_64::safety_tests::safety_bounds_sse2_transform_overlapping_stride ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2129 filtered out; finished in 0.00s
+Exit code: 0
+
+Mutation
+--------
+Target: idct8x8_add_sse2_64 in crates/rvp9-core/src/dsp/x86_64/idct8x8_sse2_64.rs.
+Reversal: removed validate_predictor_storage(dst.len(), stride, 8, 8).expect("invalid inverse transform destination"). Temporary test-only sentinel before unsafe entry: #[cfg(test)] if stride == 0 { return; }. The sentinel only prevents the mutant from reaching the unsafe SSE2 operation; it has no assertion. The retained test uses a valid 8x8 allocation with zero stride, so this early return is safe. The retained check_transform assertion then fails because explicit rejection was absent. The test stopped on this first case, before later invalid-storage cases.
+Mutant source SHA-256: b6f7c1fa6075d8ba082060b79663f95a61196367f2b329c6e1e157802b92a1b2
+Command:
+CARGO_PROFILE_DEV_DEBUG_ASSERTIONS=false CARGO_PROFILE_DEV_OVERFLOW_CHECKS=false CARGO_PROFILE_DEV_OPT_LEVEL=0 RUSTFLAGS='-C target-cpu=x86-64' deltic timeout 300 cargo test --offline --target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]' -p rvp9-core --lib safety_bounds_sse2_transform_overlapping_stride -- --exact dsp::x86_64::safety_tests::safety_bounds_sse2_transform_overlapping_stride --nocapture --test-threads=1 </dev/null
+Output:
+running 1 test
+test dsp::x86_64::safety_tests::safety_bounds_sse2_transform_overlapping_stride ...
+thread 'dsp::x86_64::safety_tests::safety_bounds_sse2_transform_overlapping_stride' panicked at crates/rvp9-core/src/dsp/x86_64/safety_tests.rs:10:5:
+safe transform must reject a stride shorter than its block width
+FAILED
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2129 filtered out; finished in 0.00s
+Exit code: 101
+
+Restoration and rerun
+---------------------
+Restoration command: cp .scratch/flu48-idct8x8_sse2_64.before.rs crates/rvp9-core/src/dsp/x86_64/idct8x8_sse2_64.rs
+Restored source SHA-256: d919c1ec5285b7cc264ee2370d353aabd019ba8d0d06a11e37dbe4d5e50ea49f; identical to the pre-mutation saved copy.
+The two baseline commands above were rerun after restoration with the same outputs: SSE2 test 1 passed / exit 0, forced AVX2 getter rejection tests 4 passed / exit 0.
+git diff --check: exit 0, no output.
+
+Final state
+-----------
+Tracked worktree status: clean; branch task/20261018-VER-CDX-verify-flu-00048-safe-x86-dispatch-gette, claimed HEAD 9e868a729841a2252945a54b2212685e87e663ab, behind origin/main by 11 at final check (origin/main b589de58a75d1221070ecd67a92a3dd82f397659). The fix remains an ancestor of current origin/main (ancestry command exit 0). No ledger file was changed and no verdict was recorded. Final target SHA-256 remains d919c1ec5285b7cc264ee2370d353aabd019ba8d0d06a11e37dbe4d5e50ea49f.
+
+Additional public-getter-path confirmation
+-----------------------------------------
+The retained test `safety_bounds_public_transform_getters` calls `dispatch.idct8x8_add()` and then runs the invalid-layout assertion through the returned safe function pointer. It passed before and after the following mutation; the Rosetta x86_64 dispatch selected the SSE2 wrapper for this slot.
+Baseline and restored command:
+CARGO_PROFILE_DEV_DEBUG_ASSERTIONS=false CARGO_PROFILE_DEV_OVERFLOW_CHECKS=false CARGO_PROFILE_DEV_OPT_LEVEL=0 RUSTFLAGS='-C target-cpu=x86-64' deltic timeout 300 cargo test --offline --target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]' -p rvp9-core --lib safety_bounds_public_transform_getters -- --exact dsp::x86_64::safety_tests::safety_bounds_public_transform_getters --test-threads=1 </dev/null
+Before mutation and after exact restoration: 1 passed, 0 failed, 0 ignored, 2129 filtered out; exit 0.
+Mutation command:
+CARGO_PROFILE_DEV_DEBUG_ASSERTIONS=false CARGO_PROFILE_DEV_OVERFLOW_CHECKS=false CARGO_PROFILE_DEV_OPT_LEVEL=0 RUSTFLAGS='-C target-cpu=x86-64' deltic timeout 300 cargo test --offline --target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]' -p rvp9-core --lib safety_bounds_public_transform_getters -- --exact dsp::x86_64::safety_tests::safety_bounds_public_transform_getters --nocapture --test-threads=1 </dev/null
+Mutation output:
+running 1 test
+test dsp::x86_64::safety_tests::safety_bounds_public_transform_getters ...
+thread 'dsp::x86_64::safety_tests::safety_bounds_public_transform_getters' panicked at crates/rvp9-core/src/dsp/x86_64/safety_tests.rs:10:5:
+safe transform must reject a stride shorter than its block width
+FAILED
+
+failures:
+    dsp::x86_64::safety_tests::safety_bounds_public_transform_getters
+
+result: 0 passed; 1 failed; exit 101.
+This failure came from the retained `check_transform` assertion after the dispatch getter returned the SSE2 safe wrapper and the test-only sentinel returned on stride 0. It was not a sentinel assertion, and no unsafe operation executed. The restored source hash again equals the original saved-copy hash: d919c1ec5285b7cc264ee2370d353aabd019ba8d0d06a11e37dbe4d5e50ea49f.
+
+Final public-getter rerun after restoration: 1 passed, 0 failed, 0 ignored, 2129 filtered out; exit 0.
+Final source hash after all restoration checks remains d919c1ec5285b7cc264ee2370d353aabd019ba8d0d06a11e37dbe4d5e50ea49f.
