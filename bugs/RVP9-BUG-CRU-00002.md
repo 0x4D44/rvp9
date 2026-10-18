@@ -1,25 +1,25 @@
 # RVP9-BUG-CRU-00002 — fdct8x8 SSE2 extreme-residual tests are vacuous: every extreme case takes the scalar fallback
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/transforms forward_sse2
 - **Raised:** 2026-08-23T17:09:45Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T154416Z-545db069
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-CRU-00002-run-verify-20261018T154416Z-545db069
-- **Owner base:** 9c4af1649db14d9a045f441222991f533fcf28f0
-- **Owner fingerprint:** sha256:1b1b0a39d905fecd7ba0533e553228b57daeb62094d779546a987234a5e44f18
-- **Owner since:** 2026-10-18T15:44:16Z
-- **Owner until:** 2026-10-18T19:44:16Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-23T17:09:45Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-15T23:35:11Z, deltic:auto role=fix run=fix-20261015T232621Z-604f2624 branch=task/bug-RVP9-BUG-CRU-00002-run-fix-20261015T232621Z-604f2624 code=485d2e829f25e5d6221c3cc0a0e54b8a9b567005 gate=manual)
+- **State history:** Open (2026-08-23T17:09:45Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-15T23:35:11Z, deltic:auto role=fix run=fix-20261015T232621Z-604f2624 branch=task/bug-RVP9-BUG-CRU-00002-run-fix-20261015T232621Z-604f2624 code=485d2e829f25e5d6221c3cc0a0e54b8a9b567005 gate=manual) -> Closed (2026-10-18T15:51:07Z, deltic:manual role=verify run=verify-20261018T154416Z-545db069 verified_fix_run=fix-20261015T232621Z-604f2624 verdict=close)
 
 ## Observation
 
@@ -69,5 +69,9 @@ just-outside case that asserts the fallback *is* taken.
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T15:51:07Z, deltic:auto run=verify-20261018T154416Z-545db069 verified_fix_run=fix-20261015T232621Z-604f2624 verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer. Fix485d2e82 present. x86_64/Rosetta RUSTFLAGS='' fdct8x8_sse2 selects4, passes before/after; lead executable rerun4 pass, no SSE2 skips. Original extrema explicitly assert fallback; +/-181 run inner SSE2 with parity; +/-182 fallback; exact signed limits pinned. Coverage reversal changes near-guard inputs to original +/-255 retaining execution assertion: selected1 fails used-SSE2 assertion. Exact bytes/hash restored, source diff empty. Test-only/input reversal, no production reversal or AVX2 claim. Gate limits in2026.10.18 verification jour...
 
 ## Notes
