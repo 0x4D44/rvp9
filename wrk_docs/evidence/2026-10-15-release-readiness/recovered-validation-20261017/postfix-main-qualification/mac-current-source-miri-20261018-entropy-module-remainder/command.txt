@@ -1,0 +1,1 @@
+nice -n 15 deltic timeout 1800 env CARGO_TARGET_DIR=<task-worktree>/.scratch/target CARGO_BUILD_JOBS=1 cargo +nightly miri test --locked --offline --package rvp9-core --lib 'entropy::' -- --skip map_table_inverse_of_inv_map_table --test-threads=1 </dev/null
