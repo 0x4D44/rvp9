@@ -6,15 +6,15 @@
 - **Area:** docs/public-api
 - **Raised:** 2026-10-17T21:51:55Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T214434Z-cc7cff10
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00055-run-verify-20261018T214434Z-cc7cff10
+- **Owner base:** 50e28584a53af2837c2a127b874edada052ba2a0
+- **Owner fingerprint:** sha256:0b616ba29fd898db501cb11d40b1b26ead1fca19e060248db3c38cadab4c55e7
+- **Owner since:** 2026-10-18T21:44:34Z
+- **Owner until:** 2026-10-19T01:44:34Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
