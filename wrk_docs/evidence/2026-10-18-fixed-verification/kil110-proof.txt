@@ -1,0 +1,206 @@
+RVP9-BUG-KIL-00110 verification transcript
+Date: 2026-10-18
+Worktree: /Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr
+Worktree HEAD at task start: cb5f8c3daa9737e8a4e4835ce2b843f8d712b268
+Claim command: deltic bugs claim RVP9-BUG-KIL-00110 --role verify
+Claim result: succeeded; run token verify-20261018T175426Z-7f0a0821; lease until 2026-10-18T21:54:26Z
+Claim output branch: task/bug-RVP9-BUG-KIL-00110-run-verify-20261018T175426Z-7f0a0821
+Fix commit: a74227e178e46016a2d5c628243b9dc183962664; parent f9e0f049aeaa7a3914e17ab570a36c671fda84e9
+Pre-claim ancestry: `git merge-base --is-ancestor a74227e178e46016a2d5c628243b9dc183962664 origin/main` exit 0; at worktree creation HEAD and origin/main were cb5f8c3daa9737e8a4e4835ce2b843f8d712b268.
+
+Overlap inspected
+-----------------
+FLU-00040 (closed) repairs two missing tile-profiler timestamp bindings in decoder `lib.rs`; its commit 2d327e4e5ec5ddecffd8d8bcffcb37730893f35d is an ancestor of KIL-00110's fix and was a compilation prerequisite in the same feature area. KILN-00056 (archived/closed) covers malformed packet parse failures; KIL-00110's validation of instrumentation, arguments, and timed profile evidence is distinct. Its behavior and retained checks coexist in the claimed tree. The KIL-00110 ledger Fix section still says `<unfixed — raised only>`; it was not changed. No documentation or ledger verdict will be edited.
+
+Environment
+-----------
+Host architecture: arm64. `arch -x86_64 /usr/bin/uname -m` should print x86_64 and `sysctl.proc_translated` should print 1 for Rosetta. Unsupported-instrumentation check will run natively with default features on aarch64; positive profiling checks will run as x86_64 under Rosetta with `profile-tiles` enabled. Cargo test subprocesses use stdin closed and a 300-second Deltic timeout. The positive regression generates its own one-frame IVF fixture. Results are scoped to this host/Rosetta path and the focused integration target, not a workspace-wide or native Intel measurement.
+
+Pre-mutation source hashes (also recorded below after command)
+--------------------------------------------------------------
+crates/rvp9-bench/src/bin/decode-profile-tiles.rs
+crates/rvp9-bench/tests/decode_profile_tiles.rs
+
+Baseline A: unsupported instrumentation, native ARM64/default features
+-----------------------------------------------------------------------
+Command:
+deltic timeout 300 cargo test --offline -p rvp9-bench --test decode_profile_tiles unsupported_instrumentation_is_fatal -- --exact unsupported_instrumentation_is_fatal --test-threads=1 </dev/null
+Raw output follows.
+   Compiling crossbeam-utils v0.8.21
+   Compiling proc-macro2 v1.0.106
+   Compiling version_check v0.9.5
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-core)
+   Compiling serde_core v1.0.228
+   Compiling typenum v1.20.1
+   Compiling libc v0.2.186
+   Compiling zmij v1.0.21
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-decoder)
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling memchr v2.8.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-harness)
+   Compiling itoa v1.0.18
+   Compiling static_assertions v1.1.0
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling cpufeatures v0.2.17
+   Compiling syn v2.0.117
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 49.73s
+     Running tests/decode_profile_tiles.rs (target/debug/deps/decode_profile_tiles-bd56051ed7bc5861)
+
+running 1 test
+test unsupported_instrumentation_is_fatal ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.85s
+
+
+Baseline B: retained decode-profile-tiles regressions, x86_64 Rosetta, direct decoder feature
+-------------------------------------------------------------------------------------------
+Command:
+RUSTFLAGS='-C target-cpu=x86-64' deltic timeout 300 cargo test --offline --target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]' -p rvp9-bench --features rvp9-decoder/profile-tiles --test decode_profile_tiles -- --test-threads=1 </dev/null
+This focused integration target contains zero-runs, zero-min-timed, unsupported instrumentation, no-row/empty fixture, and positive tiled-profile assertions. Raw output follows.
+   Compiling crossbeam-utils v0.8.21
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.106
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-core)
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-decoder)
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling static_assertions v1.1.0
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-harness)
+   Compiling cpufeatures v0.2.17
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 48.99s
+     Running tests/decode_profile_tiles.rs (target/x86_64-apple-darwin/debug/deps/decode_profile_tiles-65e1432c50f18ac5)
+
+running 9 tests
+test csv_open_failure_is_fatal ... ok
+test empty_fixture_cannot_claim_success ... ok
+test invalid_numeric_arguments_do_not_fall_back_to_defaults ... ok
+test serial_decode_without_profile_rows_is_fatal ... ok
+test tiled_decode_emits_positive_timed_rows_excluding_warmup ... ok
+test unsupported_instrumentation_is_fatal ... ok
+test warmup_boundary_replays_before_rejecting_missing_timed_rows ... ok
+test zero_min_timed_is_an_argument_error ... ok
+test zero_runs_is_an_argument_error ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.92s
+
+
+Mutation: reverse the production `--runs` positive-input gate only, changing `numeric("--runs", DEFAULT_RUNS, 1)` to minimum 0. Mutant driver SHA-256: c2fe147c68a7511f10ca0c479c353765f934a11d4ad8f4ff96e5759f2ae3b9ce.
+Mutation command:
+RUSTFLAGS='-C target-cpu=x86-64' deltic timeout 300 cargo test --offline --target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]' -p rvp9-bench --features rvp9-decoder/profile-tiles --test decode_profile_tiles zero_runs_is_an_argument_error -- --exact zero_runs_is_an_argument_error --nocapture --test-threads=1 </dev/null
+Raw mutation output follows.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 6.13s
+     Running tests/decode_profile_tiles.rs (target/x86_64-apple-darwin/debug/deps/decode_profile_tiles-65e1432c50f18ac5)
+
+running 1 test
+test zero_runs_is_an_argument_error ... 
+thread 'zero_runs_is_an_argument_error' (289375395) panicked at crates/rvp9-bench/tests/decode_profile_tiles.rs:25:5:
+assertion `left == right` failed: Output { status: ExitStatus(unix_wait_status(0)), stdout: "decode-profile-tiles (T-5 instrumentation)\n  fixture:    /Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/tests/conformance/vectors/vp90-2-08-tile_1x4.webm\n  threads:    4\n  runs:       0\n  warmup:     30 frames/run\n  min timed:  1000 frames/run\n  out (CSV):  /Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-bench/../../.scratch/profile-tiles-35608-zero-runs/out.csv\n  cpu MHz:    1000.0\nwrote 0 timed CSV rows (warmup rows excluded) across 0 runs in 0.0 s; mean NaN ms/frame\nCSV: /Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-bench/../../.scratch/profile-tiles-35608-zero-runs/out.csv\nNote: convert cycles → microseconds with cycles / 1000.0 = us\n", stderr: "" }
+  left: Some(0)
+ right: Some(2)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    zero_runs_is_an_argument_error
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.68s
+
+error: test failed, to rerun pass `-p rvp9-bench --test decode_profile_tiles`
+
+Restoration and final reruns
+----------------------------
+Restored exact saved bytes with:
+cp .scratch/kil110-decode-profile-tiles.rs.before crates/rvp9-bench/src/bin/decode-profile-tiles.rs
+Restored driver SHA-256: 44f6a8c485ca35b1d082b993d8aa7db263ab60044b2ac43952c576246fcd3ef3 (identical to pre-mutation saved copy). `git diff --check` exited 0 and the target driver has no diff.
+Restored x86_64 Rosetta feature-suite command:
+RUSTFLAGS='-C target-cpu=x86-64' deltic timeout 300 cargo test --offline --target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]' -p rvp9-bench --features rvp9-decoder/profile-tiles --test decode_profile_tiles -- --test-threads=1 </dev/null
+Raw output follows.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 5.90s
+     Running tests/decode_profile_tiles.rs (target/x86_64-apple-darwin/debug/deps/decode_profile_tiles-65e1432c50f18ac5)
+
+running 9 tests
+test csv_open_failure_is_fatal ... ok
+test empty_fixture_cannot_claim_success ... ok
+test invalid_numeric_arguments_do_not_fall_back_to_defaults ... ok
+test serial_decode_without_profile_rows_is_fatal ... ok
+test tiled_decode_emits_positive_timed_rows_excluding_warmup ... ok
+test unsupported_instrumentation_is_fatal ... ok
+test warmup_boundary_replays_before_rejecting_missing_timed_rows ... ok
+test zero_min_timed_is_an_argument_error ... ok
+test zero_runs_is_an_argument_error ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.44s
+
+Final unsupported-instrumentation rerun (native ARM64/default features):
+deltic timeout 300 cargo test --offline -p rvp9-bench --test decode_profile_tiles unsupported_instrumentation_is_fatal -- --exact unsupported_instrumentation_is_fatal --test-threads=1 </dev/null
+Raw output follows.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00110-decode-tile-pr/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 16.00s
+     Running tests/decode_profile_tiles.rs (target/debug/deps/decode_profile_tiles-bd56051ed7bc5861)
+
+running 1 test
+test unsupported_instrumentation_is_fatal ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.29s
+
+
+Exit codes, ancestry, and final scope
+-----------------------------------
+Baseline native ARM64 unsupported-instrumentation test: exit 0, 1 passed / 8 filtered.
+Baseline x86_64 Rosetta focused integration suite: exit 0, 9 passed / 0 failed. This included zero runs, zero min-timed rows, unsupported-mode conditional, serial/no-row rejection, warmup-boundary replay, CSV-open failure, and positive tiled evidence with a generated fixture.
+Mutated zero-runs test: exit 101, 0 passed / 1 failed. The retained `assert_eq!(status.code(), Some(2))` observed child exit code 0; child stdout explicitly reported `runs: 0`, `wrote 0 timed CSV rows`, and `mean NaN ms/frame`.
+Restored x86_64 Rosetta suite: exit 0, 9 passed / 0 failed.
+Restored native ARM64 unsupported-instrumentation test: exit 0, 1 passed / 8 filtered.
+Final ancestry check: `git merge-base --is-ancestor a74227e178e46016a2d5c628243b9dc183962664 origin/main` exited 0. Current origin/main at final check: 810bace5d28ef80f43d07b1d9c36d5f9ebcfb559; claimed worktree HEAD cb5f8c3daa9737e8a4e4835ce2b843f8d712b268, behind by 5 commits. The FLU-00040 prerequisite commit 2d327e4e5ec5ddecffd8d8bcffcb37730893f35 is an ancestor of the KIL-00110 fix.
+Final tracked worktree diff/status and `git diff --check` are clean. Final driver SHA-256 and saved-copy SHA-256 both 44f6a8c485ca35b1d082b993d8aa7db263ab60044b2ac43952c576246fcd3ef3. Retained integration test SHA-256: 1979a04dbeef6dc35a2a061f4f911bdcbb8c3a07c9b5c137c7b715702bf46d7a. Only the focused decode-profile-tiles integration target was run; no workspace-wide sweep or native Intel performance claim is made. Only the documented direct decoder feature spelling was exercised for the x86_64 profiling runs.
