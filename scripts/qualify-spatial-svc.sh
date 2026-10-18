@@ -333,6 +333,14 @@ print_plan() {
 
 selftest_failures=0
 
+# Keep the summary row format in one place so the no-I/O self-test exercises
+# the same CSV serialization used by the quality phase.
+format_quality_summary_row() {
+    # The bitrate grid is a comma-separated list of numeric rates; quote it
+    # so CSV readers treat the complete grid as the single bitrates_kbps field.
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,"%s",SL%s,%s,%s,%s\n' "$@"
+}
+
 expect_equal() {
     local what="$1" actual="$2" expected="$3"
     if [ "$actual" = "$expected" ]; then
@@ -352,7 +360,7 @@ plan_count() {
 }
 
 self_test() {
-    local plan mode target clip cpu layers grid expected count
+    local plan mode target clip cpu layers grid expected count summary_row
 
     printf 'qualify-spatial-svc self-test\n'
     if ! plan="$(print_plan)"; then
@@ -364,6 +372,11 @@ self_test() {
         "$(plan_field "$plan" quality_curves)" "$EXPECTED_QUALITY_CURVES"
     expect_equal "quality_layer_gates" \
         "$(plan_field "$plan" quality_layer_gates)" "$EXPECTED_QUALITY_LAYER_GATES"
+    summary_row="$(format_quality_summary_row curve cbr 720p30 in_to_tree 6 2 1 0 \
+        420,630,840,1260,2100,3360 0 0.25 0.5 PASS)"
+    expect_equal "quality summary keeps the bitrate list in one CSV field" \
+        "$summary_row" \
+        'curve,cbr,720p30,in_to_tree,6,2,1,0,"420,630,840,1260,2100,3360",SL0,0.25,0.5,PASS'
     expect_equal "cross_decoder_streams" \
         "$(plan_field "$plan" cross_decoder_streams)" "$EXPECTED_CROSS_DECODER_STREAMS"
     expect_equal "cross_decoder_runs" \
@@ -1010,7 +1023,7 @@ run_quality_curve() {
         if ! number_le "$value" "$gate"; then
             status="FAIL"
         fi
-        printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,SL%s,%s,%s,%s\n' \
+        format_quality_summary_row \
             "$curve_id" "$mode" "$target" "$clip" "$cpu" "$layers" "$threads" \
             "$tiles" "$grid" "$layer" "$value" "$gate" "$status" \
             >> "$quality_dir/quality-summary.csv"

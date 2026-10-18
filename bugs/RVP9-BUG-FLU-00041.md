@@ -27,6 +27,8 @@ At release readiness spatial quality campaign sourced from 1a84f60a, Python csv.
 
 ## Fix
 
-<unfixed — raised only>
+The spatial quality summary now writes the comma-separated bitrate grid as a quoted CSV field. The tested `format_quality_summary_row` helper is shared by `run_quality_curve`, and the script's no-I/O self-test checks a representative row with the six-rate grid intact as one field.
+
+Validation: before the formatter fix, the new self-test failed only the bitrate-field assertion and showed the grid split into extra comma-delimited fields. After the fix, `scripts/qualify-spatial-svc.sh --self-test`, `bash -n scripts/qualify-spatial-svc.sh`, and a Python `csv.reader` check for 13 columns with the full bitrate list in column 9 passed. `git diff --check` passed.
 
 ## Notes
