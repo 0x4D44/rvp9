@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00017 — build-libvpx reports failure after successful macOS build
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** scripts/libvpx build
 - **Raised:** 2026-08-10T21:31:54Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T153549Z-dc27b7ce
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00017-run-verify-20261018T153549Z-dc27b7ce
-- **Owner base:** 9624a18d5b958dc0c075d6090c4ed76a30e107ce
-- **Owner fingerprint:** sha256:9ee2b3701056a3f13a2d38a4f6bcdf3a5bd11d31c22c0074cbc622d514a77924
-- **Owner since:** 2026-10-18T15:35:49Z
-- **Owner until:** 2026-10-18T19:35:49Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-10T21:31:54Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T06:29:17Z, deltic:auto role=fix run=fix-20261016T061723Z-26c153c2 branch=task/bug-RVP9-BUG-FLUX-00017-run-fix-20261016T061723Z-26c153c2 code=eac3c6466881ef9a5f61903a2a6244cd8f55c6c4 gate=manual)
+- **State history:** Open (2026-08-10T21:31:54Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T06:29:17Z, deltic:auto role=fix run=fix-20261016T061723Z-26c153c2 branch=task/bug-RVP9-BUG-FLUX-00017-run-fix-20261016T061723Z-26c153c2 code=eac3c6466881ef9a5f61903a2a6244cd8f55c6c4 gate=manual) -> Closed (2026-10-18T15:37:24Z, deltic:manual role=verify run=verify-20261018T153549Z-dc27b7ce verified_fix_run=fix-20261016T061723Z-26c153c2 verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ On macOS arm64, bash scripts/build-libvpx.sh successfully builds build/libvpx/vp
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T15:37:24Z, deltic:auto run=verify-20261018T153549Z-dc27b7ce verified_fix_run=fix-20261016T061723Z-26c153c2 verdict=close)
+
+Verifier note: Manual verify: Independent verification by Codex session 01a14fa5-deaa-7262-8da3-c14e43807e55 (did not author the fix), 2026-10-18, task base 09697b55 containing eac3c646. On native macOS arm64 initialized pinned v1.14.1 and ran deltic timeout 600 bash scripts/build-libvpx.sh with stdin closed: exit 0, vpxenc/vpxdec and spatial SVC artifacts built and listed. python3 scripts/test_build_libvpx.py -v selected 3 tests and passed, including configure/make failure propagation. Reversed only final artifact-loop if guard to original [ -f ... ] && ls: selected test_successful_build_reports_unix_artifa...
 
 ## Notes
