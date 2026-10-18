@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00039 — AArch64 width-four I8MM convolution reads beyond accepted tight source slice
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/dsp/convolve8-neon
 - **Raised:** 2026-10-15T22:39:05Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T172045Z-d1ab420f
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00039-run-verify-20261018T172045Z-d1ab420f
-- **Owner base:** 595bc8401af588246db7988962825e2c09143c01
-- **Owner fingerprint:** sha256:1f896e818c41210f3843851013b87bd0d32d6ead033f61b22b4c4311a7a26fcd
-- **Owner since:** 2026-10-18T17:20:45Z
-- **Owner until:** 2026-10-18T21:20:45Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-15T22:39:05Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T17:10:13Z, deltic:auto role=fix run=fix-20261018T165403Z-87053edb branch=task/bug-RVP9-BUG-FLU-00039-run-fix-20261018T165403Z-87053edb code=8bd3c6e865e56f49fb4f1a8d0fdc13868bf18cbb gate=manual)
+- **State history:** Open (2026-10-15T22:39:05Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T17:10:13Z, deltic:auto role=fix run=fix-20261018T165403Z-87053edb branch=task/bug-RVP9-BUG-FLU-00039-run-fix-20261018T165403Z-87053edb code=8bd3c6e865e56f49fb4f1a8d0fdc13868bf18cbb gate=manual) -> Closed (2026-10-18T17:27:45Z, deltic:manual role=verify run=verify-20261018T172045Z-d1ab420f verified_fix_run=fix-20261018T165403Z-87053edb verdict=close)
 
 ## Observation
 
@@ -28,6 +28,10 @@ On Apple M5 Max/aarch64-apple-darwin at candidate code 1a84f60a24e8d82e8e6454743
 ## Fix
 
 Horizontal I8MM and dotprod dispatch now checks the complete wide-load footprint with checked size arithmetic before entering the optimized kernels. The width-four I8MM path requires 12 readable bytes per row; the wider kernels require `simd_w + 8`. If an accepted tight slice lacks that padding, the wrapper uses the existing generic NEON or scalar path and keeps the `w + 7` input contract. Added a helper regression for the width-four and width-eight boundary extents. The existing native AArch64 tight-slice comparison test passed normally and under AddressSanitizer. Scoped core Clippy, rustfmt, and `git diff --check` passed.
+
+### Verification summary (2026-10-18T17:27:45Z, deltic:auto run=verify-20261018T172045Z-d1ab420f verified_fix_run=fix-20261018T165403Z-87053edb verdict=close)
+
+Verifier note: Manual verify: AArch64 width-four horizontal I8MM boundary proof verified: the retained tight-load-footprint and scalar-parity tests pass. Reducing the required row footprint by one byte makes the retained 11x11 boundary assertion fail. Exact source hash restored and both tests pass again. Coverage is focused native AArch64 unit testing; no sanitizer or workspace sweep.
 
 ## Notes
 
