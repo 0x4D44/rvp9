@@ -1,0 +1,10 @@
+rustc=rustc 1.98.0-nightly (bd08c9e71 2026-06-25)
+cargo=cargo 1.98.0-nightly (a595d0da2 2026-06-20)
+miri=miri 0.1.0 (bd08c9e718 2026-06-25)
+host_triple=aarch64-apple-darwin
+machine=Mac17,6 (Apple M5 Max)
+kernel=Darwin flux.home.arpa 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:19:08 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6050 arm64
+recorded_at_utc=2026-10-18T01:24:58Z
+build_jobs=1
+dependencies=locked, offline
+MIRIFLAGS=-Zmiri-disable-isolation

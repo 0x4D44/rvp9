@@ -1,0 +1,25 @@
+{
+  "filtered_tests": [
+    "frame::tests::alloc_aligned_widths_round_to_8",
+    "frame::tests::extend_borders_awkward_stride",
+    "entropy::prob_diff_writer::tests::map_table_inverse_of_inv_map_table"
+  ],
+  "separate_exact_source_passes": {
+    "aligned": {
+      "test": "frame::tests::alloc_aligned_widths_round_to_8",
+      "passed": 1,
+      "evidence": "mac-current-source-miri-20261018-aligned-frame-allocation/qualification.json"
+    },
+    "awkward": {
+      "test": "frame::tests::extend_borders_awkward_stride",
+      "passed": 1,
+      "evidence": "mac-current-source-miri-20261018-awkward-frame-stride/qualification.json"
+    },
+    "entropy": {
+      "test": "entropy::prob_diff_writer::tests::map_table_inverse_of_inv_map_table",
+      "passed": 1,
+      "filter_passes": 5,
+      "evidence": "mac-current-source-miri-20261017/entropy-prob-diff-focused/qualification.json"
+    }
+  }
+}

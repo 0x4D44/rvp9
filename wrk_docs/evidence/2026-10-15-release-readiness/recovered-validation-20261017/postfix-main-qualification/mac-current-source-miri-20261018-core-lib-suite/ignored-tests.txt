@@ -1,0 +1,5 @@
+bitstream::compressed_header::tests::write_compressed_header_captured_frame_round_trip
+bitstream::header::tests::captured_header_round_trip
+dsp::dispatch::tests::highbd_idct4x4_add_slot_is_scalar_reference
+dsp::dispatch::tests::inter_predictor_unscaled_routes_through_dispatch_convolve_copy
+loopfilter::apply::tests::lf_worker_bails_promptly_when_aborted
