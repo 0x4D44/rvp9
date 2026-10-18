@@ -1,0 +1,70 @@
+{
+  "schema": "rvp9.mac-current-source-miri-awkward-frame-stride.v1",
+  "recorded_at_utc": "2026-10-18T00:08:15Z",
+  "candidate": {
+    "product_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "task_head": "a4077ac54b7ae1bc51794a15636439496973901b",
+    "task_branch": "task/20261018-VER-HUM-verify-awkward-frame-borders-under-miri",
+    "task_worktree": "/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-awkward-frame-borders-under-miri",
+    "rvp9_core_tree_matches_product_source": true,
+    "rvp9_core_tree_git_object": "631fa2f7ab3f8e482cb2ef77d4f323b59c2f48b2",
+    "frame_rs_git_blob": "e84ef804caaf47bfabc988f259859bc622fd59bf",
+    "cargo_lock_git_blob": "eef9129866d45300de9a7dc8784fca68bae4f226",
+    "tracked_worktree_clean_before_run": true
+  },
+  "host": {
+    "os": "Darwin 25.6.0",
+    "machine": "Mac17,6 (Apple M5 Max)",
+    "host_triple": "aarch64-apple-darwin"
+  },
+  "toolchain": {
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "rustc_commit": "bd08c9e71874a81670fe3938dbf85148e42c2b96",
+    "cargo": "1.98.0-nightly (a595d0da2 2026-06-20)",
+    "miri": "0.1.0 (bd08c9e718 2026-06-25)"
+  },
+  "scratch": {
+    "registered_scratch_id": "miri-frame-awk-75cca395",
+    "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/miri-frame-awk-75cca395"
+  },
+  "command": "nice -n 15 deltic timeout 1800 env CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/miri-frame-awk-75cca395/target CARGO_BUILD_JOBS=1 cargo +nightly miri test --locked --offline --package rvp9-core --lib frame::tests::extend_borders_awkward_stride -- --exact --test-threads=1 </dev/null",
+  "filter": {
+    "name": "frame::tests::extend_borders_awkward_stride",
+    "selected": 1,
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 1652,
+    "elapsed_seconds": 537.79,
+    "timeout_seconds": 1800,
+    "exit_status": 0,
+    "raw_original": {
+      "bytes": 14521,
+      "sha256": "06acb0c14b5ec3c717bf4856f84c10c9512f987540cf6040ab295920a99c38c2"
+    },
+    "raw_archive": {
+      "path": "awkward-stride.raw.txt.gz",
+      "compression": "gzip",
+      "bytes": 2617,
+      "sha256": "af8c6c356285114c8ad967ce358ebd7d9a4a3eb6d4e7ef5b9d51f44fe949bbb7"
+    },
+    "exit_record": {
+      "path": "exit-status.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  },
+  "totals": {
+    "new_unique_tests_passed": 1,
+    "new_tests_failed": 0,
+    "new_tests_ignored": 0,
+    "previous_completed_selected_passes": 751,
+    "combined_completed_selected_passes": 752,
+    "existing_ignores": 4
+  },
+  "limits": [
+    "This is one focused frame-border test only; it does not complete the broad frame or core Miri sweep.",
+    "Miri uses scalar fallbacks and does not test native NEON.",
+    "This is not dependent-library Miri, sanitizer, fuzz, or release safety qualification."
+  ]
+}

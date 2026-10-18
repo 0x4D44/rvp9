@@ -1,0 +1,1 @@
+nice -n 15 deltic timeout 1800 env CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/miri-frame-awk-75cca395/target CARGO_BUILD_JOBS=1 cargo +nightly miri test --locked --offline --package rvp9-core --lib frame::tests::extend_borders_awkward_stride -- --exact --test-threads=1 </dev/null
