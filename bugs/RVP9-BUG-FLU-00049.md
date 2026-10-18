@@ -6,15 +6,15 @@
 - **Area:** core/transforms x86 SSE2
 - **Raised:** 2026-10-17T20:46:57Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T173758Z-f423a902
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00049-run-verify-20261018T173758Z-f423a902
+- **Owner base:** 0df37437408ef8ef3fd6f02baa61dc0255e290c8
+- **Owner fingerprint:** sha256:28a9f39b25b9fa62f1723884f2fccc928161fe32cbadf7251de8be109fcc26fe
+- **Owner since:** 2026-10-18T17:37:58Z
+- **Owner until:** 2026-10-18T21:37:58Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
