@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00056 — AArch64 IDCT16 destination span check can wrap before unsafe stores
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/transforms/inverse-neon
 - **Raised:** 2026-10-18T16:12:39Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T163646Z-66a5c8ca
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00056-run-fix-20261018T163646Z-66a5c8ca
-- **Owner base:** 73ab3b91b4acc0cadc1ccdc0aaade629d0badfd9
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T16:36:46Z
-- **Owner until:** 2026-10-18T20:36:46Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-18T16:12:39Z, raised via `deltic bugs new --land`)
+- **State history:** Open (2026-10-18T16:12:39Z, raised via `deltic bugs new --land`) -> Fixed (2026-10-18T16:44:38Z, deltic:auto role=fix run=fix-20261018T163646Z-66a5c8ca branch=task/bug-RVP9-BUG-FLU-00056-run-fix-20261018T163646Z-66a5c8ca code=352e2be84ef18b5e5530349ffcec932a9e71430c gate=manual)
 
 ## Observation
 
