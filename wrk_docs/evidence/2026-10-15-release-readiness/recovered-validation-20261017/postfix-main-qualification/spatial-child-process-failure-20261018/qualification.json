@@ -1,0 +1,219 @@
+{
+  "schema": 1,
+  "captured_at_utc": "2026-10-18T02:32:21Z",
+  "host": {
+    "name": "flux.home.arpa",
+    "os": "macOS-26.6.2-arm64-arm-64bit",
+    "architecture": "arm64"
+  },
+  "candidate": {
+    "runner_revision": "baa4dd19bc3111f7da8f859b8019744478cf59de",
+    "product_source_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "script_path": "scripts/qualify-spatial-svc.sh",
+    "runner_script_git_blob": "9a09cb6604dd507cb273cae61d31744732d51ec9",
+    "product_script_git_blob": "9a09cb6604dd507cb273cae61d31744732d51ec9",
+    "script_sha256": "6453cd72adedbe82c1c719a728873f419543170819111a1139dba5303d47c3de",
+    "script_matches_product_source": true
+  },
+  "probe": {
+    "purpose": "Verify the exact-source spatial run_quality_curve rejects a nonzero bdrate-svc exit even when the child has written passing-looking layer rows.",
+    "functions_extracted_verbatim": {
+      "target_spec": {
+        "lines": [
+          103,
+          110
+        ],
+        "sha256": "681666cffe92b47586ce9b1cd0448f7ee71cc8238b2ae29c5eeacaa09450e766"
+      },
+      "target_bitrates": {
+        "lines": [
+          122,
+          132
+        ],
+        "sha256": "905c75889ddf9705f15d40a8305eb8fd79a1515a3e76174fa5948ebe19730c60"
+      },
+      "quality_bdrate_limit": {
+        "lines": [
+          156,
+          163
+        ],
+        "sha256": "28a8f0c5dbdae57328da577a48ccf87c4ab16fdda328bff9fe6ffdb4bcb4a52c"
+      },
+      "fail": {
+        "lines": [
+          201,
+          204
+        ],
+        "sha256": "2c08ea37b2aa8af4f040b8a77498044a0749744819e26714778eb86773a4ab65"
+      },
+      "require_number": {
+        "lines": [
+          206,
+          213
+        ],
+        "sha256": "a5a350047a4e4684e1f8412416a5037ae6c6ce6d16dbf386ee558b51a2148374"
+      },
+      "number_le": {
+        "lines": [
+          216,
+          218
+        ],
+        "sha256": "0048a9773e8ae6cbcafdbf4d25df48c42342fe76ddf450c0afb2085b107aecda"
+      },
+      "acceptance_input": {
+        "lines": [
+          818,
+          820
+        ],
+        "sha256": "8ad22e1e519a04888d41cb5b8be823e5bbc64201a14366361a9763c3b471e1c9"
+      },
+      "run_quality_curve": {
+        "lines": [
+          959,
+          1030
+        ],
+        "sha256": "937a3805dcce0f05e04ae8b6bf687029c1d5bdc291e943210c8f9422df090fef"
+      }
+    },
+    "source_extract_sha256": "6cfef335564836be1d5c6ffe88643d3a4f8f1f4fa33595c87a550a7f89f41547",
+    "command": "bash harness.sh stub-bdrate-svc.sh; stdin closed; invoked from the registered task worktree; the exact function calls deltic timeout 7200 around the stub child.",
+    "curve": {
+      "mode": "cbr",
+      "target": "720p30",
+      "clip": "in_to_tree",
+      "cpu_used": 6,
+      "spatial_layers": 2,
+      "bitrates_kbps": [
+        420,
+        630,
+        840,
+        1260,
+        2100,
+        3360
+      ],
+      "gate_pct": 0.5
+    },
+    "stub_behavior": "Writes two bdrate_pct rows at +0.1%, then exits 73.",
+    "results": {
+      "child-exit-73": {
+        "child_exit_code": 73,
+        "runner_exit_code": 1,
+        "runner_diagnostic": "cbr-720p30-in_to_tree-cpu6-s2: bdrate-svc failed or a BD-rate gate did not pass (log /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/spatial-child-failure-82bf0911/child-exit-73/quality/cbr-720p30-in_to_tree-cpu6-s2/bdrate.log)",
+        "summary_rows_after_header": [],
+        "child_csv_rows": [
+          "bdrate_pct,0,0.1",
+          "bdrate_pct,1,0.1"
+        ],
+        "cross_check_called": false,
+        "harness": "harness.sh"
+      },
+      "mutated-child-exit-73": {
+        "child_exit_code": 73,
+        "runner_exit_code": 0,
+        "runner_diagnostic": "[quality   1/96] cbr-720p30-in_to_tree-cpu6-s2",
+        "summary_rows_after_header": [
+          "cbr-720p30-in_to_tree-cpu6-s2,cbr,720p30,in_to_tree,6,2,1,0,420,630,840,1260,2100,3360,SL0,0.1,0.5,PASS",
+          "cbr-720p30-in_to_tree-cpu6-s2,cbr,720p30,in_to_tree,6,2,1,0,420,630,840,1260,2100,3360,SL1,0.1,0.5,PASS"
+        ],
+        "child_csv_rows": [
+          "bdrate_pct,0,0.1",
+          "bdrate_pct,1,0.1"
+        ],
+        "cross_check_called": true,
+        "harness": "mutation-control-harness.sh"
+      }
+    },
+    "mutation_control": {
+      "mutation": "Inverted the exact child-status guard from if ! deltic timeout to if deltic timeout in mutation-control-harness.sh; product source was not changed.",
+      "observed": "The same exit-73 child rows were recorded as two PASS summary rows, cross_check_curve was reached, and the helper exited 0.",
+      "result": "PASS: the probe detects removal/inversion of the spatial child-status guard."
+    }
+  },
+  "limits": [
+    "The bdrate-svc child is a stub; it does not run encoders, decoders, or BD-rate calculations.",
+    "This executes one exact-source run_quality_curve call with a helper stub; it does not run the full 96-curve phase, publication path, or any codec, quality, or performance measurement.",
+    "The generated summary retains the known unquoted bitrate-grid field; this probe tests child-status handling, not CSV validity. FLU-00041 and FLU-00042 remain separate blockers."
+  ],
+  "artifacts": [
+    {
+      "path": "cases/child-exit-73/bdrate.csv",
+      "bytes": 53,
+      "sha256": "991bb0770cd74cb8a52edb133eff0c315bba6984f634d75b49d90e287d00b261"
+    },
+    {
+      "path": "cases/child-exit-73/bdrate.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/child-exit-73/quality-summary.csv",
+      "bytes": 118,
+      "sha256": "03e82c69030970cc239dd49a1437b1b9686ffd038d25ceed50a6fce5cc0e16d4"
+    },
+    {
+      "path": "cases/child-exit-73/runner.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "cases/child-exit-73/runner.raw.txt",
+      "bytes": 299,
+      "sha256": "e53b3cab3901cf8e24bce9befddf8c0d9163b8b722bce46b87ad7b0a5f28a621"
+    },
+    {
+      "path": "cases/mutated-child-exit-73/bdrate.csv",
+      "bytes": 53,
+      "sha256": "991bb0770cd74cb8a52edb133eff0c315bba6984f634d75b49d90e287d00b261"
+    },
+    {
+      "path": "cases/mutated-child-exit-73/bdrate.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/mutated-child-exit-73/cross-check-called.marker",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/mutated-child-exit-73/quality-summary.csv",
+      "bytes": 326,
+      "sha256": "bb3c5f3f5b9e51e9b38662efe14a9a1f27d960fe4dc5443ecda5c7ffa31d1cee"
+    },
+    {
+      "path": "cases/mutated-child-exit-73/runner.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "cases/mutated-child-exit-73/runner.raw.txt",
+      "bytes": 47,
+      "sha256": "3b23ae27378cb35718a86b7bb77a5165500c2b53f9b801229022dc89dea3b941"
+    },
+    {
+      "path": "harness.sh",
+      "bytes": 5360,
+      "sha256": "667844f313daba89a7aa007e60b630433e809ba5a02367c9fa6c7a66bc295345"
+    },
+    {
+      "path": "mutation-control-harness.sh",
+      "bytes": 5358,
+      "sha256": "5628036ae79088f05c9a23edec050ad19427eac93e213c62b5128872c020ef20"
+    },
+    {
+      "path": "spatial-source-extract.sh",
+      "bytes": 4705,
+      "sha256": "6cfef335564836be1d5c6ffe88643d3a4f8f1f4fa33595c87a550a7f89f41547"
+    },
+    {
+      "path": "stub-bdrate-svc.sh",
+      "bytes": 294,
+      "sha256": "672c7afe1b0b4c962aacf7abe4b701fd165b0b0aa943339884ab163c31a1f427"
+    }
+  ],
+  "registered_scratch": {
+    "id": "spatial-child-failure-82bf0911",
+    "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/spatial-child-failure-82bf0911",
+    "disposition": "Deltic-registered scratch; task integration removes it after the durable evidence copy is verified."
+  }
+}

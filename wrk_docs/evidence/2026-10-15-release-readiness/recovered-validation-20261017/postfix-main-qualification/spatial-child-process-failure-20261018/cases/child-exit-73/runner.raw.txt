@@ -1,0 +1,2 @@
+[quality   1/96] cbr-720p30-in_to_tree-cpu6-s2
+cbr-720p30-in_to_tree-cpu6-s2: bdrate-svc failed or a BD-rate gate did not pass (log /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/spatial-child-failure-82bf0911/child-exit-73/quality/cbr-720p30-in_to_tree-cpu6-s2/bdrate.log)
