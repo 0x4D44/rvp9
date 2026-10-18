@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00044 — Malformed WebM parent-crossing header panics in overflow-checked packet reader
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** io/webm
 - **Raised:** 2026-10-16T14:24:03Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T194654Z-740c1eec
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00044-run-fix-20261018T194654Z-740c1eec
-- **Owner base:** 52035a1670172b3c8b121f5659d8e2e24d752bf5
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T19:46:54Z
-- **Owner until:** 2026-10-18T23:46:54Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-16T14:24:03Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-10-16T14:24:03Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T19:50:22Z, deltic:auto role=fix run=fix-20261018T194654Z-740c1eec branch=task/bug-RVP9-BUG-FLU-00044-run-fix-20261018T194654Z-740c1eec code=52a15ed22037ed5fb7b89aa16b452a1d8d877898 gate=manual)
 
 ## Observation
 
