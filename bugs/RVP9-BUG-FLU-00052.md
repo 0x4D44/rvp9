@@ -27,6 +27,8 @@ The public unsafe loop_filter_sb_row and apply_one_sb functions in crates/rvp9-c
 
 ## Fix
 
-<unfixed — raised only>
+Documented that `SharedFrame` reconstructs full-plane mutable slices and requires exclusive access to each complete plane. Updated the slice-helper contracts and all three unsafe loop-filter entry points (`loop_filter_sb_row`, `apply_one_sb`, and `run_split_edge_lf_worker`) to state that row/SB progress does not permit overlapping full-plane slices. Corrected the decoder unsafe-call rationale and the cited HLD's contradictory aliasing claim; clarified that the safe tight-plane constructors also provide the raw storage.
+
+Validation: `cargo fmt --all --check`, `cargo check -p rvp9-decoder --lib --locked`, and `cargo doc -p rvp9-core --no-deps --locked` passed. Rustdoc reports 79 warnings, including pre-existing private-item links in `apply.rs`; `git diff --check` passed. This is a contract-only fix, so no runtime regression test was added.
 
 ## Notes

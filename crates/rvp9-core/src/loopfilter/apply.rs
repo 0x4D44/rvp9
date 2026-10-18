@@ -51,14 +51,12 @@ const MI_BLOCK_SIZE: usize = 8;
 //
 // `SharedFrame` carries the [`Yv12Buffer`] planes as raw pointers + per-plane
 // total lengths and strides, plus the chroma format. The wrapper is `Send +
-// Sync` even though it points at the same allocation that the caller still
-// owns mutably — this is sound under the temporal-exclusion protocol described
-// in `wrk_docs/2026.05.24 - HLD - Phase3 row-parallel loopfilter.md` §4:
-// concurrent LF workers each own a distinct SB row, the per-row progress
-// protocol guarantees adjacent rows are temporally disjoint (the H pass at
-// the top of row R+1 cannot start until row R's H pass has finished), and the
-// horizontal kernel's 8-pixel cross-row write is always covered by row R's
-// completion gate.
+// Sync` because sharing these raw pointers is safe; it does not authorize
+// concurrent mutable slice reconstruction. Its unsafe accessors create
+// full-plane slices, so callers need exclusive access to each complete plane.
+// The per-row progress protocol orders pixel hazards but does not partition
+// those slices. The decoder currently limits the LF worker count to one;
+// parallel filtering requires row-bounded mutable views.
 //
 // At commit 1 the wrapper is constructed once per call inside
 // [`loop_filter_frame_with_non420`] and immediately handed to a single-threaded
@@ -71,14 +69,17 @@ const MI_BLOCK_SIZE: usize = 8;
 ///
 /// # Safety
 ///
-/// The pointers and lengths must address valid (`buffer_alloc`-backed)
-/// memory that outlives every access. The decoder's [`Yv12Buffer`] satisfies
-/// this trivially because the buffer is owned by the caller and lives across
-/// the entire `loop_filter_frame_*` call (and across the enclosing
-/// `WorkerPool::scope` for the parallel driver in commit 3).
+/// The pointers and lengths must address valid plane memory that outlives
+/// every access. The tight-plane constructors derive them from their input
+/// slices; the decoder's [`Yv12Buffer`] likewise remains alive across the
+/// entire `loop_filter_frame_*` call and enclosing `WorkerPool::scope`.
 ///
-/// Concurrent writes are made safe by the per-SB-row progress protocol — see
-/// the parent module docstring and `wrk_docs/2026.05.24 ... §4`.
+/// Each `y_slice`, `u_slice`, or `v_slice` call reconstructs a mutable slice
+/// spanning the complete corresponding plane. Its caller must have exclusive
+/// access to that entire plane for the slice's lifetime. Per-SB-row progress
+/// orders pixel work but does not permit overlapping full-plane slices for
+/// disjoint rows — see the parent module docstring and
+/// `wrk_docs/2026.05.24 ... §4`.
 #[derive(Copy, Clone)]
 pub struct SharedFrame {
     y_ptr: *mut u8,
@@ -93,12 +94,12 @@ pub struct SharedFrame {
 }
 
 // SAFETY: see the struct-level doc comment + Phase 3 HLD §4. The pointer
-// values are stable across the LF call; concurrent access is exclusive per
-// pixel by the row-progress protocol, so sharing the raw pointers across
-// threads does not introduce a data race.
+// values are stable across the LF call. Sharing the raw pointers is safe;
+// callers of the unsafe slice methods must separately guarantee exclusive
+// access to each complete plane while its full-plane mutable slice is live.
 unsafe impl Send for SharedFrame {}
-// SAFETY: as above — exclusive per-pixel access under the row-progress protocol
-// makes `&SharedFrame` safe to share across threads.
+// SAFETY: as above. `&SharedFrame` only shares raw pointers; row-progress
+// ordering alone does not permit concurrent full-plane mutable slices.
 unsafe impl Sync for SharedFrame {}
 
 impl SharedFrame {
@@ -205,11 +206,12 @@ impl SharedFrame {
     ///
     /// # Safety
     ///
-    /// Caller guarantees no other live reference to the Y plane exists for
-    /// the lifetime of the returned slice. Under the row-progress protocol
-    /// the caller owns a unique SB row; the slice spans the full plane but
-    /// only pixels within the caller's owned row range may be written. See
-    /// `Phase3` HLD §4.
+    /// Caller guarantees exclusive access to the complete backing Y plane for
+    /// the lifetime of the returned slice, with no other live references or
+    /// accesses through other pointers to any part of that plane. The slice
+    /// spans the full plane, even when the caller intends to write only one
+    /// SB row. Row-progress ordering does not permit another full-plane slice
+    /// for a disjoint row. See `Phase3` HLD §4.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn y_slice(&self) -> &mut [u8] {
@@ -221,11 +223,12 @@ impl SharedFrame {
     ///
     /// # Safety
     ///
-    /// Caller guarantees no other live reference to the U plane exists for
-    /// the lifetime of the returned slice. Under the row-progress protocol
-    /// the caller owns a unique SB row; the slice spans the full plane but
-    /// only pixels within the caller's owned row range may be written. See
-    /// `Phase3` HLD §4.
+    /// Caller guarantees exclusive access to the complete backing U plane for
+    /// the lifetime of the returned slice, with no other live references or
+    /// accesses through other pointers to any part of that plane. The slice
+    /// spans the full plane, even when the caller intends to write only one
+    /// SB row. Row-progress ordering does not permit another full-plane slice
+    /// for a disjoint row. See `Phase3` HLD §4.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn u_slice(&self) -> &mut [u8] {
@@ -237,11 +240,12 @@ impl SharedFrame {
     ///
     /// # Safety
     ///
-    /// Caller guarantees no other live reference to the V plane exists for
-    /// the lifetime of the returned slice. Under the row-progress protocol
-    /// the caller owns a unique SB row; the slice spans the full plane but
-    /// only pixels within the caller's owned row range may be written. See
-    /// `Phase3` HLD §4.
+    /// Caller guarantees exclusive access to the complete backing V plane for
+    /// the lifetime of the returned slice, with no other live references or
+    /// accesses through other pointers to any part of that plane. The slice
+    /// spans the full plane, even when the caller intends to write only one
+    /// SB row. Row-progress ordering does not permit another full-plane slice
+    /// for a disjoint row. See `Phase3` HLD §4.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn v_slice(&self) -> &mut [u8] {
@@ -500,7 +504,9 @@ pub struct ColumnWavefrontLfState<'a> {
 /// Caller (the decoder driver) MUST guarantee that:
 /// - `state.shared`'s underlying [`Yv12Buffer`] outlives every call
 ///   (enforced by the `'frame`-bound `WorkerPool::scope`).
-/// - No other thread bypasses the wavefront to write into the planes.
+/// - This invocation has exclusive access to the complete Y, U, and V plane
+///   allocations for its duration. It reconstructs full-plane mutable slices;
+///   the wavefront does not make concurrent slices over disjoint rows alias-safe.
 ///
 /// Soundness of the wavefront — see HLD §3.2: the cross-row hazard at
 /// the top-of-SB H-edge reads/writes within row r-1's bottom 8 luma
@@ -606,14 +612,13 @@ pub unsafe fn run_split_edge_lf_worker(
         // Acquire the plane slices once per row (matches the legacy
         // worker's pattern and the serial path — minimises raw-pointer
         // → slice reconstructions and keeps slice lifetimes bounded
-        // to the row body, where the wavefront gates ensure no
-        // overlapping concurrent writes from other workers).
+        // to the row body). The one-worker assertion above prevents
+        // another worker invocation from constructing overlapping slices;
+        // the safety contract also requires exclusive access to all planes.
         //
-        // SAFETY: the wavefront sync below (Acquire on cur_sb_col[r-1])
-        // guarantees no concurrent writer overlaps this row's owned
-        // pixel rectangle (row r's 64 px row × frame width) or the
-        // cross-row hazard zone (the bottom 8 luma rows of row r-1
-        // at the current SB column).
+        // SAFETY: the caller's full-plane exclusivity guarantee satisfies
+        // each `SharedFrame::*_slice` contract. The wavefront below only
+        // orders filter pixel dependencies; it cannot provide slice exclusivity.
         let (y_data, u_data, v_data) = unsafe {
             (
                 state.shared.y_slice(),
@@ -902,13 +907,13 @@ pub fn loop_filter_frame_with_non420(
 ///
 /// # Safety
 ///
-/// Caller guarantees that for the duration of this call, no other thread
-/// writes pixels in this SB row's owned rectangle nor in the bottom 8 pixel
-/// rows of the previous SB row (the cross-row write zone of the H pass at
-/// the top of this SB row). The row-progress protocol in commit 3
-/// (`progress_in` + `progress_out` atomics in the parallel driver) enforces
-/// this. The serial caller in this commit calls it in raster order with no
-/// other writers — trivially safe.
+/// Caller guarantees exclusive access to the complete Y, U, and V plane
+/// allocations for the duration of this call, and that those allocations
+/// remain valid throughout it. This function reconstructs mutable slices
+/// spanning the complete planes, so no other reference or access through
+/// another pointer may be live to any part of them. In particular,
+/// row-progress ordering does not permit concurrent calls on disjoint SB rows
+/// of the same [`SharedFrame`].
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn loop_filter_sb_row(
     shared: &SharedFrame,
@@ -970,11 +975,13 @@ pub unsafe fn loop_filter_sb_row(
 ///
 /// # Safety
 ///
-/// Caller guarantees that no other thread writes pixels in this SB's
-/// owned rectangle nor in the cross-row write zone of the H-pass at
-/// this SB's top edge (the bottom 8 luma rows of the SB-row above).
-/// The column-wavefront's `cur_sb_col[r-1] >= c + nsync` gate
-/// provides that guarantee under the protocol described in HLD §3.
+/// Caller guarantees exclusive access to the complete Y, U, and V plane
+/// allocations for the duration of this call, and that those allocations
+/// remain valid throughout it. This function reconstructs mutable slices
+/// spanning the complete planes, so no other reference or access through
+/// another pointer may be live to any part of them. In particular, per-SB
+/// wavefront ordering does not permit concurrent calls on disjoint
+/// superblocks of the same [`SharedFrame`].
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn apply_one_sb(
     shared: &SharedFrame,
@@ -990,8 +997,8 @@ pub unsafe fn apply_one_sb(
     let chroma = shared.chroma;
     let y_stride = shared.y_stride;
     let uv_stride = shared.uv_stride;
-    // SAFETY: caller contract guarantees no overlapping write in this
-    // SB's pixel rectangle. Slices are scoped to this function body.
+    // SAFETY: the caller contract guarantees exclusive access to the full
+    // plane allocations for the duration of these mutable slices.
     let (y_data, u_data, v_data) =
         unsafe { (shared.y_slice(), shared.u_slice(), shared.v_slice()) };
     apply_one_sb_inner(

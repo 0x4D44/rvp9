@@ -4001,11 +4001,12 @@ fn apply_loop_filter_to_frame_column_wavefront<'frame>(
         let st: &'frame rvp9_core::loopfilter::apply::ColumnWavefrontLfState<'frame> = state;
         let dispatch = simd_dispatch.clone();
         scope.submit(move || {
-            // SAFETY: the wavefront sync protocol inside the worker
-            // (Acquire on cur_sb_col[r-1] before reading row r-1's
-            // pixel hazard zone; Release on cur_sb_col[r] after
-            // writing row r) guarantees no concurrent writer
-            // overlaps this worker's owned pixels.
+            // SAFETY: this dispatcher runs after decode has joined and
+            // currently submits one LF worker; the worker also asserts
+            // `num_workers == 1`. That gives the worker exclusive access
+            // to the complete plane allocations while it reconstructs
+            // full-plane mutable slices. The wavefront orders filter
+            // dependencies but does not make overlapping slices sound.
             unsafe {
                 rvp9_core::loopfilter::apply::run_split_edge_lf_worker(
                     st,
