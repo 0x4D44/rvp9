@@ -1,0 +1,145 @@
+RVP9-BUG-FLU-00039 independent verification proof
+
+Worktree: /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00039
+Base HEAD: 595bc8401af588246db7988962825e2c09143c01
+Host: Darwin arm64; rustc 1.95.0 (59807616e 2026-04-14); cargo 1.95.0
+
+Claim command: deltic bugs claim RVP9-BUG-FLU-00039 --role verify
+Claim result: succeeded. Owner run: verify-20261018T172045Z-d1ab420f
+Claim commit observed on origin/main: 2298916c910f6728f5a3a1f7922c3986a9085b27
+Fix commit: 8bd3c6e865e56f49fb4f1a8d0fdc13868bf18cbb
+Initial source SHA-256 (crates/rvp9-core/src/dsp/aarch64/convolve8_neon.rs):
+6768712b7a15fb2ce54c7d41b9e97a791ca002f4a5122d5742f4cf8aa8317e99
+
+Baseline checks and fail-before mutant evidence follow.
+
+COMMAND: deltic timeout 240 cargo test -p rvp9-core --lib dsp::aarch64::convolve8_neon::tests::wide_horizontal_paths_require_their_full_load_footprint -- --exact </dev/null
+   Compiling libc v0.2.186
+   Compiling cfg-if v1.0.4
+   Compiling getrandom v0.3.4
+   Compiling rustix v1.1.4
+   Compiling zerocopy v0.8.48
+   Compiling getrandom v0.4.2
+   Compiling bitflags v2.11.1
+   Compiling autocfg v1.5.0
+   Compiling once_cell v1.21.4
+   Compiling fastrand v2.4.1
+   Compiling crossbeam-utils v0.8.21
+   Compiling bit-vec v0.8.0
+   Compiling quick-error v1.2.3
+   Compiling fnv v1.0.7
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00039/crates/rvp9-core)
+   Compiling unarray v0.1.4
+   Compiling regex-syntax v0.8.10
+   Compiling bit-set v0.8.0
+   Compiling num-traits v0.2.19
+   Compiling crossbeam-channel v0.5.15
+   Compiling errno v0.3.14
+   Compiling wait-timeout v0.2.1
+   Compiling rand_core v0.9.5
+   Compiling rand_xorshift v0.4.0
+   Compiling rand v0.9.4
+   Compiling tempfile v3.27.0
+   Compiling rusty-fork v0.3.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling proptest v1.11.0
+    Finished `test` profile [optimized + debuginfo] target(s) in 2m 25s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 1 test
+test dsp::aarch64::convolve8_neon::tests::wide_horizontal_paths_require_their_full_load_footprint ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1733 filtered out; finished in 0.00s
+
+EXIT: 0
+
+COMMAND: deltic timeout 240 cargo test -p rvp9-core --lib dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00039/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 12.83s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 1 test
+test dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1733 filtered out; finished in 0.01s
+
+EXIT: 0
+
+MUTANT: replace only vector_w.checked_add(8) with vector_w.checked_add(7) in crates/rvp9-core/src/dsp/aarch64/convolve8_neon.rs.
+mutated_source_sha256=d59b59fc9503ffc2f2a2a4a0525e85e6cfb0308c4941de518d45986c46e9d0c1
+MUTATION_EXIT: 0
+diff --git a/crates/rvp9-core/src/dsp/aarch64/convolve8_neon.rs b/crates/rvp9-core/src/dsp/aarch64/convolve8_neon.rs
+index b888c6f0..d34d93af 100644
+--- a/crates/rvp9-core/src/dsp/aarch64/convolve8_neon.rs
++++ b/crates/rvp9-core/src/dsp/aarch64/convolve8_neon.rs
+@@ -639,7 +639,7 @@ fn has_horiz_wide_load_footprint(
+     else {
+         return false;
+     };
+-    let Some(required_row_len) = vector_w.checked_add(8) else {
++    let Some(required_row_len) = vector_w.checked_add(7) else {
+         return false;
+     };
+     let Some(required_len) = last_row_start.checked_add(required_row_len) else {
+
+COMMAND: deltic timeout 240 cargo test -p rvp9-core --lib dsp::aarch64::convolve8_neon::tests::wide_horizontal_paths_require_their_full_load_footprint -- --exact --nocapture </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00039/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 29.68s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 1 test
+
+thread 'dsp::aarch64::convolve8_neon::tests::wide_horizontal_paths_require_their_full_load_footprint' (288430949) panicked at crates/rvp9-core/src/dsp/aarch64/convolve8_neon.rs:915:9:
+assertion failed: !has_horiz_wide_load_footprint(11, 11, 4, 1)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test dsp::aarch64::convolve8_neon::tests::wide_horizontal_paths_require_their_full_load_footprint ... FAILED
+
+failures:
+
+failures:
+    dsp::aarch64::convolve8_neon::tests::wide_horizontal_paths_require_their_full_load_footprint
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1733 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-core --lib`
+EXPECTED_MUTANT_EXIT: 101
+
+RESTORE: exact inverse of the one-token footprint mutant; require original SHA-256.
+restored_source_sha256=6768712b7a15fb2ce54c7d41b9e97a791ca002f4a5122d5742f4cf8aa8317e99
+RESTORE_EXIT: 0
+
+COMMAND: deltic timeout 240 cargo test -p rvp9-core --lib dsp::aarch64::convolve8_neon::tests::wide_horizontal_paths_require_their_full_load_footprint -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00039/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 31.74s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 1 test
+test dsp::aarch64::convolve8_neon::tests::wide_horizontal_paths_require_their_full_load_footprint ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1733 filtered out; finished in 0.00s
+
+RESTORED_HELPER_EXIT: 0
+
+COMMAND: deltic timeout 240 cargo test -p rvp9-core --lib dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00039/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 14.85s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_core-f30889e17d99de38)
+
+running 1 test
+test dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1733 filtered out; finished in 0.01s
+
+RESTORED_WRAPPER_EXIT: 0
+
+FINAL SOURCE SHA-256:
+6768712b7a15fb2ce54c7d41b9e97a791ca002f4a5122d5742f4cf8aa8317e99  crates/rvp9-core/src/dsp/aarch64/convolve8_neon.rs
+FIX ANCESTRY CHECK: git merge-base --is-ancestor 8bd3c6e865e56f49fb4f1a8d0fdc13868bf18cbb origin/main
+FIX_ANCESTOR_EXIT: 0
+ORIGIN_MAIN: 95bbfb34e84ac9b416aeb54c0050fd10f0f6f31b claim(RVP9-BUG-KIL-00082): verify owner
+SOURCE_DIFF_CHECK: git diff --check -- crates/rvp9-core/src/dsp/aarch64/convolve8_neon.rs
+SOURCE_DIFF_CHECK_EXIT: 0
+SOURCE_DIFF_QUIET_EXIT: 0
+WORKTREE STATUS:
+## task/20261018-VER-CDX-verify-flu-00039...origin/main [behind 7]
