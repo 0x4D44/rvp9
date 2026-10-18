@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00042 — BD-rate cubic solver loses accuracy on narrow realistic PSNR curves
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** harness/bdrate
 - **Raised:** 2026-10-16T14:10:24Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T172911Z-6b47bd77
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00042-run-verify-20261018T172911Z-6b47bd77
-- **Owner base:** 48b442451cc86416657ac75ca5e63424274e5fb9
-- **Owner fingerprint:** sha256:97c019c7610e10354e095c45b850b1b12473467589662d4f86ed219a0d7301d0
-- **Owner since:** 2026-10-18T17:29:11Z
-- **Owner until:** 2026-10-18T21:29:11Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-16T14:10:24Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T16:34:55Z, deltic:auto role=fix run=fix-20261018T162513Z-efad8092 branch=task/bug-RVP9-BUG-FLU-00042-run-fix-20261018T162513Z-efad8092 code=43fc27dd3d2c28278f5202f48c590c03febbee90 gate=manual)
+- **State history:** Open (2026-10-16T14:10:24Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T16:34:55Z, deltic:auto role=fix run=fix-20261018T162513Z-efad8092 branch=task/bug-RVP9-BUG-FLU-00042-run-fix-20261018T162513Z-efad8092 code=43fc27dd3d2c28278f5202f48c590c03febbee90 gate=manual) -> Closed (2026-10-18T17:35:41Z, deltic:manual role=verify run=verify-20261018T172911Z-6b47bd77 verified_fix_run=fix-20261018T162513Z-efad8092 verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ On Apple Silicon at candidate ebca64b0, a standalone rustc diagnostic includes t
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T17:35:41Z, deltic:auto run=verify-20261018T172911Z-6b47bd77 verified_fix_run=fix-20261018T162513Z-efad8092 verdict=close)
+
+Verifier note: Manual verify: The retained Decimal80 narrow-curve tests pass in both harness and benchmark entry point. Replacing the shared solver’s normalized coordinates with raw PSNR makes both fail: the harness returns NaN and the benchmark rejects the curve. Exact source hashes restored and both tests pass again. The benchmark delegates to the harness, so no separate solver exists. The record’s ## Fix section still contains its original placeholder; I left that text unchanged. Scope is two focused tests, without a crate/workspace suite or lint.
 
 ## Notes
