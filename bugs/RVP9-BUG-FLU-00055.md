@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00055 — Public API rustdoc emits broken-link and private-item warnings
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** docs/public-api
 - **Raised:** 2026-10-17T21:51:55Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T214434Z-cc7cff10
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00055-run-verify-20261018T214434Z-cc7cff10
-- **Owner base:** 50e28584a53af2837c2a127b874edada052ba2a0
-- **Owner fingerprint:** sha256:0b616ba29fd898db501cb11d40b1b26ead1fca19e060248db3c38cadab4c55e7
-- **Owner since:** 2026-10-18T21:44:34Z
-- **Owner until:** 2026-10-19T01:44:34Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T21:51:55Z, raised via `deltic bugs new --land`) -> Fixed (2026-10-18T20:24:37Z, deltic:auto role=fix run=fix-20261018T201724Z-881b3f01 branch=task/bug-RVP9-BUG-FLU-00055-run-fix-20261018T201724Z-881b3f01 code=768edb747ac3ca1edb936c1d820cd04543a3518d gate=manual)
+- **State history:** Open (2026-10-17T21:51:55Z, raised via `deltic bugs new --land`) -> Fixed (2026-10-18T20:24:37Z, deltic:auto role=fix run=fix-20261018T201724Z-881b3f01 branch=task/bug-RVP9-BUG-FLU-00055-run-fix-20261018T201724Z-881b3f01 code=768edb747ac3ca1edb936c1d820cd04543a3518d gate=manual) -> Closed (2026-10-18T21:49:57Z, deltic:manual role=verify run=verify-20261018T214434Z-cc7cff10 verified_fix_run=fix-20261018T201724Z-881b3f01 verdict=close)
 
 ## Observation
 
@@ -33,5 +33,9 @@ Evidence fingerprint: `manual:v1:manual-v1-workspace-rustdoc-doc-link-warnings`
 Corrected broken intra-doc links throughout the public API documentation. Links now target documented public items; references to private implementation details and literal syntax use inline code or corrected Markdown. No API or runtime behavior changed.
 
 Validation: the baseline `cargo doc --workspace --no-deps --locked --offline` emitted 143 rustdoc warning diagnostics. After the documentation fixes, the same command completed with zero warnings. `cargo fmt --all --check` and `git diff --check` passed, and a source diff audit confirmed all 290 changed Rust source lines are comments.
+
+### Verification summary (2026-10-18T21:49:57Z, deltic:auto run=verify-20261018T214434Z-cc7cff10 verified_fix_run=fix-20261018T201724Z-881b3f01 verdict=close)
+
+Verifier note: Manual verify: Independent verification at 5b4b3f62: exact original cargo doc --workspace --no-deps --locked --offline emits zero warnings. Reversing only 768edb7 documentation hunks reproduces 143 rustdoc warnings, matching original observation; exit zero alone was not treated as green. Restored every byte and same command emits zero warnings again. Audited public link targets, private references as code and literal HTML syntax. cargo fmt --all --check and diff check pass.
 
 ## Notes
