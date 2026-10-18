@@ -6,15 +6,15 @@
 - **Area:** io/webm packet reader
 - **Raised:** 2026-08-22T14:33:24Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T155636Z-287856fc
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00093-run-verify-20261018T155636Z-287856fc
+- **Owner base:** 283ea9293f87eb88d82f0aa1f1219b2420bb5e57
+- **Owner fingerprint:** sha256:3b03b9413bc7d3e9cded6b155eb5effb68f1eba4de70b5ca4c1ec9f202f6b819
+- **Owner since:** 2026-10-18T15:56:36Z
+- **Owner until:** 2026-10-18T19:56:36Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
