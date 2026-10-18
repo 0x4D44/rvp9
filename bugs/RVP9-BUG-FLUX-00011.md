@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00011 — s11 intra restriction test rejects a valid control mode
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** core/mode-decision tests
 - **Raised:** 2026-08-09T20:08:59Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T153710Z-b344a7c3
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00011-run-verify-20261018T153710Z-b344a7c3
-- **Owner base:** ffe67ede4af05376f826dbbc7ed088f90832e84f
-- **Owner fingerprint:** sha256:a3ec113b70a78251b68a1b3e60c34afabf87f6fd8d6179e4bd0eec5330d01143
-- **Owner since:** 2026-10-18T15:37:10Z
-- **Owner until:** 2026-10-18T19:37:10Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-09T20:08:59Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T09:10:40Z, deltic:auto role=fix run=fix-20261016T090208Z-9ab99630 branch=task/bug-RVP9-BUG-FLUX-00011-run-fix-20261016T090208Z-9ab99630 code=bdb9f9a4bfe58795ea4d5bff604b375946e3883f gate=manual)
+- **State history:** Open (2026-08-09T20:08:59Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T09:10:40Z, deltic:auto role=fix run=fix-20261016T090208Z-9ab99630 branch=task/bug-RVP9-BUG-FLUX-00011-run-fix-20261016T090208Z-9ab99630 code=bdb9f9a4bfe58795ea4d5bff604b375946e3883f gate=manual) -> Closed (2026-10-18T15:40:58Z, deltic:manual role=verify run=verify-20261018T153710Z-b344a7c3 verified_fix_run=fix-20261016T090208Z-9ab99630 verdict=close)
 
 ## Observation
 
@@ -28,6 +28,10 @@ Observation: `cargo test -p rvp9-core --lib mode_decision::inter::tests::s11_rt_
 ## Fix
 
 Already fixed on trunk by `bdb9f9a4bfe58795ea4d5bff604b375946e3883f` (`fix(core): accept unrestricted intra control (RVP9-BUG-FLUX-00011)`, 2026-08-09). The unrestricted control now accepts any valid intra mode; the active-gate DC assertion remains. This reconciliation records the original fixing commit rather than claiming a new behavior change.
+
+### Verification summary (2026-10-18T15:40:58Z, deltic:auto run=verify-20261018T153710Z-b344a7c3 verified_fix_run=fix-20261016T090208Z-9ab99630 verdict=close)
+
+Verifier note: Manual verify: Independent session 01a14fa5, not fixer; base09697b55 includes bdb9f9a4. Original exact s11_rt_intra_dc_only_low_content_restricts_to_dc command selects 1 and passes; lead rerun also passes. Reversing only control predicate to DC[PATH] selects 1 and fails that assertion at inter.rs:13649 (exit101). Restored identical source SHA256 714fdb1b41a1de1a12de280c9aca2e4de3a27168db3bc4ae873ed704256bdb93; exact test passes again, git diff empty. Production unrestricted candidate set includes TM; active DC assertion remains intact. Evidence in 2026.10.18 independent verification journal. S...
 
 ## Notes
 
