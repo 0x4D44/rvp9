@@ -30,6 +30,8 @@ Evidence fingerprint: `manual:v1:spatial-speed-summary-emits-unescaped-clip-list
 
 ## Fix
 
-<unfixed — raised only>
+The spatial speed summary now writes the comma-separated clip list as a quoted `clips` field. `run_speed_group` uses the tested `format_speed_summary_row` formatter, and the no-I/O script self-test checks a representative three-clip row.
+
+Validation: before the fix, the new self-test failed only the clip-field assertion and showed the three clip names split into separate CSV columns. After the fix, `scripts/qualify-spatial-svc.sh --self-test`, `bash -n scripts/qualify-spatial-svc.sh`, a Python `csv.reader` check for 16 columns with the full clip list in column 6, and `git diff --check` passed.
 
 ## Notes

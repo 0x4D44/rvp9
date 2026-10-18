@@ -341,6 +341,13 @@ format_quality_summary_row() {
     printf '%s,%s,%s,%s,%s,%s,%s,%s,"%s",SL%s,%s,%s,%s\n' "$@"
 }
 
+# Keep the speed row serializer separate so its clips field follows the CSV
+# schema and can be exercised without launching benchmark jobs.
+format_speed_summary_row() {
+    # The clip list is comma-separated; quote it as the single `clips` field.
+    printf '%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$@"
+}
+
 expect_equal() {
     local what="$1" actual="$2" expected="$3"
     if [ "$actual" = "$expected" ]; then
@@ -360,7 +367,7 @@ plan_count() {
 }
 
 self_test() {
-    local plan mode target clip cpu layers grid expected count summary_row
+    local plan mode target clip cpu layers grid expected count summary_row speed_row
 
     printf 'qualify-spatial-svc self-test\n'
     if ! plan="$(print_plan)"; then
@@ -377,6 +384,12 @@ self_test() {
     expect_equal "quality summary keeps the bitrate list in one CSV field" \
         "$summary_row" \
         'curve,cbr,720p30,in_to_tree,6,2,1,0,"420,630,840,1260,2100,3360",SL0,0.25,0.5,PASS'
+    speed_row="$(format_speed_summary_row vbr-1080p30-cpu8-s2 vbr 1080p30 8 2 \
+        in_to_tree,ducks_take_off,old_town_cross 2835 4 2 allow-instability PASS \
+        0.99 1.01 1.05 summary-sha manifest-sha)"
+    expect_equal "speed summary keeps the clip list in one CSV field" \
+        "$speed_row" \
+        'vbr-1080p30-cpu8-s2,vbr,1080p30,8,2,"in_to_tree,ducks_take_off,old_town_cross",2835,4,2,allow-instability,PASS,0.99,1.01,1.05,summary-sha,manifest-sha'
     expect_equal "cross_decoder_streams" \
         "$(plan_field "$plan" cross_decoder_streams)" "$EXPECTED_CROSS_DECODER_STREAMS"
     expect_equal "cross_decoder_runs" \
@@ -1151,7 +1164,7 @@ run_speed_group() {
         number_le "$paired" "$MAX_RATIO" || status="FAIL"
     fi
 
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    format_speed_summary_row \
         "$group_id" "$mode" "$target" "$cpu" "$layers" "$clip_list" \
         "$speed_kbps" "$threads" "$tiles" "$policy" "$status" \
         "$separate" "$paired" "$MAX_RATIO" \
