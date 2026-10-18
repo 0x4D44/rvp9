@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00045 — Cross-decoder gates accept nonnumeric decoded-size observations
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** Medium
 - **Area:** qualification/decoded-size
 - **Raised:** 2026-10-17T05:18:22Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T170413Z-35642b87
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00045-run-verify-20261018T170413Z-35642b87
-- **Owner base:** 35a80e9d64618de1a111b72c23b3c411921629c3
-- **Owner fingerprint:** sha256:8f601fb9e3ebf9d3294876bca55575d791de32b17f409fd913a36c2d2e7936d5
-- **Owner since:** 2026-10-18T17:04:13Z
-- **Owner until:** 2026-10-18T21:04:13Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T05:18:22Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T15:59:09Z, deltic:auto role=fix run=fix-20261018T155149Z-6a84ae55 branch=task/bug-RVP9-BUG-FLU-00045-run-fix-20261018T155149Z-6a84ae55 code=0fd918f2b041fe21ed146dfe0f7c52740e0dd502 gate=manual)
+- **State history:** Open (2026-10-17T05:18:22Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T15:59:09Z, deltic:auto role=fix run=fix-20261018T155149Z-6a84ae55 branch=task/bug-RVP9-BUG-FLU-00045-run-fix-20261018T155149Z-6a84ae55 code=0fd918f2b041fe21ed146dfe0f7c52740e0dd502 gate=manual) -> Closed (2026-10-18T17:07:09Z, deltic:manual role=verify run=verify-20261018T170413Z-35642b87 verified_fix_run=fix-20261018T155149Z-6a84ae55 verdict=close)
 
 ## Observation
 
@@ -32,5 +32,9 @@ Both qualifiers now use a shared, validated BSD/GNU stat adapter. They propagate
 Regression: `python3 scripts/test_qualification_file_size.py` selected the production row checks and failed before the fix on six malformed-measurement acceptance subcases. After the fix, all six tests passed, covering BSD/GNU success, GNU filesystem-text fallback, empty/nonnumeric/failed output, failed stat with numeric stdout, leading zeros, mismatch and oversized values. Bash syntax checks and a native stat smoke with a space-containing filename passed.
 
 Evidence: `wrk_journals/2026.10.18 - JRN - RVP9-BUG-FLU-00045 qualification size validation.md`. This repairs acceptance behavior; it does not revalidate prior invalid codec qualification evidence or claim a new full codec matrix run.
+
+### Verification summary (2026-10-18T17:07:09Z, deltic:auto run=verify-20261018T170413Z-35642b87 verified_fix_run=fix-20261018T155149Z-6a84ae55 verdict=close)
+
+Verifier note: Manual verify: Independent verification on fixed code 0fd918f2: all 6 retained tests passed initially and after restoration. Reverting only the prior measurement/arithmetic handling made the retained regression fail all 6 malformed-size subcases; direct production-row probes showed both old qualifiers returned 0 and emitted PASS with nonnumeric decoded sizes and integer-expression errors. Restored probes returned 1 with no PASS. Scripts restored byte-for-byte and worktree clean. This covers the gating logic, not a full codec matrix.
 
 ## Notes
