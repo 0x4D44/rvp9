@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00055 — Public API rustdoc emits broken-link and private-item warnings
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** docs/public-api
 - **Raised:** 2026-10-17T21:51:55Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T201724Z-881b3f01
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00055-run-fix-20261018T201724Z-881b3f01
-- **Owner base:** b7f74ed5574ffcf10946771a5b6a10b19315574d
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T20:17:24Z
-- **Owner until:** 2026-10-19T00:17:24Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T21:51:55Z, raised via `deltic bugs new --land`)
+- **State history:** Open (2026-10-17T21:51:55Z, raised via `deltic bugs new --land`) -> Fixed (2026-10-18T20:24:37Z, deltic:auto role=fix run=fix-20261018T201724Z-881b3f01 branch=task/bug-RVP9-BUG-FLU-00055-run-fix-20261018T201724Z-881b3f01 code=768edb747ac3ca1edb936c1d820cd04543a3518d gate=manual)
 
 ## Observation
 
