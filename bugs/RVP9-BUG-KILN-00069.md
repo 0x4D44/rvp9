@@ -6,15 +6,15 @@
 - **Area:** encoder/altref geometry
 - **Raised:** 2026-08-16T08:18:59Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T170407Z-eab466a3
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00069-run-verify-20261018T170407Z-eab466a3
+- **Owner base:** 35a80e9d64618de1a111b72c23b3c411921629c3
+- **Owner fingerprint:** sha256:af40d589e4c94af6b673f24bdb68a234ead4420775ea3df3e9690da0fe03a242
+- **Owner since:** 2026-10-18T17:04:07Z
+- **Owner until:** 2026-10-18T21:04:07Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
