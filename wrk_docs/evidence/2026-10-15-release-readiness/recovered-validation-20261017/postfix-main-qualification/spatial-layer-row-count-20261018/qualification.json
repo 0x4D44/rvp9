@@ -1,0 +1,284 @@
+{
+  "schema": 1,
+  "captured_at_utc": "2026-10-18T02:29:34Z",
+  "host": {
+    "name": "flux.home.arpa",
+    "os": "macOS-26.6.2-arm64-arm-64bit",
+    "architecture": "arm64"
+  },
+  "candidate": {
+    "runner_revision": "1e8badd697de90b57a6b875ac6418b9aec60cd1b",
+    "product_source_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "script_path": "scripts/qualify-spatial-svc.sh",
+    "runner_script_git_blob": "9a09cb6604dd507cb273cae61d31744732d51ec9",
+    "product_script_git_blob": "9a09cb6604dd507cb273cae61d31744732d51ec9",
+    "script_sha256": "6453cd72adedbe82c1c719a728873f419543170819111a1139dba5303d47c3de",
+    "script_matches_product_source": true
+  },
+  "probe": {
+    "purpose": "Verify the exact-source spatial run_quality_curve rejects missing, incomplete, and surplus per-layer BD-rate rows.",
+    "functions_extracted_verbatim": {
+      "target_spec": {
+        "lines": [
+          103,
+          110
+        ],
+        "sha256": "681666cffe92b47586ce9b1cd0448f7ee71cc8238b2ae29c5eeacaa09450e766"
+      },
+      "target_bitrates": {
+        "lines": [
+          122,
+          132
+        ],
+        "sha256": "905c75889ddf9705f15d40a8305eb8fd79a1515a3e76174fa5948ebe19730c60"
+      },
+      "quality_bdrate_limit": {
+        "lines": [
+          156,
+          163
+        ],
+        "sha256": "28a8f0c5dbdae57328da577a48ccf87c4ab16fdda328bff9fe6ffdb4bcb4a52c"
+      },
+      "fail": {
+        "lines": [
+          201,
+          204
+        ],
+        "sha256": "2c08ea37b2aa8af4f040b8a77498044a0749744819e26714778eb86773a4ab65"
+      },
+      "require_number": {
+        "lines": [
+          206,
+          213
+        ],
+        "sha256": "a5a350047a4e4684e1f8412416a5037ae6c6ce6d16dbf386ee558b51a2148374"
+      },
+      "number_le": {
+        "lines": [
+          216,
+          218
+        ],
+        "sha256": "0048a9773e8ae6cbcafdbf4d25df48c42342fe76ddf450c0afb2085b107aecda"
+      },
+      "acceptance_input": {
+        "lines": [
+          818,
+          820
+        ],
+        "sha256": "8ad22e1e519a04888d41cb5b8be823e5bbc64201a14366361a9763c3b471e1c9"
+      },
+      "run_quality_curve": {
+        "lines": [
+          959,
+          1030
+        ],
+        "sha256": "937a3805dcce0f05e04ae8b6bf687029c1d5bdc291e943210c8f9422df090fef"
+      }
+    },
+    "source_extract_sha256": "6cfef335564836be1d5c6ffe88643d3a4f8f1f4fa33595c87a550a7f89f41547",
+    "command": "bash harness.sh stub-bdrate-svc.sh; stdin closed; invoked from the registered task worktree; the exact function calls deltic timeout 7200 around the stub child.",
+    "curve": {
+      "mode": "cbr",
+      "target": "720p30",
+      "clip": "in_to_tree",
+      "cpu_used": 6,
+      "spatial_layers": 2,
+      "bitrates_kbps": [
+        420,
+        630,
+        840,
+        1260,
+        2100,
+        3360
+      ],
+      "gate_pct": 0.5
+    },
+    "stubbed_bdrate_rows": "Zero, one, or three rows in the form bdrate_pct,<layer>,0.1",
+    "results": {
+      "zero-rows": {
+        "injected_bdrate_rows": 0,
+        "expected": "reject missing layer rows",
+        "exit_code": 1,
+        "diagnostic": "cbr-720p30-in_to_tree-cpu6-s2: recorded 0 layer gates, expected 2",
+        "summary_rows_after_header": [],
+        "cross_check_called": false,
+        "harness": "harness.sh"
+      },
+      "one-of-two-rows": {
+        "injected_bdrate_rows": 1,
+        "expected": "reject incomplete two-layer result",
+        "exit_code": 1,
+        "diagnostic": "cbr-720p30-in_to_tree-cpu6-s2: recorded 1 layer gates, expected 2",
+        "summary_rows_after_header": [
+          "cbr-720p30-in_to_tree-cpu6-s2,cbr,720p30,in_to_tree,6,2,1,0,420,630,840,1260,2100,3360,SL0,0.1,0.5,PASS"
+        ],
+        "cross_check_called": false,
+        "harness": "harness.sh"
+      },
+      "three-for-two-rows": {
+        "injected_bdrate_rows": 3,
+        "expected": "reject surplus layer row",
+        "exit_code": 1,
+        "diagnostic": "cbr-720p30-in_to_tree-cpu6-s2: recorded 3 layer gates, expected 2",
+        "summary_rows_after_header": [
+          "cbr-720p30-in_to_tree-cpu6-s2,cbr,720p30,in_to_tree,6,2,1,0,420,630,840,1260,2100,3360,SL0,0.1,0.5,PASS",
+          "cbr-720p30-in_to_tree-cpu6-s2,cbr,720p30,in_to_tree,6,2,1,0,420,630,840,1260,2100,3360,SL1,0.1,0.5,PASS",
+          "cbr-720p30-in_to_tree-cpu6-s2,cbr,720p30,in_to_tree,6,2,1,0,420,630,840,1260,2100,3360,SL2,0.1,0.5,PASS"
+        ],
+        "cross_check_called": false,
+        "harness": "harness.sh"
+      },
+      "zero-rows-count-guard-disabled": {
+        "injected_bdrate_rows": 0,
+        "expected": "mutation control demonstrates fail-open",
+        "exit_code": 0,
+        "diagnostic": "[quality   1/96] cbr-720p30-in_to_tree-cpu6-s2",
+        "summary_rows_after_header": [],
+        "cross_check_called": true,
+        "harness": "mutation-control-harness.sh"
+      }
+    },
+    "mutation_control": {
+      "mutation": "Removed the exact recorded-layer-count guard in mutation-control-harness.sh; product source was not changed.",
+      "observed": "Zero BD-rate rows reached the cross-check stub and the helper exited 0.",
+      "result": "PASS: the probe detects removal of the spatial layer-count guard."
+    }
+  },
+  "limits": [
+    "The bdrate-svc child is a stub and does not run encoders, decoders, or BD-rate calculations.",
+    "This executes one exact-source run_quality_curve call with helper stubs; it does not run the 96-curve phase, publication path, or any codec, quality, or performance measurement.",
+    "Summary rows retain the known unquoted bitrate-grid field; this probe tests the row-count/exit behavior, not CSV validity. FLU-00041 and FLU-00042 remain separate blockers."
+  ],
+  "artifacts": [
+    {
+      "path": "cases/one-of-two-rows/bdrate.csv",
+      "bytes": 36,
+      "sha256": "8003dd56612249d8d4a93c9b2a54d63bfd466f352dfbf77bb934aec0066410df"
+    },
+    {
+      "path": "cases/one-of-two-rows/bdrate.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/one-of-two-rows/quality-summary.csv",
+      "bytes": 222,
+      "sha256": "425e9723152e53d62ce0d93715c5f26ef9a63b5f6acedff734a44d4c06dd7911"
+    },
+    {
+      "path": "cases/one-of-two-rows/runner.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "cases/one-of-two-rows/runner.raw.txt",
+      "bytes": 113,
+      "sha256": "194daa2e5d4af74065db28dbd5b9816be60de4b363a3cbe6d9d1b456ab3b9f91"
+    },
+    {
+      "path": "cases/three-for-two-rows/bdrate.csv",
+      "bytes": 70,
+      "sha256": "4ea13c45c45d1ec2dc90167638e07e55635aeffd95222770e798dd5d50daf917"
+    },
+    {
+      "path": "cases/three-for-two-rows/bdrate.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/three-for-two-rows/quality-summary.csv",
+      "bytes": 430,
+      "sha256": "91eeae58790597f80fce1fe33eb19b3b6e561a0a42fe6fed75bef993a18875bd"
+    },
+    {
+      "path": "cases/three-for-two-rows/runner.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "cases/three-for-two-rows/runner.raw.txt",
+      "bytes": 113,
+      "sha256": "beebdf13ff3c668c0273a9a3b6f364b151c51b1bc3c644d1dd6010f28e89beba"
+    },
+    {
+      "path": "cases/zero-rows/bdrate.csv",
+      "bytes": 19,
+      "sha256": "2943408e32e12225c9c923585e6a4bf2d36c0350d6ea05093f162019100c9d4e"
+    },
+    {
+      "path": "cases/zero-rows/bdrate.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/zero-rows/quality-summary.csv",
+      "bytes": 118,
+      "sha256": "03e82c69030970cc239dd49a1437b1b9686ffd038d25ceed50a6fce5cc0e16d4"
+    },
+    {
+      "path": "cases/zero-rows/runner.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "cases/zero-rows/runner.raw.txt",
+      "bytes": 113,
+      "sha256": "abaa9cd1e6b84d459ebc9032b39fadf567bac38cc01fd8565e7cb7b4c65d7a64"
+    },
+    {
+      "path": "cases/zero-rows-count-guard-disabled/bdrate.csv",
+      "bytes": 19,
+      "sha256": "2943408e32e12225c9c923585e6a4bf2d36c0350d6ea05093f162019100c9d4e"
+    },
+    {
+      "path": "cases/zero-rows-count-guard-disabled/bdrate.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/zero-rows-count-guard-disabled/cross-check-called.marker",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cases/zero-rows-count-guard-disabled/quality-summary.csv",
+      "bytes": 118,
+      "sha256": "03e82c69030970cc239dd49a1437b1b9686ffd038d25ceed50a6fce5cc0e16d4"
+    },
+    {
+      "path": "cases/zero-rows-count-guard-disabled/runner.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "cases/zero-rows-count-guard-disabled/runner.raw.txt",
+      "bytes": 47,
+      "sha256": "3b23ae27378cb35718a86b7bb77a5165500c2b53f9b801229022dc89dea3b941"
+    },
+    {
+      "path": "harness.sh",
+      "bytes": 5360,
+      "sha256": "667844f313daba89a7aa007e60b630433e809ba5a02367c9fa6c7a66bc295345"
+    },
+    {
+      "path": "mutation-control-harness.sh",
+      "bytes": 5287,
+      "sha256": "fa74611dbb4b67674d4045d7a49e4012dab3165ad0b3c54621a7e133ed950c10"
+    },
+    {
+      "path": "spatial-source-extract.sh",
+      "bytes": 4705,
+      "sha256": "6cfef335564836be1d5c6ffe88643d3a4f8f1f4fa33595c87a550a7f89f41547"
+    },
+    {
+      "path": "stub-bdrate-svc.sh",
+      "bytes": 329,
+      "sha256": "c79e53d978103bd4b4d14f059bd62eca89cea9ad590bf4b820faed45f7fddd58"
+    }
+  ],
+  "registered_scratch": {
+    "id": "spatial-layer-row-count-6bbbf645",
+    "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/spatial-layer-row-count-6bbbf645",
+    "disposition": "Deltic-registered scratch; task integration removes it after the durable evidence copy is verified."
+  }
+}

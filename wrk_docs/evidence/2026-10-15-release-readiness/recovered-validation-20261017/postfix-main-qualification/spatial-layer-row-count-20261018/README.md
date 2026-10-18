@@ -1,0 +1,7 @@
+# Spatial per-layer row-count probe
+
+On runner revision 1e8badd697de90b57a6b875ac6418b9aec60cd1b, the exact scripts/qualify-spatial-svc.sh blob matches product candidate fb5c0c917038db6c640b3dbc7c2b84b567233333. The harness calls the extracted run_quality_curve and its relevant helpers verbatim for one CBR 720p30, CPU6, two-layer curve. A stub bdrate-svc writes the requested number of valid decimal layer rows and exits successfully.
+
+The exact-source caller rejected zero, one, and three rows for the expected two-layer result. Each invocation exited 1 with its recorded-layer count diagnostic before cross-decoder checking. The one-row case retained one SL0 PASS summary row before failing; the three-row case retained SL0, SL1, and SL2 PASS rows before failing the count. In a mutation control, removing the recorded-layer-count guard let the zero-row result reach the cross-check stub and exit 0. This demonstrates the probe detects removal of that guard.
+
+These are helper-level orchestration results. The child and cross-check are stubs; no actual BD-rate calculation, full 96-curve phase, publication path, encoder, decoder, quality measurement, or performance measurement ran. The emitted summary rows retain the known unquoted bitrate-grid field associated with FLU-00041, so this probe does not validate summary CSV shape. FLU-00041 and FLU-00042 remain open. No new bug was raised because the current exact-source count guard rejected all injected row-count mismatches.

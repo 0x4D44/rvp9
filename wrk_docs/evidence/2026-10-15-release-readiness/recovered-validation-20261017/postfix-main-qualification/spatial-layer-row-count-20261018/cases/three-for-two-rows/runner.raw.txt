@@ -1,0 +1,2 @@
+[quality   1/96] cbr-720p30-in_to_tree-cpu6-s2
+cbr-720p30-in_to_tree-cpu6-s2: recorded 3 layer gates, expected 2
