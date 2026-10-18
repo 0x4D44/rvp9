@@ -627,6 +627,27 @@ fn validate_horiz(
 }
 
 #[inline]
+fn has_horiz_wide_load_footprint(
+    src_len: usize,
+    src_stride: usize,
+    vector_w: usize,
+    h: usize,
+) -> bool {
+    let Some(last_row_start) = h
+        .checked_sub(1)
+        .and_then(|rows| rows.checked_mul(src_stride))
+    else {
+        return false;
+    };
+    let Some(required_row_len) = vector_w.checked_add(8) else {
+        return false;
+    };
+    let Some(required_len) = last_row_start.checked_add(required_row_len) else {
+        return false;
+    };
+    src_len >= required_len
+}
+
 fn validate_vert(src: &[u8], src_stride: usize, dst: &[u8], dst_stride: usize, w: usize, h: usize) {
     assert!(h > 0);
     assert!(w > 0 && w <= 64);
@@ -647,9 +668,12 @@ pub fn convolve8_horiz_neon(
     validate_horiz(src, src_stride, dst, dst_stride, w, h);
     if w == 4 {
         let narrow_filter = filter.iter().all(|&tap| i8::try_from(tap).is_ok());
-        if std::arch::is_aarch64_feature_detected!("i8mm") && narrow_filter {
-            // SAFETY: horizontal validation guarantees 11 readable bytes per
-            // row, while the narrow loader reads exactly 8 + 4 bytes.
+        if std::arch::is_aarch64_feature_detected!("i8mm")
+            && narrow_filter
+            && has_horiz_wide_load_footprint(src.len(), src_stride, 4, h)
+        {
+            // SAFETY: the footprint check guarantees 12 readable bytes per
+            // row, exactly covering the 8 + 4 byte narrow load.
             unsafe {
                 convolve8_horiz_i8mm_4_inner(
                     src.as_ptr(),
@@ -668,12 +692,14 @@ pub fn convolve8_horiz_neon(
         return;
     }
     let simd_w = w & !7;
-    // SAFETY: Validation proves every eight- or sixteen-byte load and
-    // eight-byte store is in-bounds.
-    // SimdDispatch installs this wrapper only on NEON-capable AArch64 hosts.
+    let wide_load_fits = has_horiz_wide_load_footprint(src.len(), src_stride, simd_w, h);
+    // SAFETY: the wide-load check protects I8MM and dotprod's sixteen-byte
+    // loads; horizontal validation protects the generic NEON eight-byte loads
+    // and stores. SimdDispatch installs this wrapper only on NEON-capable
+    // AArch64 hosts.
     unsafe {
         let narrow_filter = filter.iter().all(|&tap| i8::try_from(tap).is_ok());
-        if std::arch::is_aarch64_feature_detected!("i8mm") && narrow_filter {
+        if wide_load_fits && std::arch::is_aarch64_feature_detected!("i8mm") && narrow_filter {
             convolve8_horiz_i8mm_inner(
                 src.as_ptr(),
                 src_stride,
@@ -683,7 +709,10 @@ pub fn convolve8_horiz_neon(
                 simd_w,
                 h,
             );
-        } else if std::arch::is_aarch64_feature_detected!("dotprod") && narrow_filter {
+        } else if wide_load_fits
+            && std::arch::is_aarch64_feature_detected!("dotprod")
+            && narrow_filter
+        {
             convolve8_horiz_dotprod_inner(
                 src.as_ptr(),
                 src_stride,
@@ -879,6 +908,17 @@ mod tests {
             self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             (self.0 >> 16) as u8
         }
+    }
+
+    #[test]
+    fn wide_horizontal_paths_require_their_full_load_footprint() {
+        assert!(!has_horiz_wide_load_footprint(11, 11, 4, 1));
+        assert!(has_horiz_wide_load_footprint(12, 12, 4, 1));
+        assert!(!has_horiz_wide_load_footprint(60, 15, 8, 4));
+        assert!(has_horiz_wide_load_footprint(61, 15, 8, 4));
+        // A width with a scalar tail has enough logical padding for the last
+        // wide load and should retain the optimized path.
+        assert!(has_horiz_wide_load_footprint(64, 16, 8, 4));
     }
 
     #[test]

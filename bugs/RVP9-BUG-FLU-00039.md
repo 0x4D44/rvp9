@@ -27,7 +27,7 @@ On Apple M5 Max/aarch64-apple-darwin at candidate code 1a84f60a24e8d82e8e6454743
 
 ## Fix
 
-<unfixed — raised only>
+Horizontal I8MM and dotprod dispatch now checks the complete wide-load footprint with checked size arithmetic before entering the optimized kernels. The width-four I8MM path requires 12 readable bytes per row; the wider kernels require `simd_w + 8`. If an accepted tight slice lacks that padding, the wrapper uses the existing generic NEON or scalar path and keeps the `w + 7` input contract. Added a helper regression for the width-four and width-eight boundary extents. The existing native AArch64 tight-slice comparison test passed normally and under AddressSanitizer. Scoped core Clippy, rustfmt, and `git diff --check` passed.
 
 ## Notes
 
