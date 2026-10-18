@@ -6,15 +6,15 @@
 - **Area:** harness/dump-frame-diff
 - **Raised:** 2026-08-22T13:20:53Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T172231Z-523935bf
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00088-run-verify-20261018T172231Z-523935bf
+- **Owner base:** 001b217b8f1cb628c80829ff452911cc48af7487
+- **Owner fingerprint:** sha256:bc037b81f64de1437080d160295a51528e1d2f1bd8cad05cf3de17b24cf6b5bc
+- **Owner since:** 2026-10-18T17:22:31Z
+- **Owner until:** 2026-10-18T21:22:31Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
