@@ -442,6 +442,12 @@ pub fn fadst8(input: &[i32; 8], output: &mut [i32; 8]) {
     output[7] = wraplow(-x1 as i32);
 }
 
+#[cfg(any(target_arch = "x86_64", test))]
+#[inline]
+fn fdct8x8_required_input_len(stride: usize) -> Option<usize> {
+    stride.checked_mul(7)?.checked_add(8)
+}
+
 /// 2D 8×8 forward DCT. Pass 0 multiplies input by 4 (no DC bump,
 /// unlike 4×4); pass 1 reads from intermediate at integer values
 /// directly (no `(x + 1) >> 2` between passes). The final reduction
@@ -1588,6 +1594,13 @@ mod tests {
         let mut output = [99i32; 4];
         fdct4(&input, &mut output);
         assert_eq!(output, [0; 4]);
+    }
+
+    #[test]
+    fn fdct8x8_input_span_rejects_arithmetic_overflow() {
+        assert_eq!(fdct8x8_required_input_len(8), Some(64));
+        assert_eq!(fdct8x8_required_input_len(usize::MAX / 7), None);
+        assert_eq!(fdct8x8_required_input_len(usize::MAX / 7 + 1), None);
     }
 
     /// Zero input → zero output (1D ADST). Exercises the explicit

@@ -150,7 +150,9 @@ pub(super) fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
     #[cfg(all(test, not(miri)))]
     crate::dsp::force_scalar_tests::record("fdct8x8");
     assert!(stride >= 8);
-    assert!(input.len() >= 7 * stride + 8);
+    let required_input_len =
+        super::fdct8x8_required_input_len(stride).expect("8x8 input span overflows usize");
+    assert!(input.len() >= required_input_len);
     // SAFETY: The bounds above prove every eight-value input load and all
     // fixed output stores. SSE2 is mandatory on x86-64.
     if !unsafe { fdct8x8_inner(input.as_ptr(), output.as_mut_ptr(), stride) } {

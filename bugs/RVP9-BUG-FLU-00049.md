@@ -27,6 +27,6 @@ On 64-bit x86 release builds, the safe public rvp9_core::transforms::fdct8x8 wra
 
 ## Fix
 
-<unfixed — raised only>
+The SSE2 8x8 DCT wrapper now computes the required input span with checked multiplication and addition before entering the unsafe kernel. Overflow is rejected instead of allowing `7 * stride + 8` to wrap. Added a regression covering the valid stride-8 span and both multiplication- and addition-overflow boundaries. The overflow-disabled regression failed before the fix with `Some(6)` for `stride = usize::MAX / 7`, then passed after the fix. On x86_64 under Rosetta, all eight focused `fdct8x8` tests passed; scoped x86 Clippy, rustfmt, and `git diff --check` passed.
 
 ## Notes
