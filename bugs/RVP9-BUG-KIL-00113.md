@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00113 — Realtime accepts an infinite budget that makes every finite run pass
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/realtime validation
 - **Raised:** 2026-08-22T19:31:33Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T161832Z-7a674800
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00113-run-verify-20261018T161832Z-7a674800
-- **Owner base:** 4cb660133c50815eb680f8ca69064a0c3dc4d1d5
-- **Owner fingerprint:** sha256:0f4739626e0a054babd5a33370775f98f3b95994e30abd7a6c0638307753b666
-- **Owner since:** 2026-10-18T16:18:32Z
-- **Owner until:** 2026-10-18T20:18:32Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:31:33Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T04:04:10Z, deltic:auto role=fix run=fix-20261016T035752Z-af34a473 branch=task/bug-RVP9-BUG-KIL-00113-run-fix-20261016T035752Z-af34a473 code=26ac4ff115a1b042bfaab212629a0d013ca5dd29 gate=manual)
+- **State history:** Open (2026-08-22T19:31:33Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T04:04:10Z, deltic:auto role=fix run=fix-20261016T035752Z-af34a473 branch=task/bug-RVP9-BUG-KIL-00113-run-fix-20261016T035752Z-af34a473 code=26ac4ff115a1b042bfaab212629a0d013ca5dd29 gate=manual) -> Closed (2026-10-18T16:25:48Z, deltic:manual role=verify run=verify-20261018T161832Z-7a674800 verified_fix_run=fix-20261016T035752Z-af34a473 verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ crates/rvp9-bench/src/bin/realtime.rs:115-117 parses budget-ms as f64 without re
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:25:48Z, deltic:auto run=verify-20261018T161832Z-7a674800 verified_fix_run=fix-20261016T035752Z-af34a473 verdict=close)
+
+Verifier note: Manual verify: Independent: realtime primary_budget_ regressions 2/2 pass; removing finite-positive guard makes NaN rejection test fail while valid controls pass. Exact source restored, diff empty; scoped rerun 2/2. Evidence: .scratch/kil113-proof.txt.
 
 ## Notes
