@@ -57,12 +57,14 @@ pub fn lpf_horizontal_16_dual_avx2(
     limit: u8,
     thresh: u8,
 ) {
+    let second_index = super::lpf_bounds::validate(pixels.len(), s_index, pitch, 8, false, 16);
+
     // Two-singles approach — both halves share the same threshold set
     // (libvpx convention). The single AVX2 wrapper carries its own
     // SAFETY note (caps invariant via dispatch OnceLock + scalar bounds
     // contract).
     lpf_horizontal_16_avx2(pixels, s_index, pitch, blimit, limit, thresh);
-    lpf_horizontal_16_avx2(pixels, s_index + 8, pitch, blimit, limit, thresh);
+    lpf_horizontal_16_avx2(pixels, second_index, pitch, blimit, limit, thresh);
 }
 
 // Miri cannot interpret AVX2 intrinsics, so this tests module is

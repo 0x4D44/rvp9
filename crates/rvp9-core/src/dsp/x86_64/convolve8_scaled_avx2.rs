@@ -55,6 +55,46 @@ const FILTER_ROUNDING: i32 = 1 << (FILTER_BITS - 1);
 const INTER_STRIDE: usize = 64;
 const INTER_CAP: usize = 64 * 135;
 
+// Validate coordinates before the raw-pointer passes and fixed-size scratch.
+fn validate_scaled_layout(
+    src: (usize, usize),
+    dst: (usize, usize),
+    coordinates: [i32; 4],
+    dimensions: (usize, usize),
+) {
+    let (src_len, src_stride) = src;
+    let (dst_len, dst_stride) = dst;
+    let [x0, x_step, y0, y_step] = coordinates;
+    let (w, h) = dimensions;
+    assert!(
+        (1..=64).contains(&w) && (1..=64).contains(&h),
+        "unsupported scaled dimensions"
+    );
+    fn last_coordinate(start: i32, step: i32, count: usize) -> i32 {
+        assert!(start >= 0 && step >= 0, "negative scaled coordinate");
+        // The loops also increment once after their final sample.
+        assert!(
+            step.checked_mul(count as i32)
+                .and_then(|delta| start.checked_add(delta))
+                .is_some(),
+            "scaled coordinate overflow"
+        );
+        start
+            .checked_add(
+                step.checked_mul(count as i32 - 1)
+                    .expect("scaled coordinate overflow"),
+            )
+            .expect("scaled coordinate overflow")
+    }
+    let last_x = last_coordinate(x0, x_step, w);
+    let last_y = last_coordinate(y0, y_step, h);
+    let ih = (last_y >> SUBPEL_BITS) as usize + FILTER_TAPS;
+    assert!(ih <= 135, "scaled intermediate too tall");
+    let source_width = (last_x >> SUBPEL_BITS) as usize + FILTER_TAPS;
+    super::convolve_copy_avx2::validate_block(src_len, src_stride, source_width, ih);
+    super::convolve_copy_avx2::validate_block(dst_len, dst_stride, w, h);
+}
+
 /// Scalar round + clip, identical to `crate::inter::filter::round_clip`
 /// (which is private): `clip255((sum + 64) >> 7)`.
 #[inline]
@@ -220,6 +260,13 @@ pub fn convolve8_scaled_avx2(
     w: usize,
     h: usize,
 ) {
+    validate_scaled_layout(
+        (src.len(), src_stride),
+        (dst.len(), dst_stride),
+        [x0_q4, x_step_q4, y0_q4, y_step_q4],
+        (w, h),
+    );
+
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper when
     // `caps.avx2 == true`. Caps are detected once at OnceLock init and
     // monotonic for the process lifetime. Tests gate every call on a
@@ -311,6 +358,13 @@ pub fn convolve8_scaled_avg_avx2(
     w: usize,
     h: usize,
 ) {
+    validate_scaled_layout(
+        (src.len(), src_stride),
+        (dst.len(), dst_stride),
+        [x0_q4, x_step_q4, y0_q4, y_step_q4],
+        (w, h),
+    );
+
     // SAFETY: see `convolve8_scaled_avx2` — installed only under
     // `caps.avx2`; tests gate on runtime AVX2 detection.
     unsafe {
@@ -510,5 +564,48 @@ mod tests {
             convolve8_scaled_avx2(&src, src_stride, &mut d, w, kernel, 0, step, 0, step, w, h);
             assert!(d.iter().all(|&v| v == 137), "w={w} h={h} not constant");
         }
+    }
+}
+
+#[cfg(test)]
+mod layout_guard_tests {
+    use super::validate_scaled_layout;
+
+    #[test]
+    fn scaled_layout_guard_accepts_exact_tail() {
+        // Four outputs at phase zero, unit step: eleven input taps per axis.
+        validate_scaled_layout((121, 11), (16, 4), [0, 16, 0, 16], (4, 4));
+    }
+
+    #[test]
+    fn scaled_layout_guard_rejects_malformed_geometry() {
+        let bad = [
+            (0, 16, 0, 16, 0, 4),
+            (-1, 16, 0, 16, 4, 4),
+            (0, -1, 0, 16, 4, 4),
+            (i32::MAX, 16, 0, 16, 4, 4),
+            (0, 16, 0, i32::MAX, 4, 4),
+            (0, 16, 0, 64, 4, 64),
+        ];
+        for (x0, xs, y0, ys, w, h) in bad {
+            assert!(
+                std::panic::catch_unwind(|| {
+                    validate_scaled_layout((4096, 64), (4096, 64), [x0, xs, y0, ys], (w, h));
+                })
+                .is_err()
+            );
+        }
+        assert!(
+            std::panic::catch_unwind(|| {
+                validate_scaled_layout((120, 11), (16, 4), [0, 16, 0, 16], (4, 4));
+            })
+            .is_err()
+        );
+        assert!(
+            std::panic::catch_unwind(|| {
+                validate_scaled_layout((121, 11), (15, 4), [0, 16, 0, 16], (4, 4));
+            })
+            .is_err()
+        );
     }
 }

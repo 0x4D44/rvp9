@@ -160,6 +160,8 @@ unsafe fn idct32x32_add_avx2_135_inner(input: &[i32; 1024], dst: &mut [u8], stri
 /// dispatch.
 #[cfg(target_arch = "x86_64")]
 pub fn idct32x32_add_avx2_135(coeffs: &[i32; 1024], dst: &mut [u8], stride: usize) {
+    crate::dsp::validate_predictor_storage(dst.len(), stride, 32, 32)
+        .expect("invalid inverse transform destination");
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. The unit-test path gates each call on a
     // runtime `is_x86_feature_detected!("avx2")` check.

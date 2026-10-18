@@ -390,6 +390,19 @@ pub fn sub_pixel_variance_avx2(
     w: usize,
     h: usize,
 ) -> (u32, u32) {
+    assert!(
+        matches!(w, 4 | 8 | 16 | 32 | 64) && (1..=MAX_SUBPEL_HEIGHT).contains(&h),
+        "unsupported subpixel dimensions"
+    );
+    assert!(xoffset < 8 && yoffset < 8, "unsupported subpixel phase");
+    super::convolve_copy_avx2::validate_block(
+        src.len(),
+        src_stride,
+        w + usize::from(xoffset != 0),
+        h + usize::from(yoffset != 0),
+    );
+    super::convolve_copy_avx2::validate_block(reference.len(), ref_stride, w, h);
+
     debug_assert!(w <= MAX_SUBPEL_WIDTH && h <= MAX_SUBPEL_HEIGHT);
 
     // At the integer centre the bilinear filter is the identity. The search

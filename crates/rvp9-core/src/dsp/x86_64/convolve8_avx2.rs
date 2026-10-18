@@ -84,8 +84,11 @@ pub fn convolve8_avx2(
     w: usize,
     h: usize,
 ) {
-    debug_assert!((1..=64).contains(&w));
-    debug_assert!((1..=64).contains(&h));
+    assert!(
+        matches!(w, 4 | 8 | 16 | 32 | 64),
+        "unsupported convolution width"
+    );
+    assert!((1..=64).contains(&h), "unsupported convolution height");
 
     let intermediate_height = h + 7;
 

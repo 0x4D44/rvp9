@@ -129,9 +129,13 @@ unsafe fn dc_predict_left_avx2_inner(dst: &mut [u8], stride: usize, bs: usize, l
 pub fn dc_predict_left_avx2(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]) {
     // bs = 64 is not in the AVX2 specialisation set; route to scalar.
     if bs == 64 {
+        crate::dsp::validate_predictor_storage(dst.len(), stride, bs, left.len())
+            .unwrap_or_else(|reason| panic!("dc_predict_left_avx2: {reason}"));
         crate::intra_pred::dc_left_predictor(dst, stride, bs, left);
         return;
     }
+    crate::dsp::validate_intra_predictor_layout(dst.len(), stride, bs, left.len())
+        .unwrap_or_else(|reason| panic!("dc_predict_left_avx2: {reason}"));
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock
     // init time (see `crate::dsp::dispatch::init`) and are monotonic
@@ -145,6 +149,29 @@ pub fn dc_predict_left_avx2(dst: &mut [u8], stride: usize, bs: usize, left: &[u8
 mod tests {
     use super::dc_predict_left_avx2;
     use crate::intra_pred::dc_left_predictor;
+
+    #[test]
+    #[should_panic(expected = "edge slice too short")]
+    fn rejects_short_edge_before_avx2_inner() {
+        let mut dst = [0u8; 16];
+        let left = [0u8; 3];
+        dc_predict_left_avx2(&mut dst, 4, 4, &left);
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported block size")]
+    fn rejects_invalid_block_size_before_avx2_inner() {
+        dc_predict_left_avx2(&mut [], 4, 3, &[]);
+    }
+
+    #[test]
+    fn scalar_fallback_accepts_valid_64x64_layout() {
+        let left = vec![87u8; 64];
+        let scalar = run_scalar(64, &left);
+        let mut actual = vec![0u8; 64 * 64];
+        dc_predict_left_avx2(&mut actual, 64, 64, &left);
+        assert_eq!(actual, scalar);
+    }
 
     macro_rules! require_avx2 {
         () => {

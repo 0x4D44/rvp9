@@ -112,6 +112,8 @@ unsafe fn d207_predictor_avx2_inner(dst: &mut [u8], stride: usize, bs: usize, le
 /// Safe wrapper for the AVX2 D207 predictor (`left`-only). Mirrors the
 /// flattened scalar [`crate::intra_pred::d207_predictor`].
 pub fn d207_predictor_avx2(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]) {
+    crate::dsp::validate_intra_predictor_layout(dst.len(), stride, bs, left.len())
+        .unwrap_or_else(|reason| panic!("d207_predictor_avx2: {reason}"));
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock init
     // and monotonic for the process lifetime. Tests gate every call on
@@ -124,6 +126,20 @@ mod tests {
     //! Scalar-vs-AVX2 differential tests for `d207_predictor_avx2`.
     use super::d207_predictor_avx2;
     use crate::intra_pred::{d207_predictor, d207_predictor_4x4};
+
+    #[test]
+    #[should_panic(expected = "edge slice too short")]
+    fn rejects_short_edge_before_avx2_inner() {
+        let mut dst = [0u8; 16];
+        let left = [0u8; 3];
+        d207_predictor_avx2(&mut dst, 4, 4, &left);
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported block size")]
+    fn rejects_invalid_block_size_before_avx2_inner() {
+        d207_predictor_avx2(&mut [], 4, 3, &[]);
+    }
 
     macro_rules! require_avx2 {
         () => {

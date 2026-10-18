@@ -54,11 +54,13 @@ pub fn lpf_horizontal_8_dual_avx2(
     limit1: u8,
     thresh1: u8,
 ) {
+    let second_index = super::lpf_bounds::validate(pixels.len(), s_index, pitch, 4, false, 16);
+
     // Two-singles approach — mirrors the scalar reference structure
     // exactly. The single AVX2 wrapper carries its own SAFETY note
     // (caps invariant via dispatch OnceLock + scalar bounds contract).
     lpf_horizontal_8_avx2(pixels, s_index, pitch, blimit0, limit0, thresh0);
-    lpf_horizontal_8_avx2(pixels, s_index + 8, pitch, blimit1, limit1, thresh1);
+    lpf_horizontal_8_avx2(pixels, second_index, pitch, blimit1, limit1, thresh1);
 }
 
 // Miri cannot interpret AVX2 intrinsics, so this tests module is

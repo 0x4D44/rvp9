@@ -43,8 +43,11 @@ pub fn convolve8_avg_horiz_avx2(
     w: usize,
     h: usize,
 ) {
-    debug_assert!((1..=64).contains(&w));
-    debug_assert!((1..=64).contains(&h));
+    assert!(
+        matches!(w, 4 | 8 | 16 | 32 | 64),
+        "unsupported convolution width"
+    );
+    assert!((1..=64).contains(&h), "unsupported convolution height");
     let mut pred = [0u8; 64 * 64];
     convolve8_horiz_avx2(src, src_stride, &mut pred, w, filter_x, w, h);
     convolve_avg_avx2(&pred, w, dst, dst_stride, w, h);
@@ -61,8 +64,11 @@ pub fn convolve8_avg_vert_avx2(
     w: usize,
     h: usize,
 ) {
-    debug_assert!((1..=64).contains(&w));
-    debug_assert!((1..=64).contains(&h));
+    assert!(
+        matches!(w, 4 | 8 | 16 | 32 | 64),
+        "unsupported convolution width"
+    );
+    assert!((1..=64).contains(&h), "unsupported convolution height");
     let mut pred = [0u8; 64 * 64];
     convolve8_vert_avx2(src, src_stride, &mut pred, w, filter_y, w, h);
     convolve_avg_avx2(&pred, w, dst, dst_stride, w, h);
@@ -81,8 +87,11 @@ pub fn convolve8_avg_avx2(
     w: usize,
     h: usize,
 ) {
-    debug_assert!((1..=64).contains(&w));
-    debug_assert!((1..=64).contains(&h));
+    assert!(
+        matches!(w, 4 | 8 | 16 | 32 | 64),
+        "unsupported convolution width"
+    );
+    assert!((1..=64).contains(&h), "unsupported convolution height");
     let mut pred = [0u8; 64 * 64];
     convolve8_avx2(src, src_stride, &mut pred, w, filter_x, filter_y, w, h);
     convolve_avg_avx2(&pred, w, dst, dst_stride, w, h);

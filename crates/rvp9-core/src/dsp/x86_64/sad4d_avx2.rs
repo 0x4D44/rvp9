@@ -221,11 +221,16 @@ macro_rules! sad4d_avx2_fn {
             ref_stride: usize,
             out: &mut [u32; 4],
         ) {
+            super::convolve_copy_avx2::validate_block(src.len(), src_stride, $w, $h);
+            for reference in refs {
+                super::convolve_copy_avx2::validate_block(reference.len(), ref_stride, $w, $h);
+            }
             // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
             // when `caps.avx2 == true`. Caps are detected once at OnceLock
             // init time and are monotonic for the process lifetime. Test
             // paths gate each call on a runtime `is_x86_feature_detected!`
             // check.
+            // Checked footprints above cover every raw source/reference access.
             unsafe { sad4d_avx2_inner::<$w, $h>(src, src_stride, refs, ref_stride, out) }
         }
     };

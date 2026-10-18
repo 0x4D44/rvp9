@@ -129,6 +129,8 @@ pub fn d117_predictor_avx2(
     left: &[u8],
     above_left: u8,
 ) {
+    crate::dsp::validate_intra_predictor_layout(dst.len(), stride, bs, above.len().min(left.len()))
+        .unwrap_or_else(|reason| panic!("d117_predictor_avx2: {reason}"));
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock init
     // and monotonic for the process lifetime. Tests gate every call on
@@ -141,6 +143,21 @@ mod tests {
     //! Scalar-vs-AVX2 differential tests for `d117_predictor_avx2`.
     use super::d117_predictor_avx2;
     use crate::intra_pred::{PredCtx, d117_predictor};
+
+    #[test]
+    #[should_panic(expected = "edge slice too short")]
+    fn rejects_short_edge_before_avx2_inner() {
+        let mut dst = [0u8; 16];
+        let above = [0u8; 4];
+        let left = [0u8; 3];
+        d117_predictor_avx2(&mut dst, 4, 4, &above, &left, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported block size")]
+    fn rejects_invalid_block_size_before_avx2_inner() {
+        d117_predictor_avx2(&mut [], 4, 3, &[], &[], 0);
+    }
 
     macro_rules! require_avx2 {
         () => {

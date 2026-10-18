@@ -167,6 +167,12 @@ mod tests {
     use super::v_predictor_avx2;
     use crate::intra_pred::{PredCtx, v_predictor};
 
+    #[test]
+    #[should_panic(expected = "unsupported block size")]
+    fn rejects_invalid_block_size_before_avx2_inner() {
+        v_predictor_avx2(&mut [], 4, 3, &[]);
+    }
+
     macro_rules! require_avx2 {
         () => {
             if !is_x86_feature_detected!("avx2") {

@@ -54,12 +54,14 @@ pub fn lpf_vertical_16_dual_avx2(
     limit: u8,
     thresh: u8,
 ) {
+    let second_index = super::lpf_bounds::validate(pixels.len(), s_index, pitch, 8, true, 16);
+
     // Two-singles approach — both halves share the same threshold set
     // (libvpx convention). The second half starts 8 rows down (in pixel
     // units), i.e. `s_index + 8 * pitch`, matching `mb_lpf_vertical_edge_w`'s
     // per-row `s += pitch` advance over 16 iterations.
     lpf_vertical_16_avx2(pixels, s_index, pitch, blimit, limit, thresh);
-    lpf_vertical_16_avx2(pixels, s_index + 8 * pitch, pitch, blimit, limit, thresh);
+    lpf_vertical_16_avx2(pixels, second_index, pitch, blimit, limit, thresh);
 }
 
 // Miri cannot interpret AVX2 intrinsics, so this tests module is

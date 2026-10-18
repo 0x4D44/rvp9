@@ -459,6 +459,8 @@ unsafe fn iht8x8_add_avx2_inner(
 /// through the dispatch.
 #[cfg(target_arch = "x86_64")]
 pub fn iht8x8_add_avx2(input: &[i32; 64], dest: &mut [u8], stride: usize, tx_type: TxType) {
+    crate::dsp::validate_predictor_storage(dest.len(), stride, 8, 8)
+        .expect("invalid inverse transform destination");
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock
     // init time (see `crate::dsp::dispatch::init`) and are monotonic

@@ -273,6 +273,13 @@ pub fn var_sum_sse_avx2(
     w: usize,
     h: usize,
 ) -> (i64, u64) {
+    assert!(
+        matches!(w, 4 | 8 | 16 | 32 | 64) && h > 0,
+        "unsupported variance dimensions"
+    );
+    super::convolve_copy_avx2::validate_block(src.len(), src_stride, w, h);
+    super::convolve_copy_avx2::validate_block(pred.len(), pred_stride, w, h);
+
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper when
     // `caps.avx2 == true`. Caps are detected once at OnceLock init time
     // (see `crate::dsp::dispatch::init`) and are monotonic for the process
@@ -301,7 +308,7 @@ macro_rules! var_sum_sse_avx2_fn {
                                 stringify!($h), "`.")]
         pub fn $name(src: &[u8], src_stride: usize, pred: &[u8], pred_stride: usize) -> (i64, u64) {
             // SAFETY: installed only on AVX2 hosts by `SimdDispatch::build`.
-            unsafe { var_sum_sse_inner(src, src_stride, pred, pred_stride, $w, $h) }
+            var_sum_sse_avx2(src, src_stride, pred, pred_stride, $w, $h)
         }
     };
 }
@@ -327,6 +334,8 @@ pub fn var_sum_sse_16x16_avx2(
     pred: &[u8],
     pred_stride: usize,
 ) -> (i64, u64) {
+    super::convolve_copy_avx2::validate_block(src.len(), src_stride, 16, 16);
+    super::convolve_copy_avx2::validate_block(pred.len(), pred_stride, 16, 16);
     // SAFETY: installed only on AVX2 hosts by `SimdDispatch::build`.
     unsafe { var_sum_sse_16x16_inner(src, src_stride, pred, pred_stride) }
 }
@@ -359,7 +368,7 @@ pub fn get_var_sse_8x8_avx2(
     pred_stride: usize,
 ) -> (i32, u32) {
     // SAFETY: see `var_sum_sse_avx2` — installed only on AVX2 hosts.
-    let (sum, sse) = unsafe { var_sum_sse_inner(src, src_stride, pred, pred_stride, 8, 8) };
+    let (sum, sse) = var_sum_sse_avx2(src, src_stride, pred, pred_stride, 8, 8);
     (sum as i32, sse as u32)
 }
 

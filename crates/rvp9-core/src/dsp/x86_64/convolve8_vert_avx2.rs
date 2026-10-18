@@ -590,6 +590,13 @@ pub fn convolve8_vert_avx2(
     w: usize,
     h: usize,
 ) {
+    assert!(
+        matches!(w, 4 | 8 | 16 | 32 | 64) && (1..=64).contains(&h),
+        "unsupported convolution dimensions"
+    );
+    super::convolve_copy_avx2::validate_block(src.len(), src_stride, w, h + 7);
+    super::convolve_copy_avx2::validate_block(dst.len(), dst_stride, w, h);
+
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock init
     // time and are monotonic for the process lifetime. Test paths gate

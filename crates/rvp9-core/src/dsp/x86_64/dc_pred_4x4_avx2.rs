@@ -116,6 +116,8 @@ unsafe fn dc_predictor_4x4_avx2_inner(dst: &mut [u8], stride: usize, above: &[u8
 /// platform.
 #[cfg(target_arch = "x86_64")]
 pub fn dc_predictor_4x4_avx2(dst: &mut [u8], stride: usize, above: &[u8], left: &[u8]) {
+    crate::dsp::validate_intra_predictor_layout(dst.len(), stride, 4, above.len().min(left.len()))
+        .unwrap_or_else(|reason| panic!("dc_predictor_4x4_avx2: {reason}"));
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock
     // init time (see `crate::dsp::dispatch::init`) and are monotonic
@@ -145,6 +147,61 @@ mod tests {
     use super::dc_predictor_4x4_avx2;
     use crate::intra_pred::{PredCtx, dc_predictor};
     use proptest::prelude::*;
+
+    fn forced_avx2_dispatch_predictor() -> fn(&mut [u8], usize, &[u8], &[u8]) {
+        let dispatch = crate::dsp::dispatch::SimdDispatch::build(crate::dsp::caps::X86Caps {
+            avx2: true,
+            ..Default::default()
+        });
+        dispatch.dc_predictor_4x4()
+    }
+
+    #[test]
+    #[should_panic(expected = "edge slice too short")]
+    fn rejects_short_edge_before_avx2_inner() {
+        let mut dst = [0u8; 16];
+        let above = [0u8; 4];
+        let left = [0u8; 3];
+        dc_predictor_4x4_avx2(&mut dst, 4, &above, &left);
+    }
+
+    #[test]
+    #[should_panic(expected = "edge slice too short")]
+    fn forced_avx2_dispatch_getter_rejects_short_above_before_avx2_inner() {
+        let predictor = forced_avx2_dispatch_predictor();
+        let mut dst = [0u8; 16];
+        let left = [0u8; 4];
+        predictor(&mut dst, 4, &[], &left);
+    }
+
+    #[test]
+    #[should_panic(expected = "edge slice too short")]
+    fn forced_avx2_dispatch_getter_rejects_short_left_before_avx2_inner() {
+        let predictor = forced_avx2_dispatch_predictor();
+        let mut dst = [0u8; 16];
+        let above = [0u8; 4];
+        predictor(&mut dst, 4, &above, &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "destination slice too short")]
+    fn forced_avx2_dispatch_getter_rejects_short_dst_before_avx2_inner() {
+        let predictor = forced_avx2_dispatch_predictor();
+        let mut dst = [0u8; 15];
+        let above = [0u8; 4];
+        let left = [0u8; 4];
+        predictor(&mut dst, 4, &above, &left);
+    }
+
+    #[test]
+    #[should_panic(expected = "predictor layout overflow")]
+    fn forced_avx2_dispatch_getter_rejects_overflow_stride_before_avx2_inner() {
+        let predictor = forced_avx2_dispatch_predictor();
+        let mut dst = [0u8; 16];
+        let above = [0u8; 4];
+        let left = [0u8; 4];
+        predictor(&mut dst, usize::MAX, &above, &left);
+    }
 
     macro_rules! require_avx2 {
         () => {

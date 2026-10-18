@@ -141,6 +141,9 @@ pub fn convolve_avg_avx2(
     w: usize,
     h: usize,
 ) {
+    super::convolve_copy_avx2::validate_block(src.len(), src_stride, w, h);
+    super::convolve_copy_avx2::validate_block(dst.len(), dst_stride, w, h);
+
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock
     // init time (see `crate::dsp::dispatch::init`) and are monotonic

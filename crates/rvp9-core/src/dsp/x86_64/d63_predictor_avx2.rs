@@ -94,6 +94,15 @@ unsafe fn d63_predictor_avx2_inner(dst: &mut [u8], stride: usize, bs: usize, abo
 /// Safe wrapper for the AVX2 D63 predictor (`above`-only). Mirrors the
 /// flattened scalar [`crate::intra_pred::d63_predictor`].
 pub fn d63_predictor_avx2(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
+    crate::dsp::validate_intra_predictor_layout(dst.len(), stride, bs, above.len())
+        .unwrap_or_else(|reason| panic!("d63_predictor_avx2: {reason}"));
+    let extended_edge_len = bs
+        .checked_mul(2)
+        .expect("d63_predictor_avx2: extended edge length overflow");
+    assert!(
+        above.len() >= extended_edge_len,
+        "d63_predictor_avx2: extended above edge too short"
+    );
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock init
     // and monotonic for the process lifetime. Tests gate every call on
@@ -106,6 +115,20 @@ mod tests {
     //! Scalar-vs-AVX2 differential tests for `d63_predictor_avx2`.
     use super::d63_predictor_avx2;
     use crate::intra_pred::{d63_predictor, d63_predictor_4x4};
+
+    #[test]
+    #[should_panic(expected = "extended above edge too short")]
+    fn rejects_short_extended_edge_before_avx2_inner() {
+        let mut dst = [0u8; 16];
+        let above = [0u8; 4];
+        d63_predictor_avx2(&mut dst, 4, 4, &above);
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported block size")]
+    fn rejects_invalid_block_size_before_avx2_inner() {
+        d63_predictor_avx2(&mut [], 4, 3, &[]);
+    }
 
     macro_rules! require_avx2 {
         () => {

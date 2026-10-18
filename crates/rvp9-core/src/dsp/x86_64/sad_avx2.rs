@@ -190,11 +190,14 @@ macro_rules! sad_avx2_fn {
         /// The dispatch slot points here on AVX2 hosts and at the scalar
         /// reference elsewhere.
         pub fn $name(src: &[u8], src_stride: usize, reference: &[u8], ref_stride: usize) -> u32 {
+            super::convolve_copy_avx2::validate_block(src.len(), src_stride, $w, $h);
+            super::convolve_copy_avx2::validate_block(reference.len(), ref_stride, $w, $h);
             // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
             // when `caps.avx2 == true`. Caps are detected once at OnceLock
             // init time (see `crate::dsp::dispatch::init`) and are monotonic
             // for the process lifetime. Test paths gate each call on a
             // runtime `is_x86_feature_detected!("avx2")` check.
+            // Checked footprints above cover every raw source/reference access.
             unsafe { sad_avx2_inner(src, src_stride, reference, ref_stride, $w, $h) }
         }
     };

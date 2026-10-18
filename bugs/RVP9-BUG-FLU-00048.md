@@ -27,6 +27,10 @@ On x86_64 hosts where normal runtime dispatch selects AVX2, safe external code c
 
 ## Fix
 
-<unfixed — raised only>
+Safe x86 dispatch wrappers now check slice footprints and overflow before raw SIMD access, including the reported DC4 function-pointer getter. Coverage extends across transforms, predictors, LPF, convolution, distortion metrics and dequantization. Public signatures and dispatch selection remain unchanged.
+
+Regression evidence and exact commands: `wrk_journals/2026.10.18 - JRN - RVP9-BUG-FLU-00048 safe SIMD dispatch bounds.md`. A safe zero-stride SSE2 canary failed on the expected assertion with its guard removed and passed after restoration. Shared footprint guard reversals also failed for short/overflowing storage. Forced-AVX2 dispatch getter tests reject invalid DC4 inputs before ISA entry.
+
+Host limit: Apple Silicon Rosetta reports AVX2 unavailable. Release-semantics rejection checks execute; valid AVX2 differential execution and performance remain unmeasured. Separate IDCT32 final-pointer defect RVP9-BUG-FLU-00050 is not addressed here.
 
 ## Notes

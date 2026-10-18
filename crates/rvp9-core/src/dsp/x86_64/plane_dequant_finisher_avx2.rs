@@ -203,13 +203,33 @@ pub fn plane_dequant_finisher_avx2(
     dq_shift: u32,
     dq_coefs_out: &mut [i32],
 ) {
+    assert_eq!(
+        scratch_raster.len(),
+        scratch_dqv.len(),
+        "dequant scratch length mismatch"
+    );
+    assert_eq!(
+        scratch_raster.len(),
+        scratch_val.len(),
+        "dequant scratch length mismatch"
+    );
+    assert_eq!(
+        scratch_raster.len(),
+        scratch_sign.len(),
+        "dequant scratch length mismatch"
+    );
+    assert!(
+        scratch_raster
+            .iter()
+            .all(|&r| usize::from(r) < dq_coefs_out.len()),
+        "dequant raster index out of bounds"
+    );
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock
     // init time (see `crate::dsp::dispatch::init`) and are monotonic
     // for the process lifetime. Slice-length parity and raster-index
-    // bounds are documented as caller contract in
-    // `crate::quant::plane_dequant_finisher` (the scalar reference)
-    // and asserted at the top of the inner kernel.
+    // bounds are checked above before any vector load or unchecked
+    // scatter store can execute.
     unsafe {
         plane_dequant_finisher_avx2_inner(
             scratch_raster,

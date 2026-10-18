@@ -477,6 +477,8 @@ unsafe fn idct16x16_add_sse2_256_inner(input: &[i32; 256], dst: &mut [u8], strid
 /// testing without going through the dispatch.
 #[cfg(target_arch = "x86_64")]
 pub fn idct16x16_add_sse2_256(input: &[i32; 256], dst: &mut [u8], stride: usize) {
+    crate::dsp::validate_predictor_storage(dst.len(), stride, 16, 16)
+        .expect("invalid inverse transform destination");
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.sse2 == true`. SSE2 is architecturally universal on
     // x86_64 (mandated by both SysV AMD64 and MS x64 ABIs), so the
@@ -595,6 +597,8 @@ unsafe fn idct16x16_add_sse2_38_inner(input: &[i32; 256], dst: &mut [u8], stride
 /// Safe wrapper for the SSE2 i16-lane EOB ≤ 38 16×16 IDCT.
 #[cfg(target_arch = "x86_64")]
 pub fn idct16x16_add_sse2_38(input: &[i32; 256], dst: &mut [u8], stride: usize) {
+    crate::dsp::validate_predictor_storage(dst.len(), stride, 16, 16)
+        .expect("invalid inverse transform destination");
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.sse2 == true`. SSE2 is universal on x86_64.
     unsafe { idct16x16_add_sse2_38_inner(input, dst, stride) }
@@ -910,6 +914,8 @@ unsafe fn idct16x16_add_sse2_10_inner(input: &[i32; 256], dst: &mut [u8], stride
 /// Safe wrapper for the SSE2 i16-lane EOB ≤ 10 16×16 IDCT.
 #[cfg(target_arch = "x86_64")]
 pub fn idct16x16_add_sse2_10(input: &[i32; 256], dst: &mut [u8], stride: usize) {
+    crate::dsp::validate_predictor_storage(dst.len(), stride, 16, 16)
+        .expect("invalid inverse transform destination");
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.sse2 == true`. SSE2 is universal on x86_64.
     unsafe { idct16x16_add_sse2_10_inner(input, dst, stride) }

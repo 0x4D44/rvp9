@@ -1051,7 +1051,10 @@ pub fn lpf_vertical_16_avx2(
     limit: u8,
     thresh: u8,
 ) {
-    // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
+    super::lpf_bounds::validate(pixels.len(), s_index, pitch, 8, true, 8);
+
+    // SAFETY: The release-mode validator above proves the full SIMD footprint.
+    // `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock
     // init time (see `crate::dsp::dispatch::init`) and are monotonic
     // for the process lifetime. The bounds invariant

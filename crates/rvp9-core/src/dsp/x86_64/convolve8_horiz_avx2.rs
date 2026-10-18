@@ -419,6 +419,25 @@ pub fn convolve8_horiz_avx2(
     w: usize,
     h: usize,
 ) {
+    assert!(
+        matches!(w, 4 | 8 | 16 | 32 | 64) && (1..=71).contains(&h),
+        "unsupported convolution dimensions"
+    );
+    super::convolve_copy_avx2::validate_block(src.len(), src_stride, w + 7, h);
+    super::convolve_copy_avx2::validate_block(dst.len(), dst_stride, w, h);
+    // Nonfinal rows load one extra byte (five for width four). When
+    // overlapping rows cannot supply it, retain the scalar footprint.
+    let vector_width = if w == 4 { 16 } else { w + 8 };
+    if h > 1
+        && (h - 2)
+            .checked_mul(src_stride)
+            .and_then(|offset| offset.checked_add(vector_width))
+            .is_none_or(|required| required > src.len())
+    {
+        crate::inter::filter::convolve8_horiz(src, src_stride, dst, dst_stride, filter_x, w, h);
+        return;
+    }
+
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock init
     // time (see `crate::dsp::dispatch::init`) and are monotonic for the
@@ -684,5 +703,19 @@ mod tests {
                 "dispatch round-trip mismatch w={w} h={h}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod overlap_guard_tests {
+    #[test]
+    fn horizontal_overlapping_rows_keep_scalar_footprint() {
+        // Eleven bytes cover both scalar rows. A direct 16-byte SIMD read
+        // would escape this slice; the wrapper must choose its scalar path.
+        let src = [37; 11];
+        let filter = [0, 0, 0, 127, 1, 0, 0, 0];
+        let mut dst = [0; 8];
+        super::convolve8_horiz_avx2(&src, 0, &mut dst, 4, &filter, 4, 2);
+        assert_eq!(dst, [37; 8]);
     }
 }

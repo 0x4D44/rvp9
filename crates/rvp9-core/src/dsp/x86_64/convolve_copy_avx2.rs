@@ -130,6 +130,9 @@ pub fn convolve_copy_avx2(
     w: usize,
     h: usize,
 ) {
+    super::convolve_copy_avx2::validate_block(src.len(), src_stride, w, h);
+    super::convolve_copy_avx2::validate_block(dst.len(), dst_stride, w, h);
+
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock init
     // time (see `crate::dsp::dispatch::init`) and are monotonic for the
@@ -280,6 +283,88 @@ mod tests {
             (dispatch_avx2.convolve_copy())(&src, src_stride, &mut dst_a, dst_stride, w, h);
             (dispatch_scalar.convolve_copy())(&src, src_stride, &mut dst_s, dst_stride, w, h);
             assert_eq!(dst_a, dst_s, "dispatch round-trip mismatch at w={w}, h={h}");
+        }
+    }
+}
+
+// Shared by the safe wrappers: validate the final accessed row without wrapping.
+pub(super) fn validate_block(len: usize, stride: usize, width: usize, height: usize) {
+    let required = height
+        .checked_sub(1)
+        .and_then(|rows| rows.checked_mul(stride))
+        .and_then(|offset| offset.checked_add(width));
+    assert!(
+        width > 0 && required.is_some_and(|required| required <= len),
+        "invalid SIMD block storage"
+    );
+}
+
+#[cfg(test)]
+mod storage_guard_tests {
+    use super::validate_block;
+
+    #[test]
+    #[should_panic(expected = "invalid SIMD block storage")]
+    fn simd_storage_guard_rejects_short_tail() {
+        validate_block(15, 4, 4, 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid SIMD block storage")]
+    fn simd_storage_guard_rejects_overflow() {
+        validate_block(usize::MAX, usize::MAX, 4, 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid SIMD block storage")]
+    fn simd_storage_guard_rejects_zero_height() {
+        validate_block(0, 4, 4, 0);
+    }
+
+    #[test]
+    fn simd_storage_guard_accepts_exact_tail() {
+        validate_block(19, 5, 4, 4);
+    }
+    #[test]
+    fn safe_wrappers_reject_malformed_storage_before_simd() {
+        use super::super::{
+            convolve_avg_avx2, convolve8_horiz_avx2, convolve8_vert_avx2, sad_avx2, sad4d_avx2,
+            subpel_variance_avx2, variance_avx2,
+        };
+        fn rejects(f: impl FnOnce() + std::panic::UnwindSafe) {
+            assert!(std::panic::catch_unwind(f).is_err());
+        }
+        rejects(|| super::convolve_copy_avx2(&[], 4, &mut [], 4, 4, 4));
+        rejects(|| convolve_avg_avx2(&[], 4, &mut [], 4, 4, 4));
+        rejects(|| convolve8_horiz_avx2(&[], 16, &mut [], 4, &[0; 8], 4, 4));
+        rejects(|| convolve8_vert_avx2(&[], 4, &mut [], 4, &[0; 8], 4, 4));
+        rejects(|| {
+            sad_avx2::vpx_sad4x4_avx2(&[], 4, &[], 4);
+        });
+        for short_ref in 0..4 {
+            rejects(move || {
+                let valid = [0; 16];
+                let mut refs = [&valid[..]; 4];
+                refs[short_ref] = &[];
+                sad4d_avx2::vpx_sad4x4x4d_avx2(&valid, 4, &refs, 4, &mut [0; 4]);
+            });
+        }
+        rejects(|| {
+            variance_avx2::var_sum_sse_avx2(&[], 4, &[], 4, 4, 4);
+        });
+        rejects(|| {
+            variance_avx2::var_sum_sse_16x16_avx2(&[], 16, &[], 16);
+        });
+        rejects(|| {
+            variance_avx2::var_sum_sse_4x4_avx2(&[], 4, &[], 4);
+        });
+        rejects(|| {
+            variance_avx2::get_var_sse_8x8_avx2(&[], 8, &[], 8);
+        });
+        for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1), (8, 1)] {
+            rejects(move || {
+                subpel_variance_avx2::sub_pixel_variance_avx2(&[], 4, &[], 4, x, y, 4, 4);
+            });
         }
     }
 }

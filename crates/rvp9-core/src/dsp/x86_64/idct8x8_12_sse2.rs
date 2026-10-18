@@ -421,6 +421,8 @@ unsafe fn idct8x8_add_sse2_12_inner(input: &[i32; 64], dst: &mut [u8], stride: u
 /// testing without going through the dispatch.
 #[cfg(target_arch = "x86_64")]
 pub fn idct8x8_add_sse2_12(input: &[i32; 64], dst: &mut [u8], stride: usize) {
+    crate::dsp::validate_predictor_storage(dst.len(), stride, 8, 8)
+        .expect("invalid inverse transform destination");
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.sse2 == true`. SSE2 is architecturally universal on
     // x86_64 (mandated by both SysV AMD64 and MS x64 ABIs), so the

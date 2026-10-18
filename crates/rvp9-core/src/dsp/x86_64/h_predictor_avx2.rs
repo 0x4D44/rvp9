@@ -125,6 +125,12 @@ unsafe fn h_predictor_avx2_inner(dst: &mut [u8], stride: usize, bs: usize, left:
 /// AVX2 hosts and at the scalar adapter on every other platform.
 #[cfg(target_arch = "x86_64")]
 pub fn h_predictor_avx2(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]) {
+    let layout = if bs == 64 {
+        crate::dsp::validate_predictor_storage(dst.len(), stride, bs, left.len())
+    } else {
+        crate::dsp::validate_intra_predictor_layout(dst.len(), stride, bs, left.len())
+    };
+    layout.unwrap_or_else(|reason| panic!("h_predictor_avx2: {reason}"));
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock
     // init time (see `crate::dsp::dispatch::init`) and are monotonic
@@ -149,6 +155,20 @@ mod tests {
     //! random `left` rows, plus a dispatch round-trip guard.
     use super::h_predictor_avx2;
     use crate::intra_pred::{PredCtx, h_predictor};
+
+    #[test]
+    #[should_panic(expected = "edge slice too short")]
+    fn rejects_short_edge_before_avx2_inner() {
+        let mut dst = [0u8; 16];
+        let left = [0u8; 3];
+        h_predictor_avx2(&mut dst, 4, 4, &left);
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported block size")]
+    fn rejects_invalid_block_size_before_avx2_inner() {
+        h_predictor_avx2(&mut [], 4, 3, &[]);
+    }
 
     macro_rules! require_avx2 {
         () => {
