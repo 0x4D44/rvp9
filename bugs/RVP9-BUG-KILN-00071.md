@@ -6,15 +6,15 @@
 - **Area:** encoder/synthetic API
 - **Raised:** 2026-08-16T08:19:15Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T155721Z-0787c522
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00071-run-verify-20261018T155721Z-0787c522
+- **Owner base:** 6197f93e8d40e1caa5ce2f20cd3473b3c2400423
+- **Owner fingerprint:** sha256:21dcfda8246afe506dab715b91965f549214326b19a4dc9a89b88c0e7bc3bcee
+- **Owner since:** 2026-10-18T15:57:21Z
+- **Owner until:** 2026-10-18T19:57:21Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
