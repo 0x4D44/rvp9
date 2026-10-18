@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00119 — Decoder emits invalid Y4M across dynamic stream changes
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** cli/rvp9dec output correctness
 - **Raised:** 2026-08-22T20:44:02Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T163710Z-80f4c01e
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00119-run-verify-20261018T163710Z-80f4c01e
-- **Owner base:** bc5a3e1094d41cba0efacfaeed389508ba211ee8
-- **Owner fingerprint:** sha256:d7892924040f92bda1d4657d25d3459cf7111ab66385963dabe983b05982228e
-- **Owner since:** 2026-10-18T16:37:10Z
-- **Owner until:** 2026-10-18T20:37:10Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:02Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T03:31:12Z, deltic:auto role=fix run=fix-20261016T032211Z-01b803ca branch=task/bug-RVP9-BUG-KIL-00119-run-fix-20261016T032211Z-01b803ca code=bebdf8eb5ceaab40999fa602124e4945bb413931 gate=manual)
+- **State history:** Open (2026-08-22T20:44:02Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T03:31:12Z, deltic:auto role=fix run=fix-20261016T032211Z-01b803ca branch=task/bug-RVP9-BUG-KIL-00119-run-fix-20261016T032211Z-01b803ca code=bebdf8eb5ceaab40999fa602124e4945bb413931 gate=manual) -> Closed (2026-10-18T16:40:29Z, deltic:manual role=verify run=verify-20261018T163710Z-80f4c01e verified_fix_run=fix-20261016T032211Z-01b803ca verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ rvp9dec writes one Y4M header from the first displayed frame, then writes later 
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:40:29Z, deltic:auto run=verify-20261018T163710Z-80f4c01e verified_fix_run=fix-20261016T032211Z-01b803ca verdict=close)
+
+Verifier note: Manual verify: Independent verification reproduced rejection of dynamic geometry/chroma changes; removing the changed-format guard makes the retained unit and CLI integration checks fail. Restored build passes all focused checks; source is clean.
 
 ## Notes
