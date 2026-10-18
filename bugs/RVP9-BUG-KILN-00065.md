@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00065 — rvp9enc one-pass creates and header-writes the output file before encoding starts
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc
 - **Raised:** 2026-07-31T10:22:26Z
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T164417Z-37f59a3f
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00065-run-verify-20261018T164417Z-37f59a3f
-- **Owner base:** 352e2be84ef18b5e5530349ffcec932a9e71430c
-- **Owner fingerprint:** sha256:628fcca038d505ba03f35e5a9ee4b816fae3d5c3cac83fb98465629d37180657
-- **Owner since:** 2026-10-18T16:44:17Z
-- **Owner until:** 2026-10-18T20:44:17Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:22:26Z, raised via `deltic bugs new` model=claude-opus-5@high) → Blocked (2026-10-16, Codex; Arthur decision required on one-pass output failure contract) → Open (2026-10-17T05:14:39Z, deltic:manual host=flux verdict=reopen) → Fixed (2026-10-17T05:24:45Z, deltic:auto role=fix run=fix-20261017T051448Z-17f1d8d7 branch=task/bug-RVP9-BUG-KILN-00065-run-fix-20261017T051448Z-17f1d8d7 code=b74adaddb222c644d7532ff970b4da5f3133f5ac gate=manual)
+- **State history:** Open (2026-07-31T10:22:26Z, raised via `deltic bugs new` model=claude-opus-5@high) → Blocked (2026-10-16, Codex; Arthur decision required on one-pass output failure contract) → Open (2026-10-17T05:14:39Z, deltic:manual host=flux verdict=reopen) → Fixed (2026-10-17T05:24:45Z, deltic:auto role=fix run=fix-20261017T051448Z-17f1d8d7 branch=task/bug-RVP9-BUG-KILN-00065-run-fix-20261017T051448Z-17f1d8d7 code=b74adaddb222c644d7532ff970b4da5f3133f5ac gate=manual) → Closed (2026-10-18T16:46:15Z, deltic:manual role=verify run=verify-20261018T164417Z-37f59a3f verified_fix_run=fix-20261017T051448Z-17f1d8d7 verdict=close)
 
 ## Observation
 
@@ -38,6 +38,10 @@ Confirmed by reading the current tree at 4abe0d8 + 3a7aba2.
 ## Fix
 
 Deferred writer creation until the first ready ordinary, flush or spatial packet. Before that point, errors preserve an existing destination or leave a missing path absent. Later failures may leave partial output. Empty input remains rejected before opening output. PathGuard protections and successful stream finalization remain in use.
+
+### Verification summary (2026-10-18T16:46:15Z, deltic:auto run=verify-20261018T164417Z-37f59a3f verified_fix_run=fix-20261017T051448Z-17f1d8d7 verdict=close)
+
+Verifier note: Manual verify: Independent verification passed all 19 CLI roundtrip tests. Restoring eager writer creation makes both retained lag2 pre-packet regressions fail: the old code overwrites a sentinel destination with a 32-byte IVF header and creates a previously absent path. Restored tests pass; the approved contract allows partial output only after the first packet.
 
 ## Notes
 
