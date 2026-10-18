@@ -1,0 +1,114 @@
+CLAIM verify-20261018T171221Z-48a8dd1f; fix123b0a1c ancestor; HEAD=06e93811c6ea1a52386395d1d6ad42de8865f421
+ORIGINAL SHA256=d944cf3ed2c8147fb884aa03488d8312ec1501cf399a56e8a1b2bac2ee3686b6
+BASELINE_DIAGNOSTIC_REGRESSIONS COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib diagnostic_override_ -- --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.1
+   Compiling libc v0.2.186
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-harness)
+   Compiling generic-array v0.14.7
+   Compiling cpufeatures v0.2.17
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 03s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-3c11de842c2170c6)
+
+running 3 tests
+
+thread 'diagnostic_env::tests::diagnostic_override_scope_restores_nested_and_unwound_values' (288144054) panicked at crates/rvp9-encoder/src/diagnostic_env.rs:111:17:
+exercise diagnostic scope restoration
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test diagnostic_env::tests::diagnostic_override_scope_restores_nested_and_unwound_values ... ok
+test frame_loop::tests::diagnostic_override_does_not_change_another_threads_encoder ... ok
+test diagnostic_env::tests::diagnostic_override_workers_inherit_snapshot_and_restore_between_jobs ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 822 filtered out; finished in 0.03s
+
+BASELINE_DIAGNOSTIC_REGRESSIONS EXIT=0
+ORIGINAL_TIGHT_STRIDED COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib frame_loop::tests::w_lag_zero_tight_and_strided_paths_match -- --exact --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.71s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-3c11de842c2170c6)
+
+running 1 test
+test frame_loop::tests::w_lag_zero_tight_and_strided_paths_match ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.02s
+
+ORIGINAL_TIGHT_STRIDED EXIT=0
+ROOT REVERSAL: only cfg(test) override storage becomes process-shared instead of thread-local; mutex makes access memory-safe, no std::env mutation; all override API/snapshots/production readers and tests retained.
+SHARED_OVERRIDE_STORAGE COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib frame_loop::tests::diagnostic_override_does_not_change_another_threads_encoder -- --exact --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.03s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-3c11de842c2170c6)
+
+running 1 test
+
+thread 'frame_loop::tests::diagnostic_override_does_not_change_another_threads_encoder' (288164891) panicked at crates/rvp9-encoder/src/frame_loop.rs:15267:9:
+assertion `left == right` failed: another test changed frame Q
+  left: 100
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test frame_loop::tests::diagnostic_override_does_not_change_another_threads_encoder ... FAILED
+
+failures:
+
+failures:
+    frame_loop::tests::diagnostic_override_does_not_change_another_threads_encoder
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p rvp9-encoder --lib`
+SHARED_OVERRIDE_STORAGE EXIT=101
+RESTORED SHA256=d944cf3ed2c8147fb884aa03488d8312ec1501cf399a56e8a1b2bac2ee3686b6
+RESTORED_DIAGNOSTIC_REGRESSIONS COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib diagnostic_override_ -- --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.26s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-3c11de842c2170c6)
+
+running 3 tests
+
+thread 'diagnostic_env::tests::diagnostic_override_scope_restores_nested_and_unwound_values' (288179205) panicked at crates/rvp9-encoder/src/diagnostic_env.rs:111:17:
+exercise diagnostic scope restoration
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test diagnostic_env::tests::diagnostic_override_scope_restores_nested_and_unwound_values ... ok
+test frame_loop::tests::diagnostic_override_does_not_change_another_threads_encoder ... ok
+test diagnostic_env::tests::diagnostic_override_workers_inherit_snapshot_and_restore_between_jobs ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 822 filtered out; finished in 0.03s
+
+RESTORED_DIAGNOSTIC_REGRESSIONS EXIT=0
+RESTORED_TIGHT_STRIDED COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib frame_loop::tests::w_lag_zero_tight_and_strided_paths_match -- --exact --nocapture < /dev/null; CARGO_PROFILE_DEV_OPT_LEVEL=0
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/crates/rvp9-encoder)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.21s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-3c11de842c2170c6)
+
+running 1 test
+test frame_loop::tests::w_lag_zero_tight_and_strided_paths_match ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.02s
+
+RESTORED_TIGHT_STRIDED EXIT=0
+FINAL_DIFF_EXIT=0
+FINAL_STATUS=''
