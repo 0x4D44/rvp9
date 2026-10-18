@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00057 — Spatial speed summary emits unescaped clip lists into CSV columns
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** qualification/spatial-summary
 - **Raised:** 2026-10-18T20:10:46Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T201105Z-bbaaf303
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00057-run-fix-20261018T201105Z-bbaaf303
-- **Owner base:** c9db37af02b35bdc9d73aaadbf7e65385f16463c
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T20:11:05Z
-- **Owner until:** 2026-10-19T00:11:05Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-18T20:10:46Z, raised via `deltic bugs new --land` model=gpt-6.1-sol@medium)
+- **State history:** Open (2026-10-18T20:10:46Z, raised via `deltic bugs new --land` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T20:13:20Z, deltic:auto role=fix run=fix-20261018T201105Z-bbaaf303 branch=task/bug-RVP9-BUG-FLU-00057-run-fix-20261018T201105Z-bbaaf303 code=d44c4b28987ad97da05c412267d9725b0e5fcfe1 gate=manual)
 
 ## Observation
 
