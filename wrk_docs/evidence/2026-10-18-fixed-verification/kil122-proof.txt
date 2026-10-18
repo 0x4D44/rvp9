@@ -1,0 +1,184 @@
+RVP9-BUG-KIL-00122 verification transcript
+Worktree: /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r
+Bug record: bugs/RVP9-BUG-KIL-00122.md (State Fixed)
+No ledger verdict or record edits were made.
+
+Precheck and claim
+- Fix commit: 38cd5c8edb90ccae39503e86cecc8b2ecc5139a1
+- Fix commit parent: b995975341259d3d59f67ebae83c66479ea4ec16 (single-parent fix commit).
+- git merge-base --is-ancestor 38cd5c8edb90ccae39503e86cecc8b2ecc5139a1 HEAD exited 0.
+- git merge-base --is-ancestor 38cd5c8edb90ccae39503e86cecc8b2ecc5139a1 origin/main exited 0.
+- Worktree HEAD: c0575836ef0ec930350ff78a74252ee076a62d74.
+- origin/main at ancestry check: 746cff4ebb61c2efee57605e9dbf59e6cd4acf9c.
+- Claim command: deltic bugs claim RVP9-BUG-KIL-00122 --role verify
+- Claim output:
+  heads-up: 1 other live record(s) name the same code — check before you start:
+    RVP9-BUG-FLUX-00005 [Fixed] shares: crates/rvp9-encoder/src/frame_loop.rs
+    if one is the same defect, release this claim and work (or close) the other
+  Claimed RVP9-BUG-KIL-00122 (branch task/bug-RVP9-BUG-KIL-00122-run-verify-20261018T180234Z-c4e1f69f, lease until 2026-10-18T22:02:34Z)
+    run verify-20261018T180234Z-c4e1f69f
+- Run token: verify-20261018T180234Z-c4e1f69f.
+- The overlapping FLUX-00005 record is about a one-tile loop-filter worker panic and is distinct from KIL-00122's lost two-pass per-layer allocation state.
+- The KIL-00122 record still has the stale Fix placeholder '<unfixed — raised only>' and only commit IDs under Notes. Both sections were left unchanged.
+
+Production source
+- Mutated file: crates/rvp9-encoder/src/frame_loop.rs.
+- Baseline and restored SHA-256: 313e8260c26c7e7d9858af2bc833c1103c8e14145f0b0ab351d03ce56f2508db.
+- Exact-byte backup: .scratch/kil122-frame_loop.original.rs; its SHA-256 matches the source.
+- Mutation: changed the guard from if config.temporal_layers > 1 to if config.temporal_layers > 3, allowing the retained 2- and 3-layer regression inputs through the production early rejection. Restored by copying the exact backup bytes; cmp -s exited 0.
+- Final git diff --check exited 0; git diff --name-only was empty; final git status --short was empty (scratch evidence is ignored). No tracked source or ledger diff remains.
+
+Focused checks
+Commands were run with stdin closed and bounded by deltic timeout 300. Each selected exactly one retained test.
+
+
+--- Encoder/API baseline (exit 0)
+Command: deltic timeout 300 cargo test --locked -p rvp9-encoder --test w_2pass_vbr two_pass_temporal_svc_rejected_before_first_pass -- --exact --nocapture </dev/null
+Complete output:
+   Compiling crossbeam-utils v0.8.21
+   Compiling proc-macro2 v1.0.106
+   Compiling version_check v0.9.5
+   Compiling quote v1.0.45
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-core)
+   Compiling unicode-ident v1.0.24
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling libc v0.2.186
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-decoder)
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling itoa v1.0.18
+   Compiling static_assertions v1.1.0
+   Compiling memchr v2.8.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-harness)
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling cpufeatures v0.2.17
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 06s
+     Running tests/w_2pass_vbr.rs (target/debug/deps/w_2pass_vbr-8903e24927cdae59)
+
+running 1 test
+test two_pass_temporal_svc_rejected_before_first_pass ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+--- CLI baseline (exit 0)
+Command: deltic timeout 300 cargo test --locked -p rvp9-cli --test cli_arg_coverage enc_two_pass_temporal_svc_rejected_before_output_creation -- --exact --nocapture </dev/null
+Complete output:
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 23.86s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+test enc_two_pass_temporal_svc_rejected_before_output_creation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.34s
+
+
+--- Encoder/API production-guard mutant (exit 101; retained assertion failure)
+Command: deltic timeout 300 cargo test --locked -p rvp9-encoder --test w_2pass_vbr two_pass_temporal_svc_rejected_before_first_pass -- --exact --nocapture </dev/null
+Complete output:
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 27.42s
+     Running tests/w_2pass_vbr.rs (target/debug/deps/w_2pass_vbr-8903e24927cdae59)
+
+running 1 test
+
+thread 'two_pass_temporal_svc_rejected_before_first_pass' (289569092) panicked at crates/rvp9-encoder/tests/w_2pass_vbr.rs:415:5:
+two-pass temporal SVC must return InvalidConfig before gathering first-pass stats: 2 temporal layers with empty input: accepted 0 frames; 2 temporal layers with three-frame input: accepted 3 frames; 3 temporal layers with empty input: accepted 0 frames; 3 temporal layers with three-frame input: accepted 3 frames
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test two_pass_temporal_svc_rejected_before_first_pass ... FAILED
+
+failures:
+
+failures:
+    two_pass_temporal_svc_rejected_before_first_pass
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p rvp9-encoder --test w_2pass_vbr`
+
+--- CLI production-guard mutant (exit 101; retained assertion failure)
+Command: deltic timeout 300 cargo test --locked -p rvp9-cli --test cli_arg_coverage enc_two_pass_temporal_svc_rejected_before_output_creation -- --exact --nocapture </dev/null
+Complete output:
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.57s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+
+thread 'enc_two_pass_temporal_svc_rejected_before_output_creation' (289573537) panicked at crates/rvp9-cli/tests/cli_arg_coverage.rs:697:5:
+two-pass temporal SVC must be rejected without creating output or changing input: 2 temporal layers: command succeeded; 2 temporal layers: missing two-pass/temporal diagnostic: ; 2 temporal layers: output file was created; 3 temporal layers: command succeeded; 3 temporal layers: missing two-pass/temporal diagnostic: ; 3 temporal layers: output file was created
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test enc_two_pass_temporal_svc_rejected_before_output_creation ... FAILED
+
+failures:
+
+failures:
+    enc_two_pass_temporal_svc_rejected_before_output_creation
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.56s
+
+error: test failed, to rerun pass `-p rvp9-cli --test cli_arg_coverage`
+
+--- Encoder/API restored source (exit 0)
+Command: deltic timeout 300 cargo test --locked -p rvp9-encoder --test w_2pass_vbr two_pass_temporal_svc_rejected_before_first_pass -- --exact --nocapture </dev/null
+Complete output:
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 24.39s
+     Running tests/w_2pass_vbr.rs (target/debug/deps/w_2pass_vbr-8903e24927cdae59)
+
+running 1 test
+test two_pass_temporal_svc_rejected_before_first_pass ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+--- CLI restored source (exit 0)
+Command: deltic timeout 300 cargo test --locked -p rvp9-cli --test cli_arg_coverage enc_two_pass_temporal_svc_rejected_before_output_creation -- --exact --nocapture </dev/null
+Complete output:
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00122-two-pass-temporal-svc-r/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.79s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+test enc_two_pass_temporal_svc_rejected_before_output_creation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.33s
+
+
+Scope and limits
+- The API regression exercised temporal layer counts 2 and 3 with empty input and three valid synthetic frames. Under the mutant it accepted all four cases and failed its named assertion.
+- The CLI regression exercised temporal layer counts 2 and 3. Under the mutant both commands succeeded, omitted the unsupported-combination diagnostic, and created output; the retained assertion failed.
+- Only these two focused retained regression tests were run. No full crate/workspace suite or separate positive-control test was run.
