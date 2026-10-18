@@ -1,0 +1,108 @@
+Claimaccepted beforetests: verify-20261018T174803Z-ea9b9c47
+Overlap80 decoderYUV and82 decodermetadata distinct;73 encodernoise_sensitivity distinct.
+PROVENANCE git rev-parse HEAD
+8784b38d3dc3ef6738e9995160d9a57376fd8d2e
+EXIT: 0
+PROVENANCE git merge-base --is-ancestor 785935d95ff195e538fa7a7c9dbd0b009fea5b80 HEAD
+EXIT: 0
+INITIAL retained maximum-plan and actualcapacity regressions COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib frame_loop::tests::parallel_tile_scratch_ </dev/null
+   Compiling crossbeam-utils v0.8.21
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-core)
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling libc v0.2.186
+   Compiling zmij v1.0.21
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-decoder)
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-harness)
+   Compiling static_assertions v1.1.0
+   Compiling memchr v2.8.0
+   Compiling itoa v1.0.18
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling cpufeatures v0.2.17
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 20s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 2 tests
+test frame_loop::tests::parallel_tile_scratch_plan_bounds_maximum_geometry ... ok
+test frame_loop::tests::parallel_tile_scratch_retains_local_capacity_after_keyframe_and_interframes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 823 filtered out; finished in 0.05s
+
+
+EXIT: 0
+Mutant restores old fullframeY allocation in productionconstructor then truncateslen totileplan, preservingnewlayoutvalidity while retaining old allocationcapacity. Only actualsmall1920x72 fixture executes; maxgeometry test remains nonallocating.
+MUTANT productionfullframeYretention COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib frame_loop::tests::parallel_tile_scratch_retains_local_capacity_after_keyframe_and_interframes -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 47.83s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+test frame_loop::tests::parallel_tile_scratch_retains_local_capacity_after_keyframe_and_interframes ... FAILED
+
+failures:
+
+---- frame_loop::tests::parallel_tile_scratch_retains_local_capacity_after_keyframe_and_interframes stdout ----
+
+thread 'frame_loop::tests::parallel_tile_scratch_retains_local_capacity_after_keyframe_and_interframes' (289148559) panicked at crates/rvp9-encoder/src/frame_loop.rs:8364:17:
+assertion `left == right` failed: tile scratch must retain one frame of luma after frame 0
+  left: 983040
+ right: 138240
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    frame_loop::tests::parallel_tile_scratch_retains_local_capacity_after_keyframe_and_interframes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.05s
+
+error: test failed, to rerun pass `-p rvp9-encoder --lib`
+
+EXIT: 101
+RESTORED maxplan and actualcapacity regressions COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib frame_loop::tests::parallel_tile_scratch_ </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00070-tile-local-scratch-rete/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 43.85s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 2 tests
+test frame_loop::tests::parallel_tile_scratch_plan_bounds_maximum_geometry ... ok
+test frame_loop::tests::parallel_tile_scratch_retains_local_capacity_after_keyframe_and_interframes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 823 filtered out; finished in 0.13s
+
+
+EXIT: 0
+FINAL git diff --exit-code -- crates/rvp9-encoder/src/frame_loop.rs crates/rvp9-encoder/src/lib.rs
+EXIT: 0
+FINAL git status --short
+EXIT: 0
+FINAL git hash-object crates/rvp9-encoder/src/frame_loop.rs
+1e90de63f72d816d71bfa5e662acf497e15efbcc
+EXIT: 0
+FINAL git rev-parse HEAD:crates/rvp9-encoder/src/frame_loop.rs
+1e90de63f72d816d71bfa5e662acf497e15efbcc
+EXIT: 0
+Limits: native macOSarm64; max16384x4096/64tile budget is allocationplan arithmetic only, actualcapacity/packetparity/reuse tested1920x72 and480x72 generatedframes. No maximumgeometry allocation, RSSmeasurement, externalcorpus orlibvpx run. Noledgerverdict issued.
