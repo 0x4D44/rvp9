@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00050 — 32x32 SIMD IDCT forms an out-of-allocation pointer after the final row
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/dsp x86 IDCT
 - **Raised:** 2026-10-17T20:46:57Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T174942Z-7fdcb40a
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00050-run-verify-20261018T174942Z-7fdcb40a
-- **Owner base:** fa35e16e9c66ec0b26acee77fc79edaf987b483d
-- **Owner fingerprint:** sha256:26d1722919b3de94aefc65d92c3414cf0cedda301bcbb53824889bf0ce9a5612
-- **Owner since:** 2026-10-18T17:49:42Z
-- **Owner until:** 2026-10-18T21:49:42Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T20:46:57Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T17:44:06Z, deltic:auto role=fix run=fix-20261018T172937Z-b60b783e branch=task/bug-RVP9-BUG-FLU-00050-run-fix-20261018T172937Z-b60b783e code=925594df719a4d12005bb7af7cfe6783d156b2cc gate=manual)
+- **State history:** Open (2026-10-17T20:46:57Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T17:44:06Z, deltic:auto role=fix run=fix-20261018T172937Z-b60b783e branch=task/bug-RVP9-BUG-FLU-00050-run-fix-20261018T172937Z-b60b783e code=925594df719a4d12005bb7af7cfe6783d156b2cc gate=manual) -> Closed (2026-10-18T17:56:29Z, deltic:manual role=verify run=verify-20261018T174942Z-7fdcb40a verified_fix_run=fix-20261018T172937Z-b60b783e verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ On an x86_64 host using the SIMD table, a safe call through SimdDispatch::idct32
 ## Fix
 
 The SSE2 8x32 and AVX2 16x32 final-store loops now advance the destination pointer only when another row remains. They share a guarded row-advance helper, so the final store does not form a pointer beyond the tight destination allocation. Added an exact-final-row pointer regression: under Miri it failed before the guard because the pointer advanced by one stride, then passed after the fix. The x86_64 `idct32x32` filter passed all 70 tests under Rosetta; scoped x86 Clippy, rustfmt, `git diff --check`, and the exact smoke passed.
+
+### Verification summary (2026-10-18T17:56:29Z, deltic:auto run=verify-20261018T174942Z-7fdcb40a verified_fix_run=fix-20261018T172937Z-b60b783e verdict=close)
+
+Verifier note: Manual verify: Retained final-row helper test passes under Miri; restoring the old unconditional add makes Miri reject offset 1048 in a 1024-byte allocation before dereference; exact restore passes again. This tests shared pointer logic on AArch64, not x86 SIMD execution. Bug record Fix placeholder left unchanged.
 
 ## Notes
