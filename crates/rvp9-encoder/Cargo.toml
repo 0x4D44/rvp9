@@ -10,6 +10,10 @@ description = "VP9 real-time video encoder. Mirrors libvpx tile-threaded archite
 readme = "README.md"
 keywords = ["vp9", "video", "encoder", "codec", "webrtc"]
 categories = ["multimedia::video", "encoding"]
+# Integration tests and the SIMD oracle depend on sibling workspace crates
+# and fixtures. Cargo strips their path-only dev-dependencies from registry
+# packages, so these targets belong to the source workspace.
+exclude = ["tests/**", "examples/sad_simd_oracle.rs"]
 
 [lints]
 workspace = true
@@ -24,9 +28,10 @@ runtime-profiling = []
 rvp9-core = { version = "0.2.0-alpha.4", path = "../rvp9-core" }
 
 [dev-dependencies]
-# Used in integration tests that round-trip encoder output through the
-# real decoder (no production-time dependency).
-rvp9-decoder = { path = "../rvp9-decoder" }
+# Used by unit and integration tests that round-trip encoder output through
+# the real decoder (no production-time dependency). The version survives
+# Cargo's registry-package normalization; the path selects the workspace crate.
+rvp9-decoder = { version = ">=0.2.0-alpha.4, <0.3.0", path = "../rvp9-decoder" }
 # F12.0 — BD-rate computation pulled in by the `bdrate_gate`
 # integration test (gated `#[ignore]` so it doesn't run on every
 # `cargo test`).

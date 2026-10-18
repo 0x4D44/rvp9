@@ -11,6 +11,10 @@ description = "VP9 video decoder. Spec-conformant; validated against the officia
 readme = "README.md"
 keywords = ["vp9", "video", "decoder", "codec", "multimedia"]
 categories = ["multimedia::video", "encoding"]
+# These integration tests depend on sibling workspace crates and fixtures.
+# Cargo strips their path-only dev-dependencies from registry packages, so the
+# tests belong to the source workspace rather than this distributable crate.
+exclude = ["tests/**"]
 
 [lints]
 workspace = true

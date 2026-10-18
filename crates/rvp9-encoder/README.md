@@ -17,6 +17,13 @@ rvp9-encoder = "0.2.0-alpha.4"
 
 The public API is documented on [docs.rs](https://docs.rs/rvp9-encoder).
 
+## Testing
+
+The repository's integration tests and `sad_simd_oracle` example use sibling
+workspace crates and fixtures, so Cargo registry archives exclude `tests/` and
+that example. Run the integration tests from a checkout of the RVP9 workspace
+with `cargo test -p rvp9-encoder`.
+
 ## Status
 
 `0.2.0-alpha.4` is ready for evaluation, not a final production-parity

@@ -14,6 +14,12 @@ two decoder threads. The public API is documented on
 rvp9-decoder = "0.2.0-alpha.4"
 ```
 
+## Testing
+
+The repository's integration tests use sibling workspace crates and fixtures,
+so Cargo registry archives exclude `tests/`. Run those tests from a checkout of
+the RVP9 workspace with `cargo test -p rvp9-decoder`.
+
 ## Status
 
 `0.2.0-alpha.4` is an evaluation release. It supports the project's qualified
