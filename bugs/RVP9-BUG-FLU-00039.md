@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00039 — AArch64 width-four I8MM convolution reads beyond accepted tight source slice
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/dsp/convolve8-neon
 - **Raised:** 2026-10-15T22:39:05Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T165403Z-87053edb
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00039-run-fix-20261018T165403Z-87053edb
-- **Owner base:** fb1fd26537783a28ca75e92154c2f8db80d44a08
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T16:54:03Z
-- **Owner until:** 2026-10-18T20:54:03Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-15T22:39:05Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium)
+- **State history:** Open (2026-10-15T22:39:05Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T17:10:13Z, deltic:auto role=fix run=fix-20261018T165403Z-87053edb branch=task/bug-RVP9-BUG-FLU-00039-run-fix-20261018T165403Z-87053edb code=8bd3c6e865e56f49fb4f1a8d0fdc13868bf18cbb gate=manual)
 
 ## Observation
 
