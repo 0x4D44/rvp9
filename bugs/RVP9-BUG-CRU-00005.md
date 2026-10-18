@@ -6,15 +6,15 @@
 - **Area:** core/bitstream sub_parsers
 - **Raised:** 2026-08-23T17:09:50Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T160843Z-5c383c6c
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-CRU-00005-run-verify-20261018T160843Z-5c383c6c
+- **Owner base:** f9498d46aafcab4e8d717c26ec526beb99232c7f
+- **Owner fingerprint:** sha256:386aa0176a169af8a9043d752cf65a540db3fc884115f1aada32d212821a9f1d
+- **Owner since:** 2026-10-18T16:08:43Z
+- **Owner until:** 2026-10-18T20:08:43Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
