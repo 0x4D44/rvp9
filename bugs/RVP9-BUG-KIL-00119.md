@@ -6,15 +6,15 @@
 - **Area:** cli/rvp9dec output correctness
 - **Raised:** 2026-08-22T20:44:02Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T163710Z-80f4c01e
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00119-run-verify-20261018T163710Z-80f4c01e
+- **Owner base:** bc5a3e1094d41cba0efacfaeed389508ba211ee8
+- **Owner fingerprint:** sha256:d7892924040f92bda1d4657d25d3459cf7111ab66385963dabe983b05982228e
+- **Owner since:** 2026-10-18T16:37:10Z
+- **Owner until:** 2026-10-18T20:37:10Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
