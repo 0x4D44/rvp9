@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00109 — Soak accepts a zero-frame run as successful work
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/soak
 - **Raised:** 2026-08-22T19:30:49Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T160853Z-beed0e3d
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00109-run-verify-20261018T160853Z-beed0e3d
-- **Owner base:** 3aff257040206b906dd166515f231a42967e88d1
-- **Owner fingerprint:** sha256:027e83ad9798719b3636e4cb873de55a9fee3b48faea55263841ce674ce6f2a5
-- **Owner since:** 2026-10-18T16:08:53Z
-- **Owner until:** 2026-10-18T20:08:53Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:30:49Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T03:21:43Z, deltic:auto role=fix run=fix-20261016T031436Z-34745546 branch=task/bug-RVP9-BUG-KIL-00109-run-fix-20261016T031436Z-34745546 code=78ef8078f63c99aab321601d1cbbc808ab361b00 gate=manual)
+- **State history:** Open (2026-08-22T19:30:49Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T03:21:43Z, deltic:auto role=fix run=fix-20261016T031436Z-34745546 branch=task/bug-RVP9-BUG-KIL-00109-run-fix-20261016T031436Z-34745546 code=78ef8078f63c99aab321601d1cbbc808ab361b00 gate=manual) -> Closed (2026-10-18T16:16:11Z, deltic:manual role=verify run=verify-20261018T160853Z-beed0e3d verified_fix_run=fix-20261016T031436Z-34745546 verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ crates/rvp9-bench/src/bin/soak.rs:146-164 accepts frames-per-iter zero. run_one_
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:16:11Z, deltic:auto run=verify-20261018T160853Z-beed0e3d verified_fix_run=fix-20261016T031436Z-34745546 verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer; basef9498d46 includes78ef8078. Original zero-frame/unbounded-config/empty-work cases: soak5 pass. Three root reversals separately select1 and assertion-fail: accepts frames0; accepts duration0+iterations0; empty iteration returns Ok with0bytes/0decoded. Parser-only proof avoids unbounded main loop. Exact source restored/diff empty; restored5 pass, lead executable5 pass incl real one-frame roundtrip. Fmt/workspace clippy pass; full-suite limits/raw proof in2026.10.18 journal.
 
 ## Notes
