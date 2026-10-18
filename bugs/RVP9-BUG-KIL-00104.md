@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00104 — Picker motion test passes without checking its result
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/picker tests
 - **Raised:** 2026-08-22T18:32:51Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T173707Z-f7ef06c2
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00104-run-verify-20261018T173707Z-f7ef06c2
-- **Owner base:** c4342a4255179353a1c2b6f0013aa9a9100b4019
-- **Owner fingerprint:** sha256:40851361fffe456e3a1c3a6bcccf3293f0a4ed8d82c3ab4ab23284e7c4f951a9
-- **Owner since:** 2026-10-18T17:37:07Z
-- **Owner until:** 2026-10-18T21:37:07Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T18:32:51Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T04:26:42Z, deltic:auto role=fix run=fix-20261016T042055Z-511e51e0 branch=task/bug-RVP9-BUG-KIL-00104-run-fix-20261016T042055Z-511e51e0 code=dc95a07da53144f8101d22bb1c80362ee8a54034 gate=manual)
+- **State history:** Open (2026-08-22T18:32:51Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T04:26:42Z, deltic:auto role=fix run=fix-20261016T042055Z-511e51e0 branch=task/bug-RVP9-BUG-KIL-00104-run-fix-20261016T042055Z-511e51e0 code=dc95a07da53144f8101d22bb1c80362ee8a54034 gate=manual) -> Closed (2026-10-18T17:42:04Z, deltic:manual role=verify run=verify-20261018T173707Z-f7ef06c2 verified_fix_run=fix-20261016T042055Z-511e51e0 verdict=close)
 
 ## Observation
 
@@ -30,6 +30,10 @@ Expected: the named test fails when the picker does not find the documented moti
 ## Fix
 
 Assert the chosen mode and motion vector against a justified exact value or tolerance, and assert enough cost ordering to prove the fixture discriminates the expected winner. Deliberately perturb the shift or expected vector once to prove the regression turns red. If the file is intentionally diagnostic-only, mark it ignored and rename it so it does not claim a tested result. Estimated effort: small.
+
+### Verification summary (2026-10-18T17:42:04Z, deltic:auto run=verify-20261018T173707Z-f7ef06c2 verified_fix_run=fix-20261016T042055Z-511e51e0 verdict=close)
+
+Verifier note: Manual verify: The retained shifted-block picker regression passes before and after restoration. Reversing only the production NEWMV cost comparison makes the picker choose NearestMv, and the retained decision assertion fails. Exact production and test source were restored. Scope is the focused synthetic picker case, not a broader quality suite; the record’s ## Fix section still contains pre-fix guidance and was left unchanged.
 
 ## Notes
 
