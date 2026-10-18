@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00053 — Scaled NEON convolution overflows Q4 coordinates before pointer validation
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/dsp convolve8-scaled-neon
 - **Raised:** 2026-10-17T20:46:58Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T183319Z-ba7a9bfd
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00053-run-fix-20261018T183319Z-ba7a9bfd
-- **Owner base:** 293f8685c11d910c0fbb843102ca11f3c7194cbe
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T18:33:19Z
-- **Owner until:** 2026-10-18T22:33:19Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T20:46:58Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium)
+- **State history:** Open (2026-10-17T20:46:58Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:10:54Z, deltic:auto role=fix run=fix-20261018T183319Z-ba7a9bfd branch=task/bug-RVP9-BUG-FLU-00053-run-fix-20261018T183319Z-ba7a9bfd code=2bf1c72d4ecce5606a34da5065481ff3d2f1d879 gate=manual)
 
 ## Observation
 
