@@ -1,0 +1,158 @@
+RVP9-BUG-KIL-00105 verifier evidence
+Run: verify-20261018T174232Z-b6fcf8f9
+Branch: task/bug-RVP9-BUG-KIL-00105-run-verify-20261018T174232Z-b6fcf8f9
+Worktree: /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry
+Fix commit: 2f2319a08e5da43791628062360ce85df9c98b06
+
+Pre-claim overlap check: KIL-00104 changes only crates/rvp9-encoder/tests/diag_picker_direct.rs. No active KIL-00105 owner, task branch, or dirty overlap was found in crates/rvp9-encoder/src/e12stat.rs or bugs/RVP9-BUG-KIL-00105.md.
+
+CLAIM COMMAND: deltic bugs claim RVP9-BUG-KIL-00105 --role verify
+CLAIM OUTPUT:
+2026-10-18T17:42:35.804324Z WARN cached GitHub token not read: the credential store is waiting for access approval, not empty reason=keychain access is waiting for approval
+integration admission: waiting for main held by flux (push in flight; expires in 5m 56s at 2026-10-18 18:48:34 +01:00); no gate is running in this process
+Claimed RVP9-BUG-KIL-00105 (branch task/bug-RVP9-BUG-KIL-00105-run-verify-20261018T174232Z-b6fcf8f9, lease until 2026-10-18T21:42:32Z)
+  run verify-20261018T174232Z-b6fcf8f9
+  if the work will outrun the lease: deltic bugs renew RVP9-BUG-KIL-00105 --run verify-20261018T174232Z-b6fcf8f9
+  record the verdict: deltic bugs verify RVP9-BUG-KIL-00105 --run verify-20261018T174232Z-b6fcf8f9 --close|--reopen --note "<evidence>"
+
+ANCESTRY COMMANDS:
+git merge-base --is-ancestor 2f2319a08e5da43791628062360ce85df9c98b06 origin/main (exit 0)
+git merge-base --is-ancestor 2f2319a08e5da43791628062360ce85df9c98b06 HEAD (exit 0)
+At check: origin/main=773503314d360c96f69746c032949076fbd91f42; claimed HEAD=fb331fcf58dbaecf2f4370bc55ede44c6dfe36ee.
+No tests ran before successful claim and ancestry checks.
+
+PRE-MUTATION E12STAT SOURCE SHA256: 6b20a50c18c9d9bb3c9a3d9f074caf47c0badd17bd567e5376ac240e943bd92e  crates/rvp9-encoder/src/e12stat.rs
+
+COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib record_leaf_invalid_sampled_geometry_is_a_safe_noop -- --nocapture </dev/null
+   Compiling crossbeam-utils v0.8.21
+   Compiling proc-macro2 v1.0.106
+   Compiling version_check v0.9.5
+   Compiling unicode-ident v1.0.24
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-core)
+   Compiling quote v1.0.45
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling libc v0.2.186
+   Compiling zmij v1.0.21
+   Compiling serde v1.0.228
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-decoder)
+   Compiling serde_json v1.0.149
+   Compiling memchr v2.8.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-harness)
+   Compiling static_assertions v1.1.0
+   Compiling itoa v1.0.18
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling syn v2.0.117
+   Compiling crossbeam-channel v0.5.15
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling cpufeatures v0.2.17
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 30s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+test e12stat::tests::record_leaf_invalid_sampled_geometry_is_a_safe_noop ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.00s
+
+
+EXIT_CODE: 0
+
+COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib record_leaf_fractional_reference_halo_uses_slice_coverage -- --nocapture </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 10.56s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+E12 leaf px=(16,16) bs=8x8 | ZERO[100.00dB] shipped mv=(8,8)[100.00dB] NEWMVraw mv=(8,8)[100.00dB] oracle mv=(-128,-128) subpel=false [100.00dB]
+test e12stat::tests::record_leaf_fractional_reference_halo_uses_slice_coverage ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.00s
+
+
+EXIT_CODE: 0
+
+Production validation mutation plan: reverse only `if src_row_end > src_stride` in `pred_sse` to `<`. This admits the retained test's invalid source stride cases (stride 7 for an 8-wide block, and zero stride) but does not remove other checks. The test uses a 64x64 source allocation (4096 bytes), origin (0,16), and block 8x8. For stride 7, last accessed source index is 23*7+7=168 <4096; for stride 0 it is 7 <4096. All source reads use `src.get`, and ref geometry remains a normal 64x64 slice with zero MV; oversized blocks, short slices, and offset overflow remain stopped by the other guards. The retained test catches panics and checks that no sample is accumulated, so this mutation should make its assertion fail without an out-of-bounds access.
+
+COMMAND (reversed source-stride validation): deltic timeout 300 cargo test -p rvp9-encoder --lib record_leaf_invalid_sampled_geometry_is_a_safe_noop -- --nocapture </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 32.95s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+E12 leaf px=(0,16) bs=8x8 | ZERO[7.83dB] shipped mv=(0,0)[7.83dB] NEWMVraw mv=(0,0)[7.83dB] oracle mv=(-72,102) subpel=true [10.87dB]
+E12 leaf px=(0,16) bs=8x8 | ZERO[6.88dB] shipped mv=(0,0)[6.88dB] NEWMVraw mv=(0,0)[6.88dB] oracle mv=(8,32) subpel=false [8.48dB]
+
+thread 'e12stat::tests::record_leaf_invalid_sampled_geometry_is_a_safe_noop' (288999669) panicked at crates/rvp9-encoder/src/e12stat.rs:1007:9:
+invalid enabled sampled geometry must be a no-op without panic: ["source stride smaller than block: catch_unwind().is_ok()=true, accumulated n=1", "zero source stride: catch_unwind().is_ok()=true, accumulated n=1"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test e12stat::tests::record_leaf_invalid_sampled_geometry_is_a_safe_noop ... FAILED
+
+failures:
+
+failures:
+    e12stat::tests::record_leaf_invalid_sampled_geometry_is_a_safe_noop
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-encoder --lib`
+
+EXIT_CODE: 101
+
+MUTATED E12STAT SOURCE SHA256: f8ebc89b96b22e8fcda3070b8af5140705c261eb4ffde8545fd4e3223de99a91  crates/rvp9-encoder/src/e12stat.rs
+RESTORE CMP EXIT_CODE: 0
+RESTORED E12STAT SOURCE SHA256: 6b20a50c18c9d9bb3c9a3d9f074caf47c0badd17bd567e5376ac240e943bd92e  crates/rvp9-encoder/src/e12stat.rs
+
+COMMAND (restored): deltic timeout 300 cargo test -p rvp9-encoder --lib record_leaf_invalid_sampled_geometry_is_a_safe_noop -- --nocapture </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 29.26s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+test e12stat::tests::record_leaf_invalid_sampled_geometry_is_a_safe_noop ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.00s
+
+
+EXIT_CODE: 0
+
+COMMAND (restored): deltic timeout 300 cargo test -p rvp9-encoder --lib record_leaf_fractional_reference_halo_uses_slice_coverage -- --nocapture </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil-00105-e12-geometry/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.01s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+E12 leaf px=(16,16) bs=8x8 | ZERO[100.00dB] shipped mv=(8,8)[100.00dB] NEWMVraw mv=(8,8)[100.00dB] oracle mv=(-128,-128) subpel=false [100.00dB]
+test e12stat::tests::record_leaf_fractional_reference_halo_uses_slice_coverage ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.00s
+
+
+EXIT_CODE: 0
+
+FINAL E12STAT SOURCE SHA256: 6b20a50c18c9d9bb3c9a3d9f074caf47c0badd17bd567e5376ac240e943bd92e  crates/rvp9-encoder/src/e12stat.rs
+FINAL git diff --check exit=0
+FINAL tracked source/ledger diff exit=0
+FINAL git status --short exit=0 output=<empty>
