@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00123 — Raw invalid geometry allocates a frame before encoder validation
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc raw input validation
 - **Raised:** 2026-08-22T20:44:04Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T165319Z-b9cbb5e9
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00123-run-verify-20261018T165319Z-b9cbb5e9
-- **Owner base:** 0e8668520ca984aed50f6e44ff41f3a9ed9f91ec
-- **Owner fingerprint:** sha256:094e788849c14c27633e7a0cefe45c008d2fe89eda6a52aaf7e6d5a4247e8fa8
-- **Owner since:** 2026-10-18T16:53:19Z
-- **Owner until:** 2026-10-18T20:53:19Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T03:04:10Z, deltic:auto role=fix run=fix-20261016T025112Z-4e320457 branch=task/bug-RVP9-BUG-KIL-00123-run-fix-20261016T025112Z-4e320457 code=85153ed163d255b45c858ab619dc0d7d85919fd5 gate=manual)
+- **State history:** Open (2026-08-22T20:44:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T03:04:10Z, deltic:auto role=fix run=fix-20261016T025112Z-4e320457 branch=task/bug-RVP9-BUG-KIL-00123-run-fix-20261016T025112Z-4e320457 code=85153ed163d255b45c858ab619dc0d7d85919fd5 gate=manual) -> Closed (2026-10-18T16:56:12Z, deltic:manual role=verify run=verify-20261018T165319Z-b9cbb5e9 verified_fix_run=fix-20261016T025112Z-4e320457 verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ RawFrameReader computes plane sizes and reads the first complete frame before St
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:56:12Z, deltic:auto run=verify-20261018T165319Z-b9cbb5e9 verified_fix_run=fix-20261016T025112Z-4e320457 verdict=close)
+
+Verifier note: Manual verify: Independent verification passed seven focused tests. Removing only early geometry validation makes two retained assertions fail: invalid geometry reaches file opening, and a short raw input reports partial-frame size before the geometry limit. Existing IVF/CSV preservation and valid boundaries pass after restoration; source diff is empty. The ordering was safely tested without attempting a large allocation.
 
 ## Notes
