@@ -34,6 +34,6 @@ Evidence fingerprint: `manual:v1:aarch64-idct16-span-wrap`
 
 ## Fix
 
-<unfixed — raised only>
+The required 16×16 destination span now uses checked multiplication and addition, and an unconditional shared guard validates the stride and slice length before scalar writes or entry into the unsafe AArch64 NEON kernel. The same guard covers the DC-only scalar helper. The regression checks both multiplication and addition overflow and verifies rejection without invoking an unsafe kernel.
 
 ## Notes

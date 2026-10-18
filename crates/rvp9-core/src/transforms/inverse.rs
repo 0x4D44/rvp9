@@ -565,11 +565,19 @@ pub fn idct16(input: &[i32; 16], output: &mut [i32; 16]) {
 /// `dest` and saturated to `[0, 255]`. The column-pass uses
 /// `ROUND_POWER_OF_TWO(_, 6)` per `vpx_idct16x16_256_add_c`
 /// (`vpx_dsp/inv_txfm.c:722-745`).
+fn idct16x16_required_dest_len(stride: usize) -> Option<usize> {
+    stride.checked_mul(15)?.checked_add(16)
+}
+
+fn assert_idct16x16_dest_len(dest_len: usize, stride: usize) {
+    assert!(stride >= 16, "stride too small for 16x16 add");
+    let required_len =
+        idct16x16_required_dest_len(stride).expect("16x16 destination span overflows usize");
+    assert!(dest_len >= required_len, "dest too small for 16x16 add");
+}
+
 fn idct16x16_add_scalar(input: &[i32; 256], dest: &mut [u8], stride: usize, active_rows: usize) {
-    debug_assert!(
-        dest.len() >= stride * 15 + 16,
-        "dest too small for 16x16 add"
-    );
+    assert_idct16x16_dest_len(dest.len(), stride);
     debug_assert!(matches!(active_rows, 4 | 8 | 16));
 
     let mut intermediate = [0i32; 256];
@@ -677,10 +685,7 @@ pub fn idct16x16_38_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
 /// `cospi_16_64` passes (each `wraplow`-truncated) then
 /// `ROUND_POWER_OF_TWO(_, 6)`.
 pub fn idct16x16_1_add(input: i32, dest: &mut [u8], stride: usize) {
-    debug_assert!(
-        dest.len() >= stride * 15 + 16,
-        "dest too small for 16x16 add"
-    );
+    assert_idct16x16_dest_len(dest.len(), stride);
 
     let out1 = wraplow(dct_const_round_shift((input as i64) * (COSPI_16_64 as i64)) as i32);
     let out2 = wraplow(dct_const_round_shift((out1 as i64) * (COSPI_16_64 as i64)) as i32);
@@ -1810,6 +1815,23 @@ pub fn iht16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize, tx_t
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idct16x16_destination_span_rejects_arithmetic_overflow() {
+        let multiplication_overflow = usize::MAX / 15 + 1;
+        let addition_overflow = usize::MAX / 15;
+        let multiplication_span = idct16x16_required_dest_len(multiplication_overflow);
+        let addition_span = idct16x16_required_dest_len(addition_overflow);
+        assert_eq!(multiplication_span, None);
+        assert_eq!(addition_span, None);
+        assert_eq!(idct16x16_required_dest_len(16), Some(256));
+        assert!(
+            std::panic::catch_unwind(|| {
+                assert_idct16x16_dest_len(30, multiplication_overflow);
+            })
+            .is_err()
+        );
+    }
 
     /// Zero input → zero output (1D).
     #[test]

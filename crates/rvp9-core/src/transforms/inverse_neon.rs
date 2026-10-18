@@ -289,8 +289,7 @@ pub(super) fn idct16x16_add(
     stride: usize,
     active_rows: usize,
 ) {
-    assert!(stride >= 16);
-    assert!(dest.len() >= stride * 15 + 16);
+    super::assert_idct16x16_dest_len(dest.len(), stride);
     assert!(matches!(active_rows, 4 | 8 | 16));
     #[cfg(test)]
     IDCT16X16_NEON_ENTRY_COUNTS[match active_rows {
