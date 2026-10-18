@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00095 — Y4M frame parameters are scanned without a length bound
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** io/y4m parser
 - **Raised:** 2026-08-22T14:33:46Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T154600Z-bb6985ba
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00095-run-verify-20261018T154600Z-bb6985ba
-- **Owner base:** 6642f95ee0201cfc21a4a48d363e4e3843daf120
-- **Owner fingerprint:** sha256:7a186edd9c40a72415bab9455d431007173bfcd81accc6b4c2c8f92af90b86f5
-- **Owner since:** 2026-10-18T15:46:00Z
-- **Owner until:** 2026-10-18T19:46:00Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T14:33:46Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T00:33:52Z, deltic:auto role=fix run=fix-20261016T002533Z-f257c74d branch=task/bug-RVP9-BUG-KIL-00095-run-fix-20261016T002533Z-f257c74d code=bc54b89ff58f9a824afdd0e228623178e7531b44 gate=manual)
+- **State history:** Open (2026-08-22T14:33:46Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T00:33:52Z, deltic:auto role=fix run=fix-20261016T002533Z-f257c74d branch=task/bug-RVP9-BUG-KIL-00095-run-fix-20261016T002533Z-f257c74d code=bc54b89ff58f9a824afdd0e228623178e7531b44 gate=manual) -> Closed (2026-10-18T15:50:52Z, deltic:manual role=verify run=verify-20261018T154600Z-bb6985ba verified_fix_run=fix-20261016T002533Z-f257c74d verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ crates/rvp9-io/src/y4m.rs:380-393 handles an extended FRAME header by issuing on
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T15:50:52Z, deltic:auto run=verify-20261018T154600Z-bb6985ba verified_fix_run=fix-20261016T002533Z-f257c74d verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer. Base09697b55 includes bc54b89f. Original frame_params observation: 5 unit+2 integration pass incl79-byte cap/body preservation. Enlarge production cap79->4096 retaining tests: selected5, overlong accepted assertion and UnexpectedEof vs InvalidData assertion fail. Exact bytes restored, git diff empty; restored IO --lib --tests140 pass. Separate full-IO doctest compile failed missing core rlib; not claimed green. Workspace fmt/clippy pass; workspace timeout-marker test failed then exact/all30 F02 reruns pass. Full evidence:2026.10.18 verific...
 
 ## Notes
