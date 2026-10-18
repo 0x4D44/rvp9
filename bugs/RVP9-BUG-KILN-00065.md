@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** cli/rvp9enc
 - **Raised:** 2026-07-31T10:22:26Z
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T164417Z-37f59a3f
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00065-run-verify-20261018T164417Z-37f59a3f
+- **Owner base:** 352e2be84ef18b5e5530349ffcec932a9e71430c
+- **Owner fingerprint:** sha256:628fcca038d505ba03f35e5a9ee4b816fae3d5c3cac83fb98465629d37180657
+- **Owner since:** 2026-10-18T16:44:17Z
+- **Owner until:** 2026-10-18T20:44:17Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
