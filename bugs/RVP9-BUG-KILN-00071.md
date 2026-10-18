@@ -1,25 +1,25 @@
 # RVP9-BUG-KILN-00071 — Legacy Encoder accepts dimensions that overflow derived geometry
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/synthetic API
 - **Raised:** 2026-08-16T08:19:15Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T155721Z-0787c522
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00071-run-verify-20261018T155721Z-0787c522
-- **Owner base:** 6197f93e8d40e1caa5ce2f20cd3473b3c2400423
-- **Owner fingerprint:** sha256:21dcfda8246afe506dab715b91965f549214326b19a4dc9a89b88c0e7bc3bcee
-- **Owner since:** 2026-10-18T15:57:21Z
-- **Owner until:** 2026-10-18T19:57:21Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-16T08:19:15Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T22:41:36Z, deltic:auto role=fix run=fix-20261015T222840Z-dc59d6d8 branch=task/bug-RVP9-BUG-KILN-00071-run-fix-20261015T222840Z-dc59d6d8 code=32a5c6147257e2358f107bd35c447594809ed2ee gate=manual)
+- **State history:** Open (2026-08-16T08:19:15Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T22:41:36Z, deltic:auto role=fix run=fix-20261015T222840Z-dc59d6d8 branch=task/bug-RVP9-BUG-KILN-00071-run-fix-20261015T222840Z-dc59d6d8 code=32a5c6147257e2358f107bd35c447594809ed2ee gate=manual) -> Closed (2026-10-18T16:03:35Z, deltic:manual role=verify run=verify-20261018T155721Z-0787c522 verified_fix_run=fix-20261015T222840Z-dc59d6d8 verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ The public legacy Encoder validates only nonzero 64-aligned width and height at 
 ## Fix
 
 Apply the same maximum coded dimension and luma-pixel limits used by StreamEncoder. Compute every derived cell count and allocation size with checked arithmetic before encoding starts, returning InvalidConfig on failure. Add a regression that rejects a very large aligned configuration without allocating frame-sized storage.
+
+### Verification summary (2026-10-18T16:03:35Z, deltic:auto run=verify-20261018T155721Z-0787c522 verified_fix_run=fix-20261015T222840Z-dc59d6d8 verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer; base283ea929 includes32a5c614. Original524288-square input adapted into existing assertion returns InvalidConfig at construction, no encode/allocation. Guard reversal retains checked geometry; giant red alone only diagnostic mismatch. Supplemental original16448x64 test prints actual Ok(Encoder) and assertion-fails with guard removed. Exact bytes restored/diff empty; restored21 pass, lead binary21 pass. Traced shared bounds and cached checked geometry through all consumers; no direct helper unit tests claimed. Shared gate limits/raw proof i...
 
 ## Notes
