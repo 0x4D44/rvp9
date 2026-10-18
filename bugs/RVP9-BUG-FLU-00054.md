@@ -27,6 +27,8 @@ On exact candidate fb5c0c917038db6c640b3dbc7c2b84b567233333, a static source aud
 
 ## Fix
 
-<unfixed — raised only>
+Added adjacent `// SAFETY:` comments to the three Windows `unsafe extern "system"` declaration blocks. The comments record the system-ABI signatures, handle and scalar type widths, and the C layouts expected for `FILE_ID_INFO` and `PROCESS_MEMORY_COUNTERS`; call behavior is unchanged.
+
+Validation: reviewed the declarations against Microsoft API documentation for the named functions and structures; `cargo fmt --all --check`, `cargo check -p rvp9-cli --locked`, and `cargo check -p rvp9-bench --bin soak --locked` passed on the host. The Windows-only blocks were cfg-disabled by this host's target, so no Windows-target build was run.
 
 ## Notes
