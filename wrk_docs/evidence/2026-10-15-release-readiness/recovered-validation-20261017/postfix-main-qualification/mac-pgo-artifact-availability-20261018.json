@@ -1,0 +1,30 @@
+{
+  "captured_at_utc": "2026-10-18T02:10:22Z",
+  "host": "flux.home.arpa",
+  "platform": "macOS arm64",
+  "product_candidate_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "prior_mac_pgo_qualification": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-pgo-20261017/qualification.json",
+  "recorded_artifact": {
+    "relative_path_from_candidate_worktree": "target/encoder-pgo/optimized/release/rvp9enc",
+    "sha256": "c5330411c2ff738ef515a9e293702d1312dd47cfad4675285ab7772d2e3c2daf",
+    "bytes": 2438600
+  },
+  "checks": [
+    {
+      "path": "/Users/md/language/rvp9/target/encoder-pgo/optimized/release/rvp9enc",
+      "exists": false,
+      "is_file": false
+    },
+    {
+      "path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/encoder-pgo/optimized/release/rvp9enc",
+      "exists": false,
+      "is_file": false
+    },
+    {
+      "path": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/target/encoder-pgo/optimized/release/rvp9enc",
+      "exists": false,
+      "is_file": false
+    }
+  ],
+  "interpretation": "The recorded Mac PGO executable was absent at the checked paths on flux at capture time. This does not invalidate the prior build or functional-smoke evidence. Any later flux timing attempt must first rebuild the exact-source artifact and record its new identity. No timing measurement was run."
+}
