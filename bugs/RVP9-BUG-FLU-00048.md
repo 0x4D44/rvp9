@@ -6,15 +6,15 @@
 - **Area:** core/dsp x86 SIMD
 - **Raised:** 2026-10-17T20:46:57Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261018T153528Z-cff45905
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00048-run-fix-20261018T153528Z-cff45905
+- **Owner base:** 09697b558205594dcce310c8047827756597fb1a
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-18T15:35:28Z
+- **Owner until:** 2026-10-18T19:35:28Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
