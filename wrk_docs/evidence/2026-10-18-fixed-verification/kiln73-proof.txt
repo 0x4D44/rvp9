@@ -1,0 +1,178 @@
+Claimaccepted beforetests verify-20261018T175317Z-e1a34adb
+Approvedcontract: validate0..6;0off;1..6enableMediuminitially; estimatorpublishesstrength. Oldproposedmagnitude mapping superseded. Noledger/docs edits. Overlap70scratch/72counters separate.
+PROVENANCE git rev-parse HEAD
+cb5f8c3daa9737e8a4e4835ce2b843f8d712b268
+EXIT: 0
+PROVENANCE git merge-base --is-ancestor ae19661e3c230b600ad74257f8e3785f195a4ff4 HEAD
+EXIT: 0
+INITIAL adaptive estimate/filter/lifecycle/range checks COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib adaptive_denoiser </dev/null
+   Compiling crossbeam-utils v0.8.21
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-core)
+   Compiling quote v1.0.45
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling libc v0.2.186
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling memchr v2.8.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-harness)
+   Compiling itoa v1.0.18
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling syn v2.0.117
+   Compiling crossbeam-channel v0.5.15
+   Compiling cpufeatures v0.2.17
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 10s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 15 tests
+test frame_loop::tests::adaptive_denoiser_rejects_out_of_range_sensitivity ... ok
+test frame_loop::tests::adaptive_denoiser_streak_matches_pinned_thresholds ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_counts_partial_bottom_mi ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_survives_keyframe ... ok
+test tests::adaptive_denoiser_altref_zero_requires_last_candidate ... ok
+test tests::adaptive_denoiser_high_level_filters_skin_with_high_strength ... ok
+test tests::adaptive_denoiser_leaf_uses_mapped_last_reference ... ok
+test tests::adaptive_denoiser_leaf_level_and_reset_gates ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_uses_partial_bottom_mi ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_publication_and_temporal_gates ... ok
+test frame_loop::tests::adaptive_denoiser_temporal_reference_chronology ... ok
+test frame_loop::tests::adaptive_denoiser_publication_reset_and_coded_source ... ok
+test frame_loop::tests::adaptive_denoiser_sensitivity_one_and_six_encode_identically ... ok
+test frame_loop::tests::adaptive_denoiser_production_high_motion_publication ... ok
+test frame_loop::tests::adaptive_denoiser_production_estimator_excludes_skin ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 810 filtered out; finished in 0.10s
+
+
+EXIT: 0
+INITIAL configured enable/disable allocation checks COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib noise_sensitivity </dev/null
+    Blocking waiting for file lock on package cache
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 13.61s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 2 tests
+test denoiser::tests::w5_1_noise_sensitivity_zero_disables_denoiser ... ok
+test denoiser::tests::w5_1_noise_sensitivity_nonzero_enables_denoiser ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 823 filtered out; finished in 0.00s
+
+
+EXIT: 0
+MUTANT remove productionpublishedestimate-to-denoiser wiring COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib frame_loop::tests::adaptive_denoiser_publication_reset_and_coded_source -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-encoder)
+warning: unused variable: `level`
+    --> crates/rvp9-encoder/src/frame_loop.rs:3136:48
+     |
+3136 |                 TemporalNoiseUpdate::Published(level) => {
+     |                                                ^^^^^ help: if this is intentional, prefix it with an underscore: `_level`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rvp9-encoder` (lib) generated 1 warning (run `cargo fix --lib -p rvp9-encoder` to apply 1 suggestion)
+warning: `rvp9-encoder` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [optimized + debuginfo] target(s) in 49.24s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+test frame_loop::tests::adaptive_denoiser_publication_reset_and_coded_source ... FAILED
+
+failures:
+
+---- frame_loop::tests::adaptive_denoiser_publication_reset_and_coded_source stdout ----
+
+thread 'frame_loop::tests::adaptive_denoiser_publication_reset_and_coded_source' (289326525) panicked at crates/rvp9-encoder/src/frame_loop.rs:13983:9:
+assertion `left == right` failed
+  left: Medium
+ right: LowLow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    frame_loop::tests::adaptive_denoiser_publication_reset_and_coded_source
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-encoder --lib`
+
+EXIT: 101
+RESTORED adaptive behavior checks COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib adaptive_denoiser </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 50.89s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 15 tests
+test frame_loop::tests::adaptive_denoiser_streak_matches_pinned_thresholds ... ok
+test frame_loop::tests::adaptive_denoiser_rejects_out_of_range_sensitivity ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_counts_partial_bottom_mi ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_uses_partial_bottom_mi ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_survives_keyframe ... ok
+test tests::adaptive_denoiser_altref_zero_requires_last_candidate ... ok
+test tests::adaptive_denoiser_leaf_uses_mapped_last_reference ... ok
+test tests::adaptive_denoiser_high_level_filters_skin_with_high_strength ... ok
+test tests::adaptive_denoiser_leaf_level_and_reset_gates ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_publication_and_temporal_gates ... ok
+test frame_loop::tests::adaptive_denoiser_publication_reset_and_coded_source ... ok
+test frame_loop::tests::adaptive_denoiser_temporal_reference_chronology ... ok
+test frame_loop::tests::adaptive_denoiser_sensitivity_one_and_six_encode_identically ... ok
+test frame_loop::tests::adaptive_denoiser_production_high_motion_publication ... ok
+test frame_loop::tests::adaptive_denoiser_production_estimator_excludes_skin ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 810 filtered out; finished in 0.38s
+
+
+EXIT: 0
+RESTORED enable/disable allocation checks COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --lib noise_sensitivity </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kiln00073-adaptive-denoiser-lifec/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 22.49s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 2 tests
+test denoiser::tests::w5_1_noise_sensitivity_zero_disables_denoiser ... ok
+test denoiser::tests::w5_1_noise_sensitivity_nonzero_enables_denoiser ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 823 filtered out; finished in 0.00s
+
+
+EXIT: 0
+FINAL git diff --exit-code -- crates/rvp9-encoder/src/frame_loop.rs crates/rvp9-encoder/src/denoiser.rs crates/rvp9-encoder/src/pre_analysis.rs crates/rvp9-encoder/src/lib.rs
+EXIT: 0
+FINAL git status --short
+EXIT: 0
+FINAL git hash-object crates/rvp9-encoder/src/frame_loop.rs
+1e90de63f72d816d71bfa5e662acf497e15efbcc
+EXIT: 0
+FINAL git rev-parse HEAD:crates/rvp9-encoder/src/frame_loop.rs
+1e90de63f72d816d71bfa5e662acf497e15efbcc
+EXIT: 0
+Limits: native macOSarm64 generatedunitfixtures including real encode/decode adaptive transitions; no liveGOP/ALTREF/SVC externalintegration matrix, libvpx externaloracle, corpus, BD-rate or performance result claimed. Noledgerverdict issued.
