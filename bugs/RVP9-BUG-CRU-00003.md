@@ -1,25 +1,25 @@
 # RVP9-BUG-CRU-00003 — vpx_vector_var_scalar cfg omits test, so x86_64 cargo test validates SSE2 against a hand-rewritten copy
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/mv_search int_pro
 - **Raised:** 2026-08-23T17:09:45Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T174640Z-f144e8fc
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-CRU-00003-run-verify-20261018T174640Z-f144e8fc
-- **Owner base:** c3534368d339ecded2e6128911827deaf3bd56ed
-- **Owner fingerprint:** sha256:20ce8501f743d9c132b155e55ad1d2c865b858f44270da2a0996b9d325507d2c
-- **Owner since:** 2026-10-18T17:46:40Z
-- **Owner until:** 2026-10-18T21:46:40Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-23T17:09:45Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T03:57:32Z, deltic:auto role=fix run=fix-20261016T035141Z-4b28e506 branch=task/bug-RVP9-BUG-CRU-00003-run-fix-20261016T035141Z-4b28e506 code=68516c6480e166cb07b80579f59145d24fa4185b gate=manual)
+- **State history:** Open (2026-08-23T17:09:45Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T03:57:32Z, deltic:auto role=fix run=fix-20261016T035141Z-4b28e506 branch=task/bug-RVP9-BUG-CRU-00003-run-fix-20261016T035141Z-4b28e506 code=68516c6480e166cb07b80579f59145d24fa4185b gate=manual) -> Closed (2026-10-18T17:51:38Z, deltic:manual role=verify run=verify-20261018T174640Z-f144e8fc verified_fix_run=fix-20261016T035141Z-4b28e506 verdict=close)
 
 ## Observation
 
@@ -64,5 +64,9 @@ it, so the SSE2 kernel is compared against the real oracle rather than a copy.
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T17:51:38Z, deltic:auto run=verify-20261018T174640Z-f144e8fc verified_fix_run=fix-20261016T035141Z-4b28e506 verdict=close)
+
+Verifier note: Manual verify: The retained SSE2-vs-production-scalar comparison passed under x86_64 Rosetta, failed at its assertion after perturbing the production scalar shift, and passed after exact restore. The bug record Fix placeholder remains stale and was left unchanged.
 
 ## Notes
