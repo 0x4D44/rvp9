@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00037 — AArch64 dependent-library Miri builds cannot resolve scalar transform helpers
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/transforms-miri
 - **Raised:** 2026-10-15T22:32:06Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T214301Z-5e37ae58
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00037-run-verify-20261018T214301Z-5e37ae58
-- **Owner base:** 8b011e1ce9e7ac594e4921334668f92765744675
-- **Owner fingerprint:** sha256:3465c1b3f5deb3cb0271bd3c6030f24c791a19021ebc861392fa00581bf79b8f
-- **Owner since:** 2026-10-18T21:43:01Z
-- **Owner until:** 2026-10-19T01:43:01Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-15T22:32:06Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:54:31Z, deltic:auto role=fix run=fix-20261018T195040Z-e3bd6992 branch=task/bug-RVP9-BUG-FLU-00037-run-fix-20261018T195040Z-e3bd6992 code=019f28983fa563954233d1b99892578d4c123657 gate=manual)
+- **State history:** Open (2026-10-15T22:32:06Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:54:31Z, deltic:auto role=fix run=fix-20261018T195040Z-e3bd6992 branch=task/bug-RVP9-BUG-FLU-00037-run-fix-20261018T195040Z-e3bd6992 code=019f28983fa563954233d1b99892578d4c123657 gate=manual) -> Closed (2026-10-18T21:52:15Z, deltic:manual role=verify run=verify-20261018T214301Z-5e37ae58 verified_fix_run=fix-20261018T195040Z-e3bd6992 verdict=close)
 
 ## Observation
 
@@ -30,6 +30,10 @@ On 2026-10-18, the exact product source `fb5c0c917038db6c640b3dbc7c2b84b56723333
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T21:52:15Z, deltic:auto run=verify-20261018T214301Z-5e37ae58 verified_fix_run=fix-20261018T195040Z-e3bd6992 verdict=close)
+
+Verifier note: Manual verify: Independent native arm64 verification on 5b4b3f62 with nightly bd08c9e718: original narrower RVP9_FORCE_SCALAR=1 MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test --locked --offline -p rvp9-io --lib -- --test-threads=1 compiles dependency and passes 61 tests. Core frame_alloc Miri target passes 3 tests. Reversing forward scalar-helper cfg(miri) availability reproduces six E0425 missing-helper compilation diagnostics; no test executed in that red run, not reported as an assertion failure. Restored exact bytes; both dependent Miri targets pass. Independently confirmed cf...
 
 ## Notes
 
