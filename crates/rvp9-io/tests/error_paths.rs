@@ -552,6 +552,35 @@ fn webm_element_payload_running_past_parent_end_rejected() {
 }
 
 #[test]
+fn webm_nested_header_crossing_parent_returns_error_without_panicking() {
+    // The nested unknown-size Segment's ID or size header continues past the
+    // outer Segment's declared payload.
+    let cases = [
+        (
+            "ID",
+            [0x18, 0x53, 0x80, 0x67, 0x81, 0x18, 0x53, 0x80, 0x67, 0xFF],
+        ),
+        (
+            "size",
+            [0x18, 0x53, 0x80, 0x67, 0x84, 0x18, 0x53, 0x80, 0x67, 0xFF],
+        ),
+    ];
+
+    for (header_part, bytes) in cases {
+        let parsed = std::panic::catch_unwind(|| read_webm_packets(&bytes));
+
+        assert!(
+            parsed.is_ok(),
+            "read_webm_packets panicked on a parent-crossing {header_part} header"
+        );
+        assert!(
+            matches!(parsed.unwrap(), Err(ContainerError::BadEbml(_))),
+            "parent-crossing {header_part} header must return BadEbml"
+        );
+    }
+}
+
+#[test]
 fn webm_simple_block_outside_cluster_is_skipped_not_returned() {
     // A SimpleBlock at the top level (not inside a Cluster) is not a frame
     // payload — the walker should silently skip it. Build a SimpleBlock

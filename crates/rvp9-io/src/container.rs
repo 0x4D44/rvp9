@@ -1067,9 +1067,9 @@ fn find_vp9_video_track(data: &[u8]) -> Result<u64, ContainerError> {
             levels.pop();
             continue;
         }
-        let (id, id_len) = read_ebml_id(data, pos)?;
+        let (id, id_len) = read_ebml_id(&data[..end], pos)?;
         pos += id_len;
-        let (size, size_len) = read_ebml_vint(data, pos)?;
+        let (size, size_len) = read_ebml_vint(&data[..end], pos)?;
         pos += size_len;
         let unknown_size = validate_element_size(id, size, size_len)?;
 
