@@ -6,15 +6,15 @@
 - **Area:** io/webm parser
 - **Raised:** 2026-08-22T14:33:35Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T160147Z-fb24c539
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00094-run-verify-20261018T160147Z-fb24c539
+- **Owner base:** af9388d8a088356c68100945a71b0a285c699850
+- **Owner fingerprint:** sha256:f3dd20716e0810417030f2fbcc24fbda3a8e8d4b1fb087b27c0ef65bbffc7344
+- **Owner since:** 2026-10-18T16:01:47Z
+- **Owner until:** 2026-10-18T20:01:47Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
