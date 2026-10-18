@@ -6,15 +6,15 @@
 - **Area:** cli/argument parsing
 - **Raised:** 2026-08-22T20:44:01Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T162655Z-dba2a3db
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00118-run-verify-20261018T162655Z-dba2a3db
+- **Owner base:** 5447c03a2817f15497cee2d824bada1a7b78f4f8
+- **Owner fingerprint:** sha256:a1200b4472d7e3d693bf34994dcebad5fd875a1e0a4a2ec8ab28cc8cf4341d40
+- **Owner since:** 2026-10-18T16:26:55Z
+- **Owner until:** 2026-10-18T20:26:55Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
