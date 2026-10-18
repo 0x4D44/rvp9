@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00057 — Spatial speed summary emits unescaped clip lists into CSV columns
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** qualification/spatial-summary
 - **Raised:** 2026-10-18T20:10:46Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T214234Z-0f58529a
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00057-run-verify-20261018T214234Z-0f58529a
-- **Owner base:** 0a92b19fbf249c5cb78bf532fef1ccf028c9f3fe
-- **Owner fingerprint:** sha256:22e75633976f5e39a3e2e3e330fe51b41c2523b81478e16d81278d0460e0d3e4
-- **Owner since:** 2026-10-18T21:42:34Z
-- **Owner until:** 2026-10-19T01:42:34Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-18T20:10:46Z, raised via `deltic bugs new --land` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T20:13:20Z, deltic:auto role=fix run=fix-20261018T201105Z-bbaaf303 branch=task/bug-RVP9-BUG-FLU-00057-run-fix-20261018T201105Z-bbaaf303 code=d44c4b28987ad97da05c412267d9725b0e5fcfe1 gate=manual)
+- **State history:** Open (2026-10-18T20:10:46Z, raised via `deltic bugs new --land` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T20:13:20Z, deltic:auto role=fix run=fix-20261018T201105Z-bbaaf303 branch=task/bug-RVP9-BUG-FLU-00057-run-fix-20261018T201105Z-bbaaf303 code=d44c4b28987ad97da05c412267d9725b0e5fcfe1 gate=manual) -> Closed (2026-10-18T21:45:24Z, deltic:manual role=verify run=verify-20261018T214234Z-0f58529a verified_fix_run=fix-20261018T201105Z-bbaaf303 verdict=close)
 
 ## Observation
 
@@ -33,5 +33,9 @@ Evidence fingerprint: `manual:v1:spatial-speed-summary-emits-unescaped-clip-list
 The spatial speed summary now writes the comma-separated clip list as a quoted `clips` field. `run_speed_group` uses the tested `format_speed_summary_row` formatter, and the no-I/O script self-test checks a representative three-clip row.
 
 Validation: before the fix, the new self-test failed only the clip-field assertion and showed the three clip names split into separate CSV columns. After the fix, `scripts/qualify-spatial-svc.sh --self-test`, `bash -n scripts/qualify-spatial-svc.sh`, a Python `csv.reader` check for 16 columns with the full clip list in column 6, and `git diff --check` passed.
+
+### Verification summary (2026-10-18T21:45:24Z, deltic:auto run=verify-20261018T214234Z-0f58529a verified_fix_run=fix-20261018T201105Z-bbaaf303 verdict=close)
+
+Verifier note: Manual verify: Independent verification at 5b4b3f62: reviewed d44c4b28 formatter and production run_speed_group call. Original three-clip observation through production formatter now parses as 16 CSV columns with full clip list at index 5. bash scripts/qualify-spatial-svc.sh --self-test and bash -n passed. Reversing only clip-field quoting selected and failed the specific speed-summary assertion; restored exact source and self-test passed. git diff --check clean. No timing/performance claim.
 
 ## Notes
