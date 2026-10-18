@@ -1,0 +1,79 @@
+Claim accepted before tests: verify-20261018T172611Z-bacc71dc
+Overlap: KIL00080 same gate/fix but YUVscratch allocationpanic versus KIL00082 metadata slabs; KIL00083 tests recoverycontract. Both distinct and untouched.
+PROVENANCE git rev-parse HEAD
+f26924fd99a3bc4053ffd40b2fceba8bdc32f9be
+EXIT: 0
+PROVENANCE git merge-base --is-ancestor dc19bcea3f41952f6d0a2a53b027c852a79a5aed HEAD
+EXIT: 0
+Source reasoning: both intra/inter enter parallel path only via common gate; N tiles <= immutable constructor worker count W before any metadata pools are popped or grown. Each metadata pool starts empty. From previous P<=W slabs, pop N then return K<=N successful slabs -> max(P-N,0)+K <= max(P,N) <= W. Errors drop owned slabs; intra/inter share segment pool, inter has independent MVpool. Fullframe capacities retain historical geometry; no currentframe bytebound or metadata capacity measurement claimed.
+INITIAL retained worker-bound gate regression COMMAND: deltic timeout 300 cargo test -p rvp9-decoder --lib tests::parallel_tile_scratch_is_bounded_by_worker_count -- --exact </dev/null
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 53s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_decoder-0cac60e8c44bd6f0)
+
+running 1 test
+test tests::parallel_tile_scratch_is_bounded_by_worker_count ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 223 filtered out; finished in 0.00s
+
+
+EXIT: 0
+MUTANT remove only tilecount<=workercount gate COMMAND: deltic timeout 300 cargo test -p rvp9-decoder --lib tests::parallel_tile_scratch_is_bounded_by_worker_count -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 27.97s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_decoder-0cac60e8c44bd6f0)
+
+running 1 test
+test tests::parallel_tile_scratch_is_bounded_by_worker_count ... FAILED
+
+failures:
+
+---- tests::parallel_tile_scratch_is_bounded_by_worker_count stdout ----
+
+thread 'tests::parallel_tile_scratch_is_bounded_by_worker_count' (288526070) panicked at crates/rvp9-decoder/src/lib.rs:9911:9:
+assertion failed: !parallel_tile_decode_enabled(1, 64, 2)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::parallel_tile_scratch_is_bounded_by_worker_count
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 223 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-decoder --lib`
+
+EXIT: 101
+RESTORED retained worker-bound gate regression COMMAND: deltic timeout 300 cargo test -p rvp9-decoder --lib tests::parallel_tile_scratch_is_bounded_by_worker_count -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-kil00082-decoder-metadata-worker/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 27.82s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_decoder-0cac60e8c44bd6f0)
+
+running 1 test
+test tests::parallel_tile_scratch_is_bounded_by_worker_count ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 223 filtered out; finished in 0.00s
+
+
+EXIT: 0
+FINAL git diff --exit-code -- crates/rvp9-decoder/src/lib.rs
+EXIT: 0
+FINAL git status --short
+EXIT: 0
+FINAL git hash-object crates/rvp9-decoder/src/lib.rs
+0faa7c93b47d093aaad538eaa4488be5a0a9a751
+EXIT: 0
+FINAL git rev-parse HEAD:crates/rvp9-decoder/src/lib.rs
+0faa7c93b47d093aaad538eaa4488be5a0a9a751
+EXIT: 0
