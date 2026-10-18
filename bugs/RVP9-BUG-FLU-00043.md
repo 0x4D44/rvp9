@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00043 — Conformance forced-scalar rows retain NEON dispatch on AArch64
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** Medium
 - **Area:** qualification/conformance
 - **Raised:** 2026-10-16T14:14:38Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T155935Z-dd09e04f
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00043-run-fix-20261018T155935Z-dd09e04f
-- **Owner base:** 1c7e1fe3b4e74e15a74c247da1e845f1333488df
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T15:59:35Z
-- **Owner until:** 2026-10-18T19:59:35Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-16T14:14:38Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-10-16T14:14:38Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T16:24:54Z, deltic:auto role=fix run=fix-20261018T155935Z-dd09e04f branch=task/bug-RVP9-BUG-FLU-00043-run-fix-20261018T155935Z-dd09e04f code=76481914b3c37b7028df3cb1bc9ab5e293365e23 gate=manual)
 
 ## Observation
 
