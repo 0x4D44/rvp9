@@ -6,15 +6,15 @@
 - **Area:** harness/e1 block stats
 - **Raised:** 2026-08-22T13:20:53Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T175853Z-6e8e6f1d
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00089-run-verify-20261018T175853Z-6e8e6f1d
+- **Owner base:** b7f2c3bc056ed37bb6f8fe39ea106f13888fdc10
+- **Owner fingerprint:** sha256:c481687faf4ca2dc84626d18fcbe58f41d9604670809e13ea468109cca8a36e5
+- **Owner since:** 2026-10-18T17:58:53Z
+- **Owner until:** 2026-10-18T21:58:53Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
