@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00066 — decode-throughput default sweep still exits 0 after a failed fixture
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/decode-throughput
 - **Raised:** 2026-07-31T10:22:37Z
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T165854Z-8724175c
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00066-run-verify-20261018T165854Z-8724175c
-- **Owner base:** e3ca07aa934274ab2a10e0621c46c5221ccf5ec4
-- **Owner fingerprint:** sha256:e8c2d8aeb73dbc84013b5e0a994dfdf63cea4c1d48fd965a413b4604809d3693
-- **Owner since:** 2026-10-18T16:58:54Z
-- **Owner until:** 2026-10-18T20:58:54Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:22:37Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T05:30:54Z, deltic:auto role=fix run=fix-20261016T052048Z-d55a7572 branch=task/bug-RVP9-BUG-KILN-00066-run-fix-20261016T052048Z-d55a7572 code=a40334ca6e256b7f2ba651a3fc01097bc3e2e881 gate=manual)
+- **State history:** Open (2026-07-31T10:22:37Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T05:30:54Z, deltic:auto role=fix run=fix-20261016T052048Z-d55a7572 branch=task/bug-RVP9-BUG-KILN-00066-run-fix-20261016T052048Z-d55a7572 code=a40334ca6e256b7f2ba651a3fc01097bc3e2e881 gate=manual) -> Closed (2026-10-18T17:02:12Z, deltic:manual role=verify run=verify-20261018T165854Z-8724175c verified_fix_run=fix-20261016T052048Z-d55a7572 verdict=close)
 
 ## Observation
 
@@ -38,5 +38,9 @@ Confirmed by reading the current tree at 4abe0d8 + 3a7aba2.
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T17:02:12Z, deltic:auto run=verify-20261018T165854Z-8724175c verified_fix_run=fix-20261016T052048Z-d55a7572 verdict=close)
+
+Verifier note: Manual verify: Independent Codex verification on 165cc9a2912ede3f (fix a40334ca ancestor): cargo test -p rvp9-bench --test decode_throughput_cli default_sweep selected 2 and passed before/after. Real generated VP9 mixed default sweep exits nonzero while retaining one positive-frame CSV row; complete sweep exits0 with all4 rows. Removing only had_error failure return selected mixed regression1 and failed assertion partial default sweep unexpectedly exited successfully (one row plus malformed/missing fixture errors); restored exact bytes finally, scoped diff and worktree status clean. Commands b...
 
 ## Notes
