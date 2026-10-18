@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00049 — SSE2 forward DCT span check can wrap before unsafe input loads
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/transforms x86 SSE2
 - **Raised:** 2026-10-17T20:46:57Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T173758Z-f423a902
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00049-run-verify-20261018T173758Z-f423a902
-- **Owner base:** 0df37437408ef8ef3fd6f02baa61dc0255e290c8
-- **Owner fingerprint:** sha256:28a9f39b25b9fa62f1723884f2fccc928161fe32cbadf7251de8be109fcc26fe
-- **Owner since:** 2026-10-18T17:37:58Z
-- **Owner until:** 2026-10-18T21:37:58Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T20:46:57Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T17:29:17Z, deltic:auto role=fix run=fix-20261018T171040Z-454dd919 branch=task/bug-RVP9-BUG-FLU-00049-run-fix-20261018T171040Z-454dd919 code=48b442451cc86416657ac75ca5e63424274e5fb9 gate=manual)
+- **State history:** Open (2026-10-17T20:46:57Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T17:29:17Z, deltic:auto role=fix run=fix-20261018T171040Z-454dd919 branch=task/bug-RVP9-BUG-FLU-00049-run-fix-20261018T171040Z-454dd919 code=48b442451cc86416657ac75ca5e63424274e5fb9 gate=manual) -> Closed (2026-10-18T17:42:25Z, deltic:manual role=verify run=verify-20261018T173758Z-f423a902 verified_fix_run=fix-20261018T171040Z-454dd919 verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ On 64-bit x86 release builds, the safe public rvp9_core::transforms::fdct8x8 wra
 ## Fix
 
 The SSE2 8x8 DCT wrapper now computes the required input span with checked multiplication and addition before entering the unsafe kernel. Overflow is rejected instead of allowing `7 * stride + 8` to wrap. Added a regression covering the valid stride-8 span and both multiplication- and addition-overflow boundaries. The overflow-disabled regression failed before the fix with `Some(6)` for `stride = usize::MAX / 7`, then passed after the fix. On x86_64 under Rosetta, all eight focused `fdct8x8` tests passed; scoped x86 Clippy, rustfmt, and `git diff --check` passed.
+
+### Verification summary (2026-10-18T17:42:25Z, deltic:auto run=verify-20261018T173758Z-f423a902 verified_fix_run=fix-20261018T171040Z-454dd919 verdict=close)
+
+Verifier note: Manual verify: The x86_64 Rosetta run passes all eight retained FDCT/SSE2 and arithmetic regressions. Replacing only the checked span helper’s final checked addition with wrapping arithmetic makes the retained overflow assertion fail (Some(6) vs None). This regression is arithmetic-only and never reaches SIMD memory access. Exact source restored and all eight tests pass again. Scope is Rosetta rather than native x86 hardware; public-wrapper rejection ordering was reviewed but the malformed wrapper call was not executed.
 
 ## Notes
