@@ -6,15 +6,15 @@
 - **Area:** encoder/denoiser configuration
 - **Raised:** 2026-08-16T08:19:31Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T175317Z-e1a34adb
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00073-run-verify-20261018T175317Z-e1a34adb
+- **Owner base:** cb5f8c3daa9737e8a4e4835ce2b843f8d712b268
+- **Owner fingerprint:** sha256:f1e66d936a6d5d304a1e061805737492e48416ccf257d95bb8ad78c8b071262f
+- **Owner since:** 2026-10-18T17:53:17Z
+- **Owner until:** 2026-10-18T21:53:17Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
