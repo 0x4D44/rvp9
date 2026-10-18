@@ -1,0 +1,84 @@
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 4.89s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+test enc_two_pass_rejects_explicit_parallelism_before_file_io ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.61s
+
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.56s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+test enc_passes_two_still_writes_complete_ivf ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.71s
+
+
+MUTANT: remove only thread>1/tile-columns>0 two-pass rejection guards; lag/ALTREF validation unchanged. Original both-pass default StreamEncoder::new remains.
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 13.65s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+test enc_two_pass_rejects_explicit_parallelism_before_file_io ... FAILED
+
+failures:
+
+---- enc_two_pass_rejects_explicit_parallelism_before_file_io stdout ----
+
+thread 'enc_two_pass_rejects_explicit_parallelism_before_file_io' (286714280) panicked at crates/rvp9-cli/tests/cli_arg_coverage.rs:474:5:
+two-pass explicit parallelism must be rejected before file I/O: threads_equals: command succeeded; threads_equals: missing parallelism diagnostic: ; threads_equals: rejected command created output; threads_split: command succeeded; threads_split: missing parallelism diagnostic: ; threads_split: rejected command created output; tiles_equals: command succeeded; tiles_equals: missing parallelism diagnostic: ; tiles_equals: rejected command changed sentinel output; tiles_split: command succeeded; tiles_split: missing parallelism diagnostic: ; tiles_split: rejected command created output
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    enc_two_pass_rejects_explicit_parallelism_before_file_io
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.74s
+
+error: test failed, to rerun pass `-p rvp9-cli --test cli_arg_coverage`
+
+RESTORED: exact original rvp9enc.rs bytes. Final rejection and supported-output controls follow.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 8.19s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+test enc_two_pass_rejects_explicit_parallelism_before_file_io ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 1.20s
+
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 6.03s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+test enc_passes_two_still_writes_complete_ivf ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 1.25s
+

@@ -1,0 +1,174 @@
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 10.26s
+     Running unittests src/bin/rvp9enc.rs (target/debug/deps/rvp9enc-447fea9249343450)
+
+running 3 tests
+test tests::two_pass_lookahead_controls_accept_defaults_zero_and_one_pass_values ... ok
+test tests::two_pass_rejects_positive_lookahead ... ok
+test tests::two_pass_rejects_positive_auto_alt_ref ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 5 tests
+test enc_two_pass_positive_lag_is_rejected_with_valid_input ... ok
+test enc_two_pass_temporal_svc_rejected_before_output_creation ... ok
+test enc_two_pass_rejects_positive_lag_before_file_io ... ok
+test enc_two_pass_rejects_explicit_parallelism_before_file_io ... ok
+test enc_two_pass_rejects_positive_alt_ref_before_file_io ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 97 filtered out; finished in 0.61s
+
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 5.86s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+test enc_passes_two_still_writes_complete_ivf ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.40s
+
+
+MUTANT: remove only lag-in-frames>0/auto-alt-ref>0 two-pass rejection; retain KIL120 thread/tile guards and all tests.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 5.63s
+     Running unittests src/bin/rvp9enc.rs (target/debug/deps/rvp9enc-447fea9249343450)
+
+running 3 tests
+test tests::two_pass_lookahead_controls_accept_defaults_zero_and_one_pass_values ... ok
+test tests::two_pass_rejects_positive_auto_alt_ref ... FAILED
+test tests::two_pass_rejects_positive_lookahead ... FAILED
+
+failures:
+
+---- tests::two_pass_rejects_positive_auto_alt_ref stdout ----
+
+thread 'tests::two_pass_rejects_positive_auto_alt_ref' (286867301) panicked at crates/rvp9-cli/src/bin/rvp9enc.rs:1891:13:
+--passes 2 must reject --auto-alt-ref=1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::two_pass_rejects_positive_lookahead stdout ----
+
+thread 'tests::two_pass_rejects_positive_lookahead' (286867302) panicked at crates/rvp9-cli/src/bin/rvp9enc.rs:1867:13:
+--passes 2 must reject --lag-in-frames=1
+
+
+failures:
+    tests::two_pass_rejects_positive_auto_alt_ref
+    tests::two_pass_rejects_positive_lookahead
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-cli --bin rvp9enc`
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 5 tests
+test enc_two_pass_positive_lag_is_rejected_with_valid_input ... FAILED
+test enc_two_pass_temporal_svc_rejected_before_output_creation ... ok
+test enc_two_pass_rejects_positive_lag_before_file_io ... FAILED
+test enc_two_pass_rejects_explicit_parallelism_before_file_io ... ok
+test enc_two_pass_rejects_positive_alt_ref_before_file_io ... FAILED
+
+failures:
+
+---- enc_two_pass_positive_lag_is_rejected_with_valid_input stdout ----
+
+thread 'enc_two_pass_positive_lag_is_rejected_with_valid_input' (286867456) panicked at crates/rvp9-cli/tests/cli_arg_coverage.rs:646:5:
+two-pass positive lag must be rejected instead of silently ignored: command succeeded; missing delayed-scheduling diagnostic: ; rejected request changed output sentinel
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- enc_two_pass_rejects_positive_lag_before_file_io stdout ----
+
+thread 'enc_two_pass_rejects_positive_lag_before_file_io' (286867459) panicked at crates/rvp9-cli/tests/cli_arg_coverage.rs:534:5:
+two-pass positive lag must be rejected before input/output I/O: lag_one_inline: missing delayed-scheduling diagnostic: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_7_two_pass_lag_missing_input.yuv: no such file or directory (os error 2)
+; lag_one_inline: missing-input error took precedence: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_7_two_pass_lag_missing_input.yuv: no such file or directory (os error 2)
+; lag_one_split: missing delayed-scheduling diagnostic: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_7_two_pass_lag_missing_input.yuv: no such file or directory (os error 2)
+; lag_one_split: missing-input error took precedence: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_7_two_pass_lag_missing_input.yuv: no such file or directory (os error 2)
+; lag_max_inline: missing delayed-scheduling diagnostic: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_7_two_pass_lag_missing_input.yuv: no such file or directory (os error 2)
+; lag_max_inline: missing-input error took precedence: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_7_two_pass_lag_missing_input.yuv: no such file or directory (os error 2)
+; lag_max_split: missing delayed-scheduling diagnostic: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_7_two_pass_lag_missing_input.yuv: no such file or directory (os error 2)
+; lag_max_split: missing-input error took precedence: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_7_two_pass_lag_missing_input.yuv: no such file or directory (os error 2)
+
+
+---- enc_two_pass_rejects_positive_alt_ref_before_file_io stdout ----
+
+thread 'enc_two_pass_rejects_positive_alt_ref_before_file_io' (286867458) panicked at crates/rvp9-cli/tests/cli_arg_coverage.rs:594:5:
+two-pass positive ALTREF must be rejected before input/output I/O: alt_ref_one_inline: missing delayed-scheduling diagnostic: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_3_two_pass_alt_ref_missing_input.yuv: no such file or directory (os error 2)
+; alt_ref_one_inline: missing-input error took precedence: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_3_two_pass_alt_ref_missing_input.yuv: no such file or directory (os error 2)
+; alt_ref_one_split: missing delayed-scheduling diagnostic: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_3_two_pass_alt_ref_missing_input.yuv: no such file or directory (os error 2)
+; alt_ref_one_split: missing-input error took precedence: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_3_two_pass_alt_ref_missing_input.yuv: no such file or directory (os error 2)
+; alt_ref_max_inline: missing delayed-scheduling diagnostic: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_3_two_pass_alt_ref_missing_input.yuv: no such file or directory (os error 2)
+; alt_ref_max_inline: missing-input error took precedence: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_3_two_pass_alt_ref_missing_input.yuv: no such file or directory (os error 2)
+; alt_ref_max_split: missing delayed-scheduling diagnostic: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_3_two_pass_alt_ref_missing_input.yuv: no such file or directory (os error 2)
+; alt_ref_max_split: missing-input error took precedence: rvp9enc: opening /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/t/rvp9cli_argcov_92983_3_two_pass_alt_ref_missing_input.yuv: no such file or directory (os error 2)
+
+
+
+failures:
+    enc_two_pass_positive_lag_is_rejected_with_valid_input
+    enc_two_pass_rejects_positive_alt_ref_before_file_io
+    enc_two_pass_rejects_positive_lag_before_file_io
+
+test result: FAILED. 2 passed; 3 failed; 0 ignored; 0 measured; 97 filtered out; finished in 0.37s
+
+error: test failed, to rerun pass `-p rvp9-cli --test cli_arg_coverage`
+error: 2 targets failed:
+    `-p rvp9-cli --bin rvp9enc`
+    `-p rvp9-cli --test cli_arg_coverage`
+
+RESTORED: exact original rvp9enc.rs bytes. Final focused tests follow.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 6.41s
+     Running unittests src/bin/rvp9enc.rs (target/debug/deps/rvp9enc-447fea9249343450)
+
+running 3 tests
+test tests::two_pass_lookahead_controls_accept_defaults_zero_and_one_pass_values ... ok
+test tests::two_pass_rejects_positive_auto_alt_ref ... ok
+test tests::two_pass_rejects_positive_lookahead ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 5 tests
+test enc_two_pass_positive_lag_is_rejected_with_valid_input ... ok
+test enc_two_pass_temporal_svc_rejected_before_output_creation ... ok
+test enc_two_pass_rejects_positive_lag_before_file_io ... ok
+test enc_two_pass_rejects_explicit_parallelism_before_file_io ... ok
+test enc_two_pass_rejects_positive_alt_ref_before_file_io ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 97 filtered out; finished in 0.37s
+
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 5.17s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+test enc_passes_two_still_writes_complete_ivf ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 1.47s
+
+
+VERDICT: recommend close. Claim verify-20261018T164147Z-cc410bb6 remains for lead verdict. Fix17d64800b1f8c8490400bbbacde486908d40adcd ancestry on origin/main confirmed exit0. Source scope lag>0 and ALTREF>0 rejection before input/output I/O; both encoder passes still force lag0, so rejection is the supported contract. Adjacent KIL120 threads/tile guards retained and their regression passed during mutation.
+Initial/final3 unit +5 integration +1 complete-IVF control all pass. Mutant2 unit and3 integration assertions failed; valid-input lag invocation succeeded and overwrote fixture sentinel, exact original omission reproduced. No split indicated. Exact original source bytes restored and scoped git diff --exit-code clean; no code/test/ledger verdict edits.

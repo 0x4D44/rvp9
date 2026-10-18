@@ -1,0 +1,99 @@
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 16.99s
+     Running tests/realtime_output.rs (target/debug/deps/realtime_output-8dabbace448e666b)
+
+running 6 tests
+test existing_explicit_symlink_is_rejected_before_running_encoder ... ok
+test existing_explicit_file_is_rejected_before_running_encoder ... ok
+test fresh_explicit_output_is_used_and_retained_after_success ... ok
+test stale_default_output_is_ignored_and_zero_frame_run_cleans_owned_directory ... ok
+test concurrent_default_runs_use_distinct_outputs_and_count_their_own_ivf ... ok
+test default_output_is_cleaned_after_encoder_and_timing_failures ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+
+
+MUTANT: replace default owned unique output with original shared temp rvp9_realtime_bench.ivf; explicit output branch unchanged. Integration TMPDIRs isolate artifacts.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-bench)
+warning: unused imports: `AtomicU64` and `Ordering`
+  --> crates/rvp9-bench/src/bin/realtime.rs:35:25
+   |
+35 | use std::sync::atomic::{AtomicU64, Ordering};
+   |                         ^^^^^^^^^  ^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rvp9-bench` (bin "realtime") generated 1 warning (run `cargo fix --bin "realtime" -p rvp9-bench` to apply 1 suggestion)
+    Finished `test` profile [optimized + debuginfo] target(s) in 6.82s
+     Running tests/realtime_output.rs (target/debug/deps/realtime_output-8dabbace448e666b)
+
+running 6 tests
+test existing_explicit_symlink_is_rejected_before_running_encoder ... ok
+test existing_explicit_file_is_rejected_before_running_encoder ... ok
+test stale_default_output_is_ignored_and_zero_frame_run_cleans_owned_directory ... FAILED
+test concurrent_default_runs_use_distinct_outputs_and_count_their_own_ivf ... FAILED
+test fresh_explicit_output_is_used_and_retained_after_success ... ok
+test default_output_is_cleaned_after_encoder_and_timing_failures ... FAILED
+
+failures:
+
+---- stale_default_output_is_ignored_and_zero_frame_run_cleans_owned_directory stdout ----
+
+thread 'stale_default_output_is_ignored_and_zero_frame_run_cleans_owned_directory' (286361548) panicked at crates/rvp9-bench/tests/realtime_output.rs:213:5:
+assertion `left == right` failed
+  left: Some(0)
+ right: Some(2)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- concurrent_default_runs_use_distinct_outputs_and_count_their_own_ivf stdout ----
+
+thread 'concurrent_default_runs_use_distinct_outputs_and_count_their_own_ivf' (286361543) panicked at crates/rvp9-bench/tests/realtime_output.rs:174:5:
+assertion `left != right` failed: each run needs its own IVF path
+  left: "/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-bench/../../.scratch/realtime-output-29295-1/tmp/rvp9_realtime_bench.ivf"
+ right: "/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-bench/../../.scratch/realtime-output-29295-1/tmp/rvp9_realtime_bench.ivf"
+
+---- default_output_is_cleaned_after_encoder_and_timing_failures stdout ----
+
+thread 'default_output_is_cleaned_after_encoder_and_timing_failures' (286361544) panicked at crates/rvp9-bench/tests/realtime_output.rs:347:5:
+timing failure output directory leaked
+
+
+failures:
+    concurrent_default_runs_use_distinct_outputs_and_count_their_own_ivf
+    default_output_is_cleaned_after_encoder_and_timing_failures
+    stale_default_output_is_ignored_and_zero_frame_run_cleans_owned_directory
+
+test result: FAILED. 3 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+
+error: test failed, to rerun pass `-p rvp9-bench --test realtime_output`
+
+RESTORED: exact original realtime.rs bytes; final focused green follows.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.47s
+     Running tests/realtime_output.rs (target/debug/deps/realtime_output-8dabbace448e666b)
+
+running 6 tests
+test existing_explicit_file_is_rejected_before_running_encoder ... ok
+test existing_explicit_symlink_is_rejected_before_running_encoder ... ok
+test default_output_is_cleaned_after_encoder_and_timing_failures ... ok
+test stale_default_output_is_ignored_and_zero_frame_run_cleans_owned_directory ... ok
+test concurrent_default_runs_use_distinct_outputs_and_count_their_own_ivf ... ok
+test fresh_explicit_output_is_used_and_retained_after_success ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.79s
+

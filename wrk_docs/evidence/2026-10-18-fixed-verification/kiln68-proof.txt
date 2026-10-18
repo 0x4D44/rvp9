@@ -1,0 +1,114 @@
+INITIAL actual report finalization + legacy formatter COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --test stage4a_source_drift </dev/null
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 17.77s
+     Running tests/stage4a_source_drift.rs (target/debug/deps/stage4a_source_drift-41e55bd248ce1733)
+
+running 6 tests
+test final_source_hash_accepts_unchanged_pinned_input ... ok
+test final_source_hash_detects_drift_and_pinned_hash_mismatch ... ok
+test final_report_passes_unchanged_pinned_source ... ok
+test final_report_rejects_unchanged_source_with_wrong_pin ... ok
+test final_report_rejects_missing_ignored_source ... ok
+test final_report_rejects_changed_ignored_source ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.86s
+
+
+EXIT: 0
+MUTANT remove actual final rehash block COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --test stage4a_source_drift final_report_rejects_changed_ignored_source -- --exact </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 12.24s
+     Running tests/stage4a_source_drift.rs (target/debug/deps/stage4a_source_drift-41e55bd248ce1733)
+
+running 1 test
+test final_report_rejects_changed_ignored_source ... FAILED
+
+failures:
+
+---- final_report_rejects_changed_ignored_source stdout ----
+Stage 4a product report: /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder/../../.scratch/stage4a-source-46275-0/report.json
+Stage 4a product status: PASS
+
+thread 'final_report_rejects_changed_ignored_source' (286100593) panicked at crates/rvp9-encoder/tests/stage4a_source_drift.rs:144:5:
+assertion `left == right` failed: final source validation must block PASS
+  left: String("PASS")
+ right: "FAIL"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    final_report_rejects_changed_ignored_source
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.79s
+
+error: test failed, to rerun pass `-p rvp9-encoder --test stage4a_source_drift`
+
+EXIT: 101
+MUTANT overwrite run-start hash instead of preserving it COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --test stage4a_source_drift final_report_rejects_changed_ignored_source -- --exact </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 12.44s
+     Running tests/stage4a_source_drift.rs (target/debug/deps/stage4a_source_drift-41e55bd248ce1733)
+
+running 1 test
+test final_report_rejects_changed_ignored_source ... FAILED
+
+failures:
+
+---- final_report_rejects_changed_ignored_source stdout ----
+Stage 4a product report: /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder/../../.scratch/stage4a-source-49208-0/report.json
+Stage 4a product status: FAIL
+Stage 4a product reasons: ["SOURCE_SHA256_CHANGED_DURING_RUN:d863178a7212b8828e21519743b7bc5f5550fe2354b5a7711e7eeebe4a082c52_TO_3584cf124a2ed07ed55b33dcf5b2045e16df076c44cc00e7d834ff55adc8a53c", "SOURCE_SHA256_FINAL_MISMATCH:3584cf124a2ed07ed55b33dcf5b2045e16df076c44cc00e7d834ff55adc8a53c_EXPECTED_d863178a7212b8828e21519743b7bc5f5550fe2354b5a7711e7eeebe4a082c52"]
+
+thread 'final_report_rejects_changed_ignored_source' (286108130) panicked at crates/rvp9-encoder/tests/stage4a_source_drift.rs:158:5:
+assertion `left == right` failed: retain run-start corpus fingerprint
+  left: String("3584cf124a2ed07ed55b33dcf5b2045e16df076c44cc00e7d834ff55adc8a53c")
+ right: "d863178a7212b8828e21519743b7bc5f5550fe2354b5a7711e7eeebe4a082c52"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    final_report_rejects_changed_ignored_source
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 1.06s
+
+error: test failed, to rerun pass `-p rvp9-encoder --test stage4a_source_drift`
+
+EXIT: 101
+RESTORED actual report finalization + formatter COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --test stage4a_source_drift </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 12.97s
+     Running tests/stage4a_source_drift.rs (target/debug/deps/stage4a_source_drift-41e55bd248ce1733)
+
+running 6 tests
+test final_source_hash_accepts_unchanged_pinned_input ... ok
+test final_source_hash_detects_drift_and_pinned_hash_mismatch ... ok
+test final_report_passes_unchanged_pinned_source ... ok
+test final_report_rejects_unchanged_source_with_wrong_pin ... ok
+test final_report_rejects_changed_ignored_source ... ok
+test final_report_rejects_missing_ignored_source ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.55s
+
+
+EXIT: 0

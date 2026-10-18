@@ -1,0 +1,103 @@
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 6.85s
+     Running tests/cli_roundtrip.rs (target/debug/deps/cli_roundtrip-adccebd6bec7d8fe)
+
+running 19 tests
+test enc_spatial_input_error_after_first_access_unit_leaves_partial_ivf ... ok
+test enc_lagged_input_error_before_first_packet_preserves_existing_output ... ok
+test enc_input_error_after_first_packet_leaves_partial_ivf ... ok
+test non_multiple_of_64_rejected_clearly ... ok
+test enc_lagged_single_frame_is_written_during_flush ... ok
+test unsupported_flag_fails_loudly ... ok
+test enc_lagged_input_error_before_first_packet_creates_no_output ... ok
+test enc_empty_y4m_is_rejected_without_opening_output ... ok
+test threads_help_tag_supported ... ok
+test threads_unallocatable_count_returns_error_without_panicking ... ok
+test spatial_svc_cli_emits_three_component_access_units_and_decodes_top_layer ... ok
+test help_lists_supported_and_not_yet_tags ... ok
+test encode_decode_roundtrip_raw_input ... ok
+test threads_flag_accepted ... ok
+test threads_zero_means_one_thread ... ok
+test md5_is_deterministic_and_per_frame ... ok
+test encode_decode_rectangular_roundtrip_preserves_geometry_and_planes ... ok
+test threads_invalid_rejected ... ok
+test y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s
+
+
+MUTANT: ordinary one-pass writer opened/header-written eagerly before encode; Option interface and spatial/flush packet writes unchanged.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 13.07s
+     Running tests/cli_roundtrip.rs (target/debug/deps/cli_roundtrip-adccebd6bec7d8fe)
+
+running 2 tests
+test enc_lagged_input_error_before_first_packet_preserves_existing_output ... FAILED
+test enc_lagged_input_error_before_first_packet_creates_no_output ... FAILED
+
+failures:
+
+---- enc_lagged_input_error_before_first_packet_preserves_existing_output stdout ----
+
+thread 'enc_lagged_input_error_before_first_packet_preserves_existing_output' (286960972) panicked at crates/rvp9-cli/tests/cli_roundtrip.rs:246:5:
+assertion `left == right` failed: failure before a delayed packet must preserve existing output
+  left: [68, 75, 73, 70, 0, 0, 32, 0, 86, 80, 57, 48, 64, 0, 64, 0, 30, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+ right: [101, 120, 105, 115, 116, 105, 110, 103, 32, 111, 117, 116, 112, 117, 116, 32, 109, 117, 115, 116, 32, 115, 117, 114, 118, 105, 118, 101, 32, 98, 101, 102, 111, 114, 101, 32, 102, 105, 114, 115, 116, 32, 101, 110, 99, 111, 100, 101, 100, 32, 112, 97, 99, 107, 101, 116]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- enc_lagged_input_error_before_first_packet_creates_no_output stdout ----
+
+thread 'enc_lagged_input_error_before_first_packet_creates_no_output' (286960971) panicked at crates/rvp9-cli/tests/cli_roundtrip.rs:274:5:
+failure before a delayed packet must not create output
+
+
+failures:
+    enc_lagged_input_error_before_first_packet_creates_no_output
+    enc_lagged_input_error_before_first_packet_preserves_existing_output
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 17 filtered out; finished in 1.98s
+
+error: test failed, to rerun pass `-p rvp9-cli --test cli_roundtrip`
+
+RESTORED: exact original rvp9enc.rs bytes; final cli_roundtrip19 follows.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.77s
+     Running tests/cli_roundtrip.rs (target/debug/deps/cli_roundtrip-adccebd6bec7d8fe)
+
+running 19 tests
+test enc_lagged_input_error_before_first_packet_creates_no_output ... ok
+test unsupported_flag_fails_loudly ... ok
+test enc_lagged_single_frame_is_written_during_flush ... ok
+test enc_lagged_input_error_before_first_packet_preserves_existing_output ... ok
+test non_multiple_of_64_rejected_clearly ... ok
+test enc_empty_y4m_is_rejected_without_opening_output ... ok
+test enc_input_error_after_first_packet_leaves_partial_ivf ... ok
+test enc_spatial_input_error_after_first_access_unit_leaves_partial_ivf ... ok
+test help_lists_supported_and_not_yet_tags ... ok
+test threads_unallocatable_count_returns_error_without_panicking ... ok
+test threads_help_tag_supported ... ok
+test encode_decode_roundtrip_raw_input ... ok
+test spatial_svc_cli_emits_three_component_access_units_and_decodes_top_layer ... ok
+test threads_zero_means_one_thread ... ok
+test threads_flag_accepted ... ok
+test md5_is_deterministic_and_per_frame ... ok
+test encode_decode_rectangular_roundtrip_preserves_geometry_and_planes ... ok
+test threads_invalid_rejected ... ok
+test y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+
+
+VERDICT recommend close; no split. Claim verify-20261018T164417Z-37f59a3f remains for lead verdict. Fixb74adaddb222c644d7532ff970b4da5f3133f5ac ancestor origin/main confirmed exit0. Arthur approved defer-open until first encoded packet, partial output permitted after it. Ordinary and spatial packet/ordinary flush sites share lazy writer helper. Initial/final cli_roundtrip19 all pass, including prepacket existing/missing destinations, empty input, later partial output, firstpacket during flush, ordinary/spatial successes. Eager ordinary writer-only mutant gave2 selected assertion failures and left32byte IVF header. Exact source restored; scoped diffclean; no adjacent lookahead/ALTREF or spatial implementation edits. No ledger verdict written.

@@ -1,0 +1,80 @@
+
+INITIAL FIXED SOURCE EXIT=0
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 11s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-3eec11113be8f940)
+
+running 3 tests
+test f02_schema::tests::luma_eob_nonzero_is_a_strict_oracle_field ... ok
+test f02_schema::tests::q_index_is_a_strict_oracle_field ... ok
+test f02_schema::tests::tx_size_is_a_strict_oracle_field ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 62 filtered out; finished in 0.00s
+
+
+ROOT MUTANT removes all three advertised field comparisons EXIT=101
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 14s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-3eec11113be8f940)
+
+running 3 tests
+
+thread 'f02_schema::tests::luma_eob_nonzero_is_a_strict_oracle_field' (286488266) panicked at crates/rvp9-harness/src/f02_schema.rs:2167:9:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'f02_schema::tests::q_index_is_a_strict_oracle_field' (286488267) panicked at crates/rvp9-harness/src/f02_schema.rs:2167:9:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+thread 'f02_schema::tests::tx_size_is_a_strict_oracle_field' (286488268) panicked at crates/rvp9-harness/src/f02_schema.rs:2167:9:
+assertion `left == right` failed
+  left: 0
+ right: 1
+test f02_schema::tests::luma_eob_nonzero_is_a_strict_oracle_field ... FAILED
+test f02_schema::tests::tx_size_is_a_strict_oracle_field ... FAILED
+test f02_schema::tests::q_index_is_a_strict_oracle_field ... FAILED
+
+failures:
+
+failures:
+    f02_schema::tests::luma_eob_nonzero_is_a_strict_oracle_field
+    f02_schema::tests::q_index_is_a_strict_oracle_field
+    f02_schema::tests::tx_size_is_a_strict_oracle_field
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 62 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-harness --lib`
+
+RESTORED SOURCE EXIT=0
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 28s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-3eec11113be8f940)
+
+running 3 tests
+test f02_schema::tests::tx_size_is_a_strict_oracle_field ... ok
+test f02_schema::tests::luma_eob_nonzero_is_a_strict_oracle_field ... ok
+test f02_schema::tests::q_index_is_a_strict_oracle_field ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 62 filtered out; finished in 0.00s
+
+
+RESTORED GIT DIFF EXIT=0

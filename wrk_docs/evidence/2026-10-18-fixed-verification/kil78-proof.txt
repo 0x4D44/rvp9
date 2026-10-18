@@ -1,0 +1,89 @@
+INITIAL release tile writer regressions COMMAND: deltic timeout 300 cargo test --release -p rvp9-core --lib write_tile_info </dev/null
+   Compiling libc v0.2.186
+   Compiling getrandom v0.3.4
+   Compiling rustix v1.1.4
+   Compiling getrandom v0.4.2
+   Compiling zerocopy v0.8.48
+   Compiling bitflags v2.11.1
+   Compiling autocfg v1.5.0
+   Compiling fastrand v2.4.1
+   Compiling once_cell v1.21.4
+   Compiling fnv v1.0.7
+   Compiling bit-vec v0.8.0
+   Compiling quick-error v1.2.3
+   Compiling unarray v0.1.4
+   Compiling regex-syntax v0.8.10
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling bit-set v0.8.0
+   Compiling num-traits v0.2.19
+   Compiling errno v0.3.14
+   Compiling wait-timeout v0.2.1
+   Compiling rand_core v0.9.5
+   Compiling rand v0.9.4
+   Compiling rand_xorshift v0.4.0
+   Compiling tempfile v3.27.0
+   Compiling rusty-fork v0.3.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling proptest v1.11.0
+    Finished `release` profile [optimized + debuginfo] target(s) in 3m 27s
+     Running unittests src/lib.rs (target/release/deps/rvp9_core-1eb30b5dbade1d20)
+
+running 2 tests
+test bitstream::sub_parsers::tests::write_tile_info_all_combinations ... ok
+test bitstream::sub_parsers::tests::write_tile_info_rejects_invalid_geometry_before_writing ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1725 filtered out; finished in 0.00s
+
+
+EXIT: 0
+MUTANT release debug_assert columns and unchecked rows COMMAND: deltic timeout 300 cargo test --release -p rvp9-core --lib bitstream::sub_parsers::tests::write_tile_info_rejects_invalid_geometry_before_writing -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+    Finished `release` profile [optimized + debuginfo] target(s) in 4m 01s
+     Running unittests src/lib.rs (target/release/deps/rvp9_core-1eb30b5dbade1d20)
+
+running 1 test
+test bitstream::sub_parsers::tests::write_tile_info_rejects_invalid_geometry_before_writing ... FAILED
+
+failures:
+
+---- bitstream::sub_parsers::tests::write_tile_info_rejects_invalid_geometry_before_writing stdout ----
+
+thread 'bitstream::sub_parsers::tests::write_tile_info_rejects_invalid_geometry_before_writing' (286916642) panicked at crates/rvp9-core/src/bitstream/sub_parsers.rs:1277:58:
+invalid tile info must fail: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    bitstream::sub_parsers::tests::write_tile_info_rejects_invalid_geometry_before_writing
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1726 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-core --lib`
+
+EXIT: 101
+RESTORED release tile writer regressions COMMAND: deltic timeout 300 cargo test --release -p rvp9-core --lib write_tile_info </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+deltic timeout: deadline elapsed; sent SIGKILL to the command process group (best-effort Unix cleanup). Descendants that called setsid() or setpgid() may still be running.
+
+EXIT: 124
+e::SuperframeIndexErrorReason,
+    |                        ^^^^^^^^^^ could not find `superframe` in `super`
+
+error[E0433]: cannot find `superframe` in `super`
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/error.rs:296:24
+    |
+296 |                 super::superframe::SuperframeIndexErrorReason::TruncatedIndex {
+    |                        ^^^^^^^^^^ could not find `superframe` in `super`
+
+error[E0433]: cannot find `superframe` in `super`
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/error.rs:303:24
+    |
+303 |                 super::superframe::SuperframeIndexErrorReason::MarkerMismatch {
+    |                        ^^^^^^^^^^ could not find `superframe` in `super`
+
+error: aborting due to 3 previous errors
+
+For more information about this error, try `rustc --explain E0433`.
+
+EXIT: 1

@@ -1,0 +1,136 @@
+ORIGINAL SHA256=ffeebb7ace3b05ce58dd4577b02f533fa778497450d8c36d0f438ab1defb506d
+BASELINE_UNIT COMMAND: deltic timeout 180 cargo test -p rvp9-cli --bin rvp9dec y4m_ -- --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 4.79s
+     Running unittests src/bin/rvp9dec.rs (target/debug/deps/rvp9dec-9b1ce31ef4462544)
+
+running 5 tests
+test tests::y4m_format_state_is_unset_when_header_write_fails ... ok
+test tests::y4m_rejects_chroma_changes_before_writing_frame ... ok
+test tests::y4m_rejects_height_change_before_writing_frame ... ok
+test tests::y4m_rejects_width_change_before_writing_frame ... ok
+test tests::y4m_writes_multiple_frames_with_the_same_format ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+BASELINE_UNIT EXIT=0
+BASELINE_INTEGRATION COMMAND: deltic timeout 180 cargo test -p rvp9-cli --test cli_roundtrip y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format -- --exact --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 6.53s
+     Running tests/cli_roundtrip.rs (target/debug/deps/cli_roundtrip-adccebd6bec7d8fe)
+
+running 1 test
+test y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 1.64s
+
+BASELINE_INTEGRATION EXIT=0
+ROOT REVERSAL: disable only changed-format guard; retain format latch, writes, and every regression.
+MUTANT_UNIT COMMAND: deltic timeout 180 cargo test -p rvp9-cli --bin rvp9dec y4m_ -- --nocapture < /dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.38s
+     Running unittests src/bin/rvp9dec.rs (target/debug/deps/rvp9dec-9b1ce31ef4462544)
+
+running 5 tests
+
+thread 'tests::y4m_rejects_chroma_changes_before_writing_frame' (286692722) panicked at crates/rvp9-cli/src/bin/rvp9dec.rs:727:9:
+Y4M format change on output frame 2 must be rejected
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'tests::y4m_rejects_height_change_before_writing_frame' (286692723) panicked at crates/rvp9-cli/src/bin/rvp9dec.rs:727:9:
+Y4M format change on output frame 2 must be rejected
+test tests::y4m_format_state_is_unset_when_header_write_fails ... ok
+test tests::y4m_rejects_chroma_changes_before_writing_frame ... FAILED
+
+thread 'tests::y4m_rejects_width_change_before_writing_frame' (286692724) panicked at crates/rvp9-cli/src/bin/rvp9dec.rs:727:9:
+Y4M format change on output frame 2 must be rejected
+test tests::y4m_rejects_height_change_before_writing_frame ... FAILED
+test tests::y4m_writes_multiple_frames_with_the_same_format ... ok
+test tests::y4m_rejects_width_change_before_writing_frame ... FAILED
+
+failures:
+
+failures:
+    tests::y4m_rejects_chroma_changes_before_writing_frame
+    tests::y4m_rejects_height_change_before_writing_frame
+    tests::y4m_rejects_width_change_before_writing_frame
+
+test result: FAILED. 2 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-cli --bin rvp9dec`
+MUTANT_UNIT EXIT=101
+MUTANT_INTEGRATION COMMAND: deltic timeout 180 cargo test -p rvp9-cli --test cli_roundtrip y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format -- --exact --nocapture < /dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.59s
+     Running tests/cli_roundtrip.rs (target/debug/deps/cli_roundtrip-adccebd6bec7d8fe)
+
+running 1 test
+
+thread 'y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format' (286701576) panicked at crates/rvp9-cli/tests/cli_roundtrip.rs:637:5:
+Y4M output with changing geometry must fail
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format ... FAILED
+
+failures:
+
+failures:
+    y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.63s
+
+error: test failed, to rerun pass `-p rvp9-cli --test cli_roundtrip`
+MUTANT_INTEGRATION EXIT=101
+RESTORED SHA256=ffeebb7ace3b05ce58dd4577b02f533fa778497450d8c36d0f438ab1defb506d
+RESTORED_UNIT COMMAND: deltic timeout 180 cargo test -p rvp9-cli --bin rvp9dec y4m_ -- --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 4.47s
+     Running unittests src/bin/rvp9dec.rs (target/debug/deps/rvp9dec-9b1ce31ef4462544)
+
+running 5 tests
+test tests::y4m_format_state_is_unset_when_header_write_fails ... ok
+test tests::y4m_rejects_width_change_before_writing_frame ... ok
+test tests::y4m_rejects_height_change_before_writing_frame ... ok
+test tests::y4m_writes_multiple_frames_with_the_same_format ... ok
+test tests::y4m_rejects_chroma_changes_before_writing_frame ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+RESTORED_UNIT EXIT=0
+RESTORED_INTEGRATION COMMAND: deltic timeout 180 cargo test -p rvp9-cli --test cli_roundtrip y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format -- --exact --nocapture < /dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 13.34s
+     Running tests/cli_roundtrip.rs (target/debug/deps/cli_roundtrip-adccebd6bec7d8fe)
+
+running 1 test
+test y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.92s
+
+RESTORED_INTEGRATION EXIT=0

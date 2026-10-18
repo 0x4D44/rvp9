@@ -1,0 +1,235 @@
+CLAIM verify-20261018T164154Z-d66b7b93; FIX666e899f ancestor of origin/main; ORIGINAL SHA256=141732d42e7ddf16e99f80ca7c8e57f3c97b12736ae74b80923cd3a152637fc5
+BASELINE_REGRESSION COMMAND: deltic timeout 180 cargo test -p rvp9-harness --bin f02-block-oracle numeric_options_ -- --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 10.73s
+     Running unittests src/bin/f02_block_oracle.rs (target/debug/deps/f02_block_oracle-e6c7f64058ec0f1f)
+
+running 3 tests
+test tests::numeric_options_accept_split_and_equals_forms ... ok
+test tests::numeric_options_keep_documented_defaults ... ok
+test tests::numeric_options_reject_malformed_values_with_option_specific_errors ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 27 filtered out; finished in 0.00s
+
+BASELINE_REGRESSION EXIT=0
+BUILD_ACTUAL_BINARY COMMAND: deltic timeout 180 cargo build -p rvp9-harness --bin f02-block-oracle < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 11.07s
+BUILD_ACTUAL_BINARY EXIT=0
+BASELINE_ACTUAL_--frames='many' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --frames many < /dev/null
+Error: "--frames must be an unsigned integer, got \"many\""
+BASELINE_ACTUAL_--frames='many' EXIT=1
+BASELINE_ACTUAL_--frames='0' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --frames 0 < /dev/null
+Error: "--frames must be greater than zero"
+BASELINE_ACTUAL_--frames='0' EXIT=1
+BASELINE_ACTUAL_--width='wide' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --width wide < /dev/null
+Error: "--width must be an unsigned integer, got \"wide\""
+BASELINE_ACTUAL_--width='wide' EXIT=1
+BASELINE_ACTUAL_--height='tall' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --height tall < /dev/null
+Error: "--height must be an unsigned integer, got \"tall\""
+BASELINE_ACTUAL_--height='tall' EXIT=1
+BASELINE_ACTUAL_--fps='fast' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --fps fast < /dev/null
+Error: "--fps must be an unsigned integer, got \"fast\""
+BASELINE_ACTUAL_--fps='fast' EXIT=1
+BASELINE_ACTUAL_--threads='many' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --threads many < /dev/null
+Error: "--threads must be an unsigned integer, got \"many\""
+BASELINE_ACTUAL_--threads='many' EXIT=1
+BASELINE_ACTUAL_--tile-columns='many' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --tile-columns many < /dev/null
+Error: "--tile-columns must be an unsigned integer, got \"many\""
+BASELINE_ACTUAL_--tile-columns='many' EXIT=1
+BASELINE_ACTUAL_--kbps='nope' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --kbps nope < /dev/null
+Error: "--kbps entries must be positive integers, got \"nope\""
+BASELINE_ACTUAL_--kbps='nope' EXIT=1
+BASELINE_ACTUAL_--kbps='' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --kbps  < /dev/null
+Error: "--kbps must contain at least one positive bitrate and no empty entries"
+BASELINE_ACTUAL_--kbps='' EXIT=1
+BASELINE_ACTUAL_--kbps='100,nope,200' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --kbps 100,nope,200 < /dev/null
+Error: "--kbps entries must be positive integers, got \"nope\""
+BASELINE_ACTUAL_--kbps='100,nope,200' EXIT=1
+BASELINE_ACTUAL_--kbps='0' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --kbps 0 < /dev/null
+Error: "--kbps entries must be greater than zero"
+BASELINE_ACTUAL_--kbps='0' EXIT=1
+ROOT REVERSAL MALFORMED_NUMBERS: restore old tolerant fallback/zero acceptance/drop-invalid behavior only; adjacent temp/child/schema code untouched.
+MALFORMED_NUMBERS COMMAND: deltic timeout 180 cargo test -p rvp9-harness --bin f02-block-oracle tests::numeric_options_reject_malformed_values_with_option_specific_errors -- --exact --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 8.95s
+     Running unittests src/bin/f02_block_oracle.rs (target/debug/deps/f02_block_oracle-e6c7f64058ec0f1f)
+
+running 1 test
+
+thread 'tests::numeric_options_reject_malformed_values_with_option_specific_errors' (286908325) panicked at crates/rvp9-harness/src/bin/f02_block_oracle.rs:2628:9:
+invalid numeric cases accepted or unclear:
+frames missing: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+frames before next option: accepted as NumericOptions { frames: 64, width: 320, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+frames empty: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+frames malformed: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+frames negative: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+frames overflow: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+width missing: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+width empty: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+width malformed: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+width negative: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+width overflow: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+height missing: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+height empty: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+height malformed: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+height negative: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+height overflow: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+fps missing: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+fps empty: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+fps malformed: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+fps negative: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+fps overflow: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+threads missing: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+threads empty: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+threads malformed: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+threads negative: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+threads overflow: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+tile columns missing: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+tile columns empty: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+tile columns malformed: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+tile columns negative: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+tile columns overflow: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::numeric_options_reject_malformed_values_with_option_specific_errors ... FAILED
+
+failures:
+
+failures:
+    tests::numeric_options_reject_malformed_values_with_option_specific_errors
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-harness --bin f02-block-oracle`
+MALFORMED_NUMBERS EXIT=101
+ROOT REVERSAL ZERO_WORK_NUMBERS: restore old tolerant fallback/zero acceptance/drop-invalid behavior only; adjacent temp/child/schema code untouched.
+ZERO_WORK_NUMBERS COMMAND: deltic timeout 180 cargo test -p rvp9-harness --bin f02-block-oracle tests::numeric_options_reject_malformed_values_with_option_specific_errors -- --exact --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.00s
+     Running unittests src/bin/f02_block_oracle.rs (target/debug/deps/f02_block_oracle-e6c7f64058ec0f1f)
+
+running 1 test
+
+thread 'tests::numeric_options_reject_malformed_values_with_option_specific_errors' (286914186) panicked at crates/rvp9-harness/src/bin/f02_block_oracle.rs:2634:9:
+invalid numeric cases accepted or unclear:
+frames zero: accepted as NumericOptions { frames: 0, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+width zero: accepted as NumericOptions { frames: 64, width: 0, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+height zero: accepted as NumericOptions { frames: 64, width: 256, height: 0, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+fps zero: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: Some(0), threads: 1, tile_columns: 6, kbps_list: [100] }
+threads zero: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 0, tile_columns: 6, kbps_list: [100] }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::numeric_options_reject_malformed_values_with_option_specific_errors ... FAILED
+
+failures:
+
+failures:
+    tests::numeric_options_reject_malformed_values_with_option_specific_errors
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-harness --bin f02-block-oracle`
+ZERO_WORK_NUMBERS EXIT=101
+ROOT REVERSAL DROPPED_KBPS_TOKENS: restore old tolerant fallback/zero acceptance/drop-invalid behavior only; adjacent temp/child/schema code untouched.
+DROPPED_KBPS_TOKENS COMMAND: deltic timeout 180 cargo test -p rvp9-harness --bin f02-block-oracle tests::numeric_options_reject_malformed_values_with_option_specific_errors -- --exact --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.18s
+     Running unittests src/bin/f02_block_oracle.rs (target/debug/deps/f02_block_oracle-e6c7f64058ec0f1f)
+
+running 1 test
+
+thread 'tests::numeric_options_reject_malformed_values_with_option_specific_errors' (286920350) panicked at crates/rvp9-harness/src/bin/f02_block_oracle.rs:2610:9:
+invalid numeric cases accepted or unclear:
+kbps missing: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+kbps empty: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [] }
+kbps malformed: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [] }
+kbps mixed malformed: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100, 200] }
+kbps leading empty: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+kbps trailing empty: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100] }
+kbps interior empty: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [100, 200] }
+kbps zero: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [0] }
+kbps negative: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [] }
+kbps integer overflow: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [] }
+kbps bitrate overflow: accepted as NumericOptions { frames: 64, width: 256, height: 256, fps: None, threads: 1, tile_columns: 6, kbps_list: [4294968] }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::numeric_options_reject_malformed_values_with_option_specific_errors ... FAILED
+
+failures:
+
+failures:
+    tests::numeric_options_reject_malformed_values_with_option_specific_errors
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-harness --bin f02-block-oracle`
+DROPPED_KBPS_TOKENS EXIT=101
+RESTORED SHA256=141732d42e7ddf16e99f80ca7c8e57f3c97b12736ae74b80923cd3a152637fc5
+RESTORED_REGRESSION COMMAND: deltic timeout 180 cargo test -p rvp9-harness --bin f02-block-oracle numeric_options_ -- --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 11.06s
+     Running unittests src/bin/f02_block_oracle.rs (target/debug/deps/f02_block_oracle-e6c7f64058ec0f1f)
+
+running 3 tests
+test tests::numeric_options_accept_split_and_equals_forms ... ok
+test tests::numeric_options_keep_documented_defaults ... ok
+test tests::numeric_options_reject_malformed_values_with_option_specific_errors ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 27 filtered out; finished in 0.00s
+
+RESTORED_REGRESSION EXIT=0
+RESTORED_ACTUAL_--frames='many' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --frames many < /dev/null
+Error: "--frames must be an unsigned integer, got \"many\""
+RESTORED_ACTUAL_--frames='many' EXIT=1
+RESTORED_ACTUAL_--frames='0' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --frames 0 < /dev/null
+Error: "--frames must be greater than zero"
+RESTORED_ACTUAL_--frames='0' EXIT=1
+RESTORED_ACTUAL_--width='wide' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --width wide < /dev/null
+Error: "--width must be an unsigned integer, got \"wide\""
+RESTORED_ACTUAL_--width='wide' EXIT=1
+RESTORED_ACTUAL_--height='tall' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --height tall < /dev/null
+Error: "--height must be an unsigned integer, got \"tall\""
+RESTORED_ACTUAL_--height='tall' EXIT=1
+RESTORED_ACTUAL_--fps='fast' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --fps fast < /dev/null
+Error: "--fps must be an unsigned integer, got \"fast\""
+RESTORED_ACTUAL_--fps='fast' EXIT=1
+RESTORED_ACTUAL_--threads='many' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --threads many < /dev/null
+Error: "--threads must be an unsigned integer, got \"many\""
+RESTORED_ACTUAL_--threads='many' EXIT=1
+RESTORED_ACTUAL_--tile-columns='many' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --tile-columns many < /dev/null
+Error: "--tile-columns must be an unsigned integer, got \"many\""
+RESTORED_ACTUAL_--tile-columns='many' EXIT=1
+RESTORED_ACTUAL_--kbps='nope' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --kbps nope < /dev/null
+Error: "--kbps entries must be positive integers, got \"nope\""
+RESTORED_ACTUAL_--kbps='nope' EXIT=1
+RESTORED_ACTUAL_--kbps='' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --kbps  < /dev/null
+Error: "--kbps must contain at least one positive bitrate and no empty entries"
+RESTORED_ACTUAL_--kbps='' EXIT=1
+RESTORED_ACTUAL_--kbps='100,nope,200' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --kbps 100,nope,200 < /dev/null
+Error: "--kbps entries must be positive integers, got \"nope\""
+RESTORED_ACTUAL_--kbps='100,nope,200' EXIT=1
+RESTORED_ACTUAL_--kbps='0' COMMAND: deltic timeout 30 target/debug/f02-block-oracle --kbps 0 < /dev/null
+Error: "--kbps entries must be greater than zero"
+RESTORED_ACTUAL_--kbps='0' EXIT=1

@@ -1,0 +1,88 @@
+ORIGINAL SHA256=0680d26771960f77d484172a17ee629eb6e97689418d9d5c748c0307a8525885
+CURRENT_ORIGINAL_COMMAND COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --release --locked --test w_buffer_pool < /dev/null
+   Compiling crossbeam-utils v0.8.21
+   Compiling proc-macro2 v1.0.106
+   Compiling version_check v0.9.5
+   Compiling quote v1.0.45
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling unicode-ident v1.0.24
+   Compiling serde_core v1.0.228
+   Compiling typenum v1.20.1
+   Compiling zmij v1.0.21
+   Compiling libc v0.2.186
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling memchr v2.8.0
+   Compiling itoa v1.0.18
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling static_assertions v1.1.0
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling syn v2.0.117
+   Compiling crossbeam-channel v0.5.15
+   Compiling cpufeatures v0.2.17
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 54s
+     Running tests/w_buffer_pool.rs (target/release/deps/w_buffer_pool-1592e9db1a0a8c70)
+
+running 2 tests
+test a10_byte_identity_pre_vs_post_refactor ... ok
+test a10_pool_stream_decodes_cleanly ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+CURRENT_ORIGINAL_COMMAND EXIT=0
+ROOT CONTENT REVERSAL: restore pre-173d76b7 golden7078/0x3d6d2810a35cd36d; assertions unchanged.
+PRE_FIX_GOLDEN COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --release --locked --test w_buffer_pool a10_byte_identity_pre_vs_post_refactor -- --exact --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 45s
+     Running tests/w_buffer_pool.rs (target/release/deps/w_buffer_pool-1592e9db1a0a8c70)
+
+running 1 test
+A10 byte-identity: len = 6446, fnv1a = 0x20793807d02f6e58
+
+thread 'a10_byte_identity_pre_vs_post_refactor' (286215365) panicked at crates/rvp9-encoder/tests/w_buffer_pool.rs:395:5:
+assertion `left == right` failed: encoded stream length changed — the refactor altered the bitstream
+  left: 6446
+ right: 7078
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test a10_byte_identity_pre_vs_post_refactor ... FAILED
+
+failures:
+
+failures:
+    a10_byte_identity_pre_vs_post_refactor
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p rvp9-encoder --test w_buffer_pool`
+PRE_FIX_GOLDEN EXIT=101
+RESTORED SHA256=0680d26771960f77d484172a17ee629eb6e97689418d9d5c748c0307a8525885
+RESTORED COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --release --locked --test w_buffer_pool -- --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 53s
+     Running tests/w_buffer_pool.rs (target/release/deps/w_buffer_pool-1592e9db1a0a8c70)
+
+running 2 tests
+A10 byte-identity: len = 6446, fnv1a = 0x20793807d02f6e58
+test a10_byte_identity_pre_vs_post_refactor ... ok
+test a10_pool_stream_decodes_cleanly ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+RESTORED EXIT=0

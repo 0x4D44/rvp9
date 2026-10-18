@@ -1,0 +1,151 @@
+ORIGINAL crates/rvp9-cli/src/bin/rvp9enc.rs SHA256=cc91a9d3bb70ed9d50b22950b41ebd376c60a8efec5d7425c7e03719cb4368a8
+ORIGINAL crates/rvp9-cli/src/bin/rvp9dec.rs SHA256=ffeebb7ace3b05ce58dd4577b02f533fa778497450d8c36d0f438ab1defb506d
+BASELINE_REGRESSION COMMAND: ['deltic', 'timeout', '300', 'cargo', 'test', '-p', 'rvp9-cli', '--test', 'cli_arg_coverage', 'invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position', '--', '--exact', '--nocapture']
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 12.63s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+test invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 3.25s
+
+BASELINE_REGRESSION EXIT=0
+BASELINE_ACTUAL_rvp9enc COMMAND: [b'deltic', b'timeout', b'30', b'target/debug/rvp9enc', b'missing_\xff.ivf']
+error: invalid UTF-8 was detected in one or more arguments
+
+Usage: deltic timeout [OPTIONS] <DURATION> <COMMAND>...
+
+For more information, try '--help'.
+BASELINE_ACTUAL_rvp9enc EXIT=2
+PROBE CORRECTION: deltic CLI itself rejects nonUTF8 argv, so invoke real binaries directly under Python subprocess timeout30s; preceding deltic error is not application evidence.
+BASELINE_DIRECT_rvp9enc COMMAND: [b'target/debug/rvp9enc', b'missing_\xff.ivf'] subprocess timeout=30 stdin=DEVNULL
+rvp9enc: argument 1 is not valid Unicode
+BASELINE_DIRECT_rvp9enc EXIT=1
+BASELINE_DIRECT_rvp9dec COMMAND: [b'target/debug/rvp9dec', b'missing_\xff.ivf'] subprocess timeout=30 stdin=DEVNULL
+rvp9dec: argument 1 is not valid Unicode
+BASELINE_DIRECT_rvp9dec EXIT=1
+ROOT REVERSAL rvp9enc: original std::env::args collection only; other binary fixed; tests unchanged.
+MUTANT_REGRESSION_rvp9enc COMMAND: ['deltic', 'timeout', '180', 'cargo', 'test', '-p', 'rvp9-cli', '--test', 'cli_arg_coverage', 'invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position', '--', '--exact', '--nocapture'] subprocess timeout=200 stdin=DEVNULL
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 36s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+
+thread 'invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position' (286446851) panicked at crates/rvp9-cli/tests/cli_arg_coverage.rs:3166:9:
+assertion `left == right` failed: rvp9enc must return its controlled failure code, got status exit status: 101 and stderr: 
+thread 'main' (286446853) panicked at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/env.rs:864:51:
+called `Result::unwrap()` on an `Err` value: "missing_\xFF.ivf"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+  left: Some(101)
+ right: Some(1)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position ... FAILED
+
+failures:
+
+failures:
+    invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.32s
+
+error: test failed, to rerun pass `-p rvp9-cli --test cli_arg_coverage`
+MUTANT_REGRESSION_rvp9enc EXIT=101
+MUTANT_DIRECT_rvp9enc COMMAND: [b'target/debug/rvp9enc', b'missing_\xff.ivf'] subprocess timeout=30 stdin=DEVNULL
+
+thread 'main' (286447051) panicked at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/env.rs:864:51:
+called `Result::unwrap()` on an `Err` value: "missing_\xFF.ivf"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+MUTANT_DIRECT_rvp9enc EXIT=101
+ROOT REVERSAL rvp9dec: original std::env::args collection only; other binary fixed; tests unchanged.
+MUTANT_REGRESSION_rvp9dec COMMAND: ['deltic', 'timeout', '180', 'cargo', 'test', '-p', 'rvp9-cli', '--test', 'cli_arg_coverage', 'invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position', '--', '--exact', '--nocapture'] subprocess timeout=200 stdin=DEVNULL
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 32.15s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+
+thread 'invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position' (286463652) panicked at crates/rvp9-cli/tests/cli_arg_coverage.rs:3166:9:
+assertion `left == right` failed: rvp9dec must return its controlled failure code, got status exit status: 101 and stderr: 
+thread 'main' (286463924) panicked at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/env.rs:864:51:
+called `Result::unwrap()` on an `Err` value: "missing_\xFF.ivf"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+  left: Some(101)
+ right: Some(1)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position ... FAILED
+
+failures:
+
+failures:
+    invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 101 filtered out; finished in 2.15s
+
+error: test failed, to rerun pass `-p rvp9-cli --test cli_arg_coverage`
+MUTANT_REGRESSION_rvp9dec EXIT=101
+MUTANT_DIRECT_rvp9dec COMMAND: [b'target/debug/rvp9dec', b'missing_\xff.ivf'] subprocess timeout=30 stdin=DEVNULL
+
+thread 'main' (286464395) panicked at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/env.rs:864:51:
+called `Result::unwrap()` on an `Err` value: "missing_\xFF.ivf"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+MUTANT_DIRECT_rvp9dec EXIT=101
+RESTORED crates/rvp9-cli/src/bin/rvp9enc.rs SHA256=cc91a9d3bb70ed9d50b22950b41ebd376c60a8efec5d7425c7e03719cb4368a8
+RESTORED crates/rvp9-cli/src/bin/rvp9dec.rs SHA256=ffeebb7ace3b05ce58dd4577b02f533fa778497450d8c36d0f438ab1defb506d
+RESTORED_REGRESSION COMMAND: ['deltic', 'timeout', '180', 'cargo', 'test', '-p', 'rvp9-cli', '--test', 'cli_arg_coverage', 'invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position', '--', '--exact', '--nocapture'] subprocess timeout=200 stdin=DEVNULL
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 14s
+     Running tests/cli_arg_coverage.rs (target/debug/deps/cli_arg_coverage-f448bdbba1e46101)
+
+running 1 test
+test invalid_unicode_argv::both_clis_reject_invalid_unicode_in_every_argument_position ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 1.69s
+
+RESTORED_REGRESSION EXIT=0
+RESTORED_DIRECT_rvp9enc COMMAND: [b'target/debug/rvp9enc', b'missing_\xff.ivf'] subprocess timeout=30 stdin=DEVNULL
+rvp9enc: argument 1 is not valid Unicode
+RESTORED_DIRECT_rvp9enc EXIT=1
+RESTORED_DIRECT_rvp9dec COMMAND: [b'target/debug/rvp9dec', b'missing_\xff.ivf'] subprocess timeout=30 stdin=DEVNULL
+rvp9dec: argument 1 is not valid Unicode
+RESTORED_DIRECT_rvp9dec EXIT=1
+VALID_UNICODE_UNIT COMMAND: ['deltic', 'timeout', '180', 'cargo', 'test', '-p', 'rvp9-cli', '--lib', 'args::tests::collect_args_preserves_valid_unicode', '--', '--exact'] subprocess timeout=200 stdin=DEVNULL
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-decoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 24s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_cli-0bfc019ec613ae83)
+
+running 1 test
+test args::tests::collect_args_preserves_valid_unicode ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+VALID_UNICODE_UNIT EXIT=0

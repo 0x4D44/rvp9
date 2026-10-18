@@ -1,0 +1,551 @@
+PUBLIC PROBE RELEASE-SEMANTICS BUILD COMMAND: deltic timeout 60 rustc --crate-name kil78_public_probe --edition=2024 -C opt-level=3 -C debug-assertions=no .scratch/kil78-public-probe.rs -o .scratch/kil78-public-probe </dev/null
+warning: constant `MAX_SUPERFRAME_FRAMES` is never used
+  --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/superframe.rs:35:11
+   |
+35 | pub const MAX_SUPERFRAME_FRAMES: usize = 8;
+   |           ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `MAX_SIZE_FIELD_BYTES` is never used
+  --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/superframe.rs:39:11
+   |
+39 | pub const MAX_SIZE_FIELD_BYTES: usize = 4;
+   |           ^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `Superframe` is never used
+  --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/superframe.rs:43:10
+   |
+43 | pub enum Superframe {
+   |          ^^^^^^^^^^
+
+warning: function `parse_superframe_index` is never used
+  --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/superframe.rs:75:8
+   |
+75 | pub fn parse_superframe_index(data: &[u8]) -> Result<Superframe, BitstreamError> {
+   |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `SuperframeBuilder` is never constructed
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/superframe.rs:145:12
+    |
+145 | pub struct SuperframeBuilder {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `len`, `is_empty`, `push_frame`, and `finish` are never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/superframe.rs:152:12
+    |
+149 | impl SuperframeBuilder {
+    | ---------------------- associated items in this implementation
+...
+152 |     pub fn new() -> Self {
+    |            ^^^
+...
+158 |     pub fn len(&self) -> usize {
+    |            ^^^
+...
+164 |     pub fn is_empty(&self) -> bool {
+    |            ^^^^^^^^
+...
+178 |     pub fn push_frame(&mut self, bytes: Vec<u8>) -> Result<(), BitstreamError> {
+    |            ^^^^^^^^^^
+...
+194 |     pub fn finish(self) -> Vec<u8> {
+    |            ^^^^^^
+
+warning: function `size_field_bytes_for` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/superframe.rs:225:4
+    |
+225 | fn size_field_bytes_for(max_size: u32) -> usize {
+    |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: variants `TruncatedIndex` and `MarkerMismatch` are never constructed
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/superframe.rs:242:5
+    |
+239 | pub enum SuperframeIndexErrorReason {
+    |          -------------------------- variants in this enum
+...
+242 |     TruncatedIndex {
+    |     ^^^^^^^^^^^^^^
+...
+250 |     MarkerMismatch {
+    |     ^^^^^^^^^^^^^^
+    |
+    = note: `SuperframeIndexErrorReason` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: multiple variants are never constructed
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/error.rs:27:5
+    |
+ 15 | pub enum BitstreamError {
+    |          -------------- variants in this enum
+...
+ 27 |     Truncated {
+    |     ^^^^^^^^^
+...
+ 37 |     InvalidFrameMarker {
+    |     ^^^^^^^^^^^^^^^^^^
+...
+ 55 |     InvalidSyncCode {
+    |     ^^^^^^^^^^^^^^^
+...
+ 62 |     UnsupportedBitDepth {
+    |     ^^^^^^^^^^^^^^^^^^^
+...
+ 71 |     InconsistentSrgb,
+    |     ^^^^^^^^^^^^^^^^
+...
+ 76 |     InvalidTileCols {
+    |     ^^^^^^^^^^^^^^^
+...
+106 |     InvalidTileDimensions {
+    |     ^^^^^^^^^^^^^^^^^^^^^
+...
+116 |     InvalidFirstPartitionSize,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+123 |     InvalidRefFrameSize {
+    |     ^^^^^^^^^^^^^^^^^^^
+...
+135 |     InvalidSuperframeIndex {
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+...
+145 |     SuperframeOverflow {
+    |     ^^^^^^^^^^^^^^^^^^
+...
+154 |     SuperframeEmptyFrame,
+    |     ^^^^^^^^^^^^^^^^^^^^
+...
+160 |     TileSizeOverflow {
+    |     ^^^^^^^^^^^^^^^^
+...
+169 |     TilePayloadCountMismatch {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+181 |     CompressedHeaderInvalidMarker,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+187 |     CompressedHeaderReaderError,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+194 |     CompressedHeaderTooLarge,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+200 |     InvalidTileSize {
+    |     ^^^^^^^^^^^^^^^
+    |
+    = note: `BitstreamError` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: methods `bytes_written` and `finish` are never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/raw.rs:138:12
+    |
+ 41 | impl<'a> RawBitWriter<'a> {
+    | ------------------------- methods in this implementation
+...
+138 |     pub fn bytes_written(&self) -> usize {
+    |            ^^^^^^^^^^^^^
+...
+148 |     pub fn finish(self) -> Result<usize, BitstreamError> {
+    |            ^^^^^^
+
+warning: struct `RawBitReader` is never constructed
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/raw.rs:164:12
+    |
+164 | pub struct RawBitReader<'a> {
+    |            ^^^^^^^^^^^^
+
+warning: associated items `new`, `read_bit`, `read_literal`, `read_inv_signed_literal`, `bit_offset`, and `bytes_consumed` are never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/raw.rs:173:12
+    |
+169 | impl<'a> RawBitReader<'a> {
+    | ------------------------- associated items in this implementation
+...
+173 |     pub fn new(buffer: &'a [u8]) -> Self {
+    |            ^^^
+...
+186 |     pub fn read_bit(&mut self) -> Result<u8, BitstreamError> {
+    |            ^^^^^^^^
+...
+207 |     pub fn read_literal(&mut self, bits: u8) -> Result<u32, BitstreamError> {
+    |            ^^^^^^^^^^^^
+...
+224 |     pub fn read_inv_signed_literal(&mut self, bits: u8) -> Result<i32, BitstreamError> {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+233 |     pub fn bit_offset(&self) -> usize {
+    |            ^^^^^^^^^^
+...
+241 |     pub fn bytes_consumed(&self) -> usize {
+    |            ^^^^^^^^^^^^^^
+
+warning: variants `Profile1`, `Profile2`, and `Profile3` are never constructed
+  --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:29:5
+   |
+23 | pub enum Profile {
+   |          ------- variants in this enum
+...
+29 |     Profile1 = 1,
+   |     ^^^^^^^^
+...
+32 |     Profile2 = 2,
+   |     ^^^^^^^^
+...
+35 |     Profile3 = 3,
+   |     ^^^^^^^^
+   |
+   = note: `Profile` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: associated items `uses_420_chroma` and `from_u8` are never used
+  --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:43:18
+   |
+38 | impl Profile {
+   | ------------ associated items in this implementation
+...
+43 |     pub const fn uses_420_chroma(self) -> bool {
+   |                  ^^^^^^^^^^^^^^^
+...
+53 |     pub const fn from_u8(v: u8) -> Option<Self> {
+   |                  ^^^^^^^
+
+warning: associated function `from_bit` is never used
+  --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:78:18
+   |
+74 | impl FrameType {
+   | -------------- associated function in this implementation
+...
+78 |     pub const fn from_bit(b: u8) -> Self {
+   |                  ^^^^^^^^
+
+warning: variant `Ten` is never constructed
+  --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:95:5
+   |
+91 | pub enum BitDepth {
+   |          -------- variant in this enum
+...
+95 |     Ten = 10,
+   |     ^^^
+   |
+   = note: `BitDepth` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: variants `Unknown`, `Bt709`, `Smpte170`, `Smpte240`, `Bt2020`, and `Reserved` are never constructed
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:107:5
+    |
+105 | pub enum ColorSpace {
+    |          ---------- variants in this enum
+106 |     /// Unknown / unspecified.
+107 |     Unknown = 0,
+    |     ^^^^^^^
+...
+111 |     Bt709 = 2,
+    |     ^^^^^
+112 |     /// SMPTE 170M (functionally identical to BT.601 for VP9).
+113 |     Smpte170 = 3,
+    |     ^^^^^^^^
+114 |     /// SMPTE 240M.
+115 |     Smpte240 = 4,
+    |     ^^^^^^^^
+116 |     /// ITU-R BT.2020.
+117 |     Bt2020 = 5,
+    |     ^^^^^^
+...
+120 |     Reserved = 6,
+    |     ^^^^^^^^
+    |
+    = note: `ColorSpace` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: associated function `from_u8` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:130:18
+    |
+126 | impl ColorSpace {
+    | --------------- associated function in this implementation
+...
+130 |     pub const fn from_u8(v: u8) -> Option<Self> {
+    |                  ^^^^^^^
+
+warning: variant `Full` is never constructed
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:154:5
+    |
+149 | pub enum ColorRange {
+    |          ---------- variant in this enum
+...
+154 |     Full = 1,
+    |     ^^^^
+    |
+    = note: `ColorRange` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: associated function `from_bit` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:161:18
+    |
+157 | impl ColorRange {
+    | --------------- associated function in this implementation
+...
+161 |     pub const fn from_bit(b: u8) -> Self {
+    |                  ^^^^^^^^
+
+warning: variants `Yuv422`, `Yuv440`, and `Yuv444` are never constructed
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:185:5
+    |
+180 | pub enum ChromaFormat {
+    |          ------------ variants in this enum
+...
+185 |     Yuv422 = 1,
+    |     ^^^^^^
+186 |     /// 4:4:0 — Profile 1 / 3.
+187 |     Yuv440 = 2,
+    |     ^^^^^^
+188 |     /// 4:4:4 — Profile 1 / 3.
+189 |     Yuv444 = 3,
+    |     ^^^^^^
+    |
+    = note: `ChromaFormat` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: associated function `from_subsampling` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:196:18
+    |
+192 | impl ChromaFormat {
+    | ----------------- associated function in this implementation
+...
+196 |     pub const fn from_subsampling(sx: bool, sy: bool) -> Self {
+    |                  ^^^^^^^^^^^^^^^^
+
+warning: variants `EightTap`, `EightTapSmooth`, `EightTapSharp`, and `Bilinear` are never constructed
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:244:5
+    |
+241 | pub enum InterpFilter {
+    |          ------------ variants in this enum
+...
+244 |     EightTap = 0,
+    |     ^^^^^^^^
+245 |     /// EIGHTTAP_SMOOTH — smoother 8-tap (`vp9_filter.h:24`).
+246 |     EightTapSmooth = 1,
+    |     ^^^^^^^^^^^^^^
+247 |     /// EIGHTTAP_SHARP — sharper 8-tap (`vp9_filter.h:25`).
+248 |     EightTapSharp = 2,
+    |     ^^^^^^^^^^^^^
+249 |     /// BILINEAR — 2-tap bilinear (`vp9_filter.h:27`).
+250 |     Bilinear = 3,
+    |     ^^^^^^^^
+    |
+    = note: `InterpFilter` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: associated function `from_literal` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:262:18
+    |
+255 | impl InterpFilter {
+    | ----------------- associated function in this implementation
+...
+262 |     pub const fn from_literal(v: u8) -> Self {
+    |                  ^^^^^^^^^^^^
+
+warning: enum `ReferenceMode` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:283:10
+    |
+283 | pub enum ReferenceMode {
+    |          ^^^^^^^^^^^^^
+
+warning: function `parse_loopfilter` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/sub_parsers.rs:110:8
+    |
+110 | pub fn parse_loopfilter(rb: &mut RawBitReader<'_>) -> Result<LoopFilterParams, BitstreamError> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: method `is_lossless` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/sub_parsers.rs:226:18
+    |
+222 | impl QuantizationParams {
+    | ----------------------- method in this implementation
+...
+226 |     pub const fn is_lossless(&self) -> bool {
+    |                  ^^^^^^^^^^^
+
+warning: function `read_delta_q` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/sub_parsers.rs:237:4
+    |
+237 | fn read_delta_q(rb: &mut RawBitReader<'_>) -> Result<i8, BitstreamError> {
+    |    ^^^^^^^^^^^^
+
+warning: function `parse_quantization` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/sub_parsers.rs:247:8
+    |
+247 | pub fn parse_quantization(rb: &mut RawBitReader<'_>) -> Result<QuantizationParams, BitstreamError> {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `decode_unsigned_max` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/sub_parsers.rs:367:4
+    |
+367 | fn decode_unsigned_max(rb: &mut RawBitReader<'_>, max: u32) -> Result<u32, BitstreamError> {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_segmentation` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/sub_parsers.rs:388:8
+    |
+388 | pub fn parse_segmentation(rb: &mut RawBitReader<'_>) -> Result<SegmentationParams, BitstreamError> {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_tile_info` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/sub_parsers.rs:574:8
+    |
+574 | pub fn parse_tile_info(
+    |        ^^^^^^^^^^^^^^^
+
+warning: variants `ShowExistingFrame`, `IntraOnly`, and `InterFrame` are never constructed
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/header.rs:135:5
+    |
+132 | pub enum FrameKind {
+    |          --------- variants in this enum
+...
+135 |     ShowExistingFrame {
+    |     ^^^^^^^^^^^^^^^^^
+...
+142 |     IntraOnly {
+    |     ^^^^^^^^^
+...
+151 |     InterFrame {
+    |     ^^^^^^^^^^
+    |
+    = note: `FrameKind` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: method `is_intra` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/header.rs:173:18
+    |
+170 | impl FrameKind {
+    | -------------- method in this implementation
+...
+173 |     pub const fn is_intra(self) -> bool {
+    |                  ^^^^^^^^
+
+warning: type alias `RefFrameSizes` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/header.rs:186:10
+    |
+186 | pub type RefFrameSizes = [Option<(u32, u32)>; REF_FRAMES];
+    |          ^^^^^^^^^^^^^
+
+warning: function `parse_uncompressed_header` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/header.rs:208:8
+    |
+208 | pub fn parse_uncompressed_header(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `read_interp_filter` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/header.rs:439:4
+    |
+439 | fn read_interp_filter(rb: &mut RawBitReader<'_>) -> Result<InterpFilter, BitstreamError> {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `read_profile_raw` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/header.rs:452:4
+    |
+452 | fn read_profile_raw(rb: &mut RawBitReader<'_>) -> Result<u8, BitstreamError> {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: function `read_sync_code` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/header.rs:463:4
+    |
+463 | fn read_sync_code(rb: &mut RawBitReader<'_>) -> Result<(), BitstreamError> {
+    |    ^^^^^^^^^^^^^^
+
+warning: function `read_bitdepth_colorspace_sampling` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/header.rs:487:4
+    |
+487 | fn read_bitdepth_colorspace_sampling(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `read_frame_size` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/header.rs:544:4
+    |
+544 | fn read_frame_size(rb: &mut RawBitReader<'_>) -> Result<(u32, u32), BitstreamError> {
+    |    ^^^^^^^^^^^^^^^
+
+warning: function `read_render_size` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/header.rs:553:4
+    |
+553 | fn read_render_size(
+    |    ^^^^^^^^^^^^^^^^
+
+warning: 42 warnings emitted
+
+
+EXIT: 0
+PUBLIC HEADER TYPED-ERROR OBSERVATION COMMAND: deltic timeout 60 .scratch/kil78-public-probe </dev/null
+width=8192 cols=0 rows=0: result=Err(InvalidTileInfo { mi_cols: 1024, log2_tile_cols: 0, log2_tile_rows: 0 }), prior-header-prefix-bits=95, poisoned=false
+width=320 cols=1 rows=0: result=Err(InvalidTileInfo { mi_cols: 40, log2_tile_cols: 1, log2_tile_rows: 0 }), prior-header-prefix-bits=95, poisoned=false
+width=320 cols=0 rows=3: result=Err(InvalidTileInfo { mi_cols: 40, log2_tile_cols: 0, log2_tile_rows: 3 }), prior-header-prefix-bits=95, poisoned=false
+
+EXIT: 0
+RESTORED RELEASE-SEMANTICS RETAINED TEST BUILD COMMAND: deltic timeout 60 rustc --test --crate-name kil78_retained_tests --edition=2024 -C opt-level=3 -C debug-assertions=no .scratch/kil78-public-probe.rs -o .scratch/kil78-retained-tests </dev/null
+warning: constant `MAX_SIZE_FIELD_BYTES` is never used
+  --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/superframe.rs:39:11
+   |
+39 | pub const MAX_SIZE_FIELD_BYTES: usize = 4;
+   |           ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: multiple variants are never constructed
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/error.rs:62:5
+    |
+ 15 | pub enum BitstreamError {
+    |          -------------- variants in this enum
+...
+ 62 |     UnsupportedBitDepth {
+    |     ^^^^^^^^^^^^^^^^^^^
+...
+106 |     InvalidTileDimensions {
+    |     ^^^^^^^^^^^^^^^^^^^^^
+...
+160 |     TileSizeOverflow {
+    |     ^^^^^^^^^^^^^^^^
+...
+169 |     TilePayloadCountMismatch {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+181 |     CompressedHeaderInvalidMarker,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+187 |     CompressedHeaderReaderError,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+194 |     CompressedHeaderTooLarge,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+200 |     InvalidTileSize {
+    |     ^^^^^^^^^^^^^^^
+    |
+    = note: `BitstreamError` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: method `bit_offset` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/raw.rs:233:12
+    |
+169 | impl<'a> RawBitReader<'a> {
+    | ------------------------- method in this implementation
+...
+233 |     pub fn bit_offset(&self) -> usize {
+    |            ^^^^^^^^^^
+
+warning: enum `ReferenceMode` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/frame.rs:283:10
+    |
+283 | pub enum ReferenceMode {
+    |          ^^^^^^^^^^^^^
+
+warning: method `is_intra` is never used
+   --> /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-verification-encoder-goldens-and-a/crates/rvp9-core/src/bitstream/header.rs:173:18
+    |
+170 | impl FrameKind {
+    | -------------- method in this implementation
+...
+173 |     pub const fn is_intra(self) -> bool {
+    |                  ^^^^^^^^
+
+warning: 5 warnings emitted
+
+
+EXIT: 0
+RESTORED SAME TILE WRITER REGRESSIONS COMMAND: deltic timeout 60 .scratch/kil78-retained-tests write_tile_info --nocapture </dev/null
+
+running 2 tests
+test bitstream::sub_parsers::tests::write_tile_info_all_combinations ... ok
+test bitstream::sub_parsers::tests::write_tile_info_rejects_invalid_geometry_before_writing ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 90 filtered out; finished in 0.01s
+
+
+EXIT: 0
