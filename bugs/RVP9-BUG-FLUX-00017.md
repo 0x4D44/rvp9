@@ -6,15 +6,15 @@
 - **Area:** scripts/libvpx build
 - **Raised:** 2026-08-10T21:31:54Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T153549Z-dc27b7ce
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00017-run-verify-20261018T153549Z-dc27b7ce
+- **Owner base:** 9624a18d5b958dc0c075d6090c4ed76a30e107ce
+- **Owner fingerprint:** sha256:9ee2b3701056a3f13a2d38a4f6bcdf3a5bd11d31c22c0074cbc622d514a77924
+- **Owner since:** 2026-10-18T15:35:49Z
+- **Owner until:** 2026-10-18T19:35:49Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
