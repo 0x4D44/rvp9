@@ -318,8 +318,21 @@ unsafe fn vert_pass(
 }
 
 #[inline]
+fn checked_last_q4_coordinate(start_q4: i32, step_q4: i32, count: usize) -> i32 {
+    let last_index = i32::try_from(count - 1).expect("convolve8_scaled_neon: invalid dimension");
+    start_q4
+        .checked_add(
+            step_q4
+                .checked_mul(last_index)
+                .expect("convolve8_scaled_neon: Q4 coordinate overflow"),
+        )
+        .expect("convolve8_scaled_neon: Q4 coordinate overflow")
+}
+
+#[inline]
 fn intermediate_height(h: usize, y0_q4: i32, y_step_q4: i32) -> usize {
-    (((h as i32 - 1) * y_step_q4 + y0_q4) >> 4) as usize + FILTER_TAPS
+    let last_y_q4 = checked_last_q4_coordinate(y0_q4, y_step_q4, h);
+    ((last_y_q4 >> 4) as usize) + FILTER_TAPS
 }
 
 #[inline]
@@ -339,9 +352,9 @@ fn validate_scaled_footprint(
     assert!((1..=64).contains(&w));
     assert!((1..=64).contains(&h));
     assert!(x0_q4 >= 0 && x_step_q4 >= 0 && y0_q4 >= 0 && y_step_q4 >= 0);
+    let max_x_q4 = checked_last_q4_coordinate(x0_q4, x_step_q4, w);
     let height = intermediate_height(h, y0_q4, y_step_q4);
     assert!(height <= MAX_INTERMEDIATE_HEIGHT);
-    let max_x_q4 = x0_q4 + (w as i32 - 1) * x_step_q4;
     let max_x = (max_x_q4 >> 4) as usize;
     let src_required = (height - 1)
         .checked_mul(src_stride)
@@ -446,7 +459,7 @@ pub fn convolve8_scaled_neon(
 
 #[cfg(all(test, not(miri)))]
 mod tests {
-    use super::convolve8_scaled_neon;
+    use super::{convolve8_scaled_neon, intermediate_height, validate_scaled_footprint};
     use crate::inter::filter::{
         BILINEAR_KERNEL, EIGHTTAP_KERNEL, EIGHTTAP_SHARP_KERNEL, EIGHTTAP_SMOOTH_KERNEL,
         SUBPEL_MASK, convolve8_scaled,
@@ -463,10 +476,6 @@ mod tests {
         fn byte(&mut self) -> u8 {
             (self.next() >> 16) as u8
         }
-    }
-
-    fn intermediate_height(h: usize, y0_q4: i32, y_step_q4: i32) -> usize {
-        (((h as i32 - 1) * y_step_q4 + y0_q4) >> 4) as usize + 8
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -529,6 +538,24 @@ mod tests {
             neon, scalar,
             "scaled NEON mismatch {w}x{h} x0={x0_q4} xs={x_step_q4} y0={y0_q4} ys={y_step_q4} edge={edge_pixels}"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "convolve8_scaled_neon: Q4 coordinate overflow")]
+    fn rejects_vertical_q4_coordinate_overflow_before_footprint_validation() {
+        let src = [0u8; 64];
+        let mut dst = [0u8; 12];
+        validate_scaled_footprint(&src, 8, &mut dst, 4, 0, 0, 2, i32::MAX, 4, 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "convolve8_scaled_neon: Q4 coordinate overflow")]
+    fn rejects_horizontal_q4_coordinate_overflow_before_footprint_validation() {
+        let src = [0u8; 64];
+        let mut dst = [0u8; 4];
+        // 3 * 1_431_655_766 wraps to 2 in release builds, making the old
+        // endpoint check appear to fit the tiny source slice.
+        validate_scaled_footprint(&src, 8, &mut dst, 4, 0, 1_431_655_766, 0, 0, 4, 1);
     }
 
     #[test]
