@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00117 — CLI destination aliases can destroy inputs and outputs
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** cli/path safety
 - **Raised:** 2026-08-22T20:44:01Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T170803Z-05cc4059
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00117-run-verify-20261018T170803Z-05cc4059
-- **Owner base:** 498e3d1e56d92e6867255600bc9a44c74dcda8c0
-- **Owner fingerprint:** sha256:9315a3630d82247b4a36c8f7d6937a09d001a5c80facb3028a586fce16f8404b
-- **Owner since:** 2026-10-18T17:08:03Z
-- **Owner until:** 2026-10-18T21:08:03Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:01Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T00:18:36Z, deltic:auto role=fix run=fix-20261016T000225Z-17994e6d branch=task/bug-RVP9-BUG-KIL-00117-run-fix-20261016T000225Z-17994e6d code=8bf19aedd7b189d4abff952563fd03d8fdc8dca9 gate=manual)
+- **State history:** Open (2026-08-22T20:44:01Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T00:18:36Z, deltic:auto role=fix run=fix-20261016T000225Z-17994e6d branch=task/bug-RVP9-BUG-KIL-00117-run-fix-20261016T000225Z-17994e6d code=8bf19aedd7b189d4abff952563fd03d8fdc8dca9 gate=manual) -> Closed (2026-10-18T17:11:29Z, deltic:manual role=verify run=verify-20261018T170803Z-05cc4059 verified_fix_run=fix-20261016T000225Z-17994e6d verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ rvp9enc and rvp9dec open their inputs incrementally, then create output paths wi
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T17:11:29Z, deltic:auto run=verify-20261018T170803Z-05cc4059 verified_fix_run=fix-20261016T000225Z-17994e6d verdict=close)
+
+Verifier note: Manual verify: Independent verification on fixed code 8bf19aed: the 29-test path-safety matrix passes. Bypassing only the two alias-refusal returns makes 27 retained checks fail while two controls pass, demonstrating encoder input/output changes, decoder input changes, and truncation after a late hardlink appears. All destructive cases use owned disposable scratch fixtures. Exact source restored; diff clean. Runtime coverage is native macOS/Unix, not Windows.
 
 ## Notes
