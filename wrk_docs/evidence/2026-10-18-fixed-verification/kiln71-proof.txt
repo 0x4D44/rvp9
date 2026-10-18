@@ -62,7 +62,7 @@ GUARD_REVERSED COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib test
      Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
 
 running 8 tests
-test frame_loop::tests::encoder_rejects_non_multiple_of_64 ... 
+test frame_loop::tests::encoder_rejects_non_multiple_of_64 ...
 thread 'tests::encoder_rejects_luma_area_above_stream_encoder_maximum_before_allocating' (285435909) panicked at crates/rvp9-encoder/src/lib.rs:19670:9:
 legacy Encoder must reject a luma area above the supported maximum before allocating frame storage
 oknote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
