@@ -1,0 +1,247 @@
+RVP9-BUG-FLU-00042 independent verification proof
+
+Worktree: /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate
+Base HEAD: 48b442451cc86416657ac75ca5e63424274e5fb9
+Claim command: deltic bugs claim RVP9-BUG-FLU-00042 --role verify
+Claim succeeded. Owner run: verify-20261018T172911Z-6b47bd77
+Claim commit: 26c93dbb54b9bdf3c56cb17b734bea5888bccd9e
+Fix commit: 43fc27dd3d2c28278f5202f48c590c03febbee90
+Fix commit is an ancestor of both origin/main and this worktree HEAD; both merge-base checks exited 0 before any test.
+Initial source SHA-256:
+  crates/rvp9-harness/src/bdrate.rs 0d94020529c3a1f971fed53d1821181b1371200b846001321d2b074023b4797b
+  crates/rvp9-bench/src/bin/bdrate.rs 6304fce0e4b381d686948165d0ddee267676ba112478b891e1c25b93d140cf96
+
+
+COMMAND: deltic timeout 300 cargo test -p rvp9-harness --lib bdrate::tests::bdrate_narrow_realistic_psnr_curves_match_high_precision_reference -- --exact --nocapture </dev/null
+   Compiling crossbeam-utils v0.8.21
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-core)
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-decoder)
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling memchr v2.8.0
+   Compiling itoa v1.0.18
+   Compiling static_assertions v1.1.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-harness)
+   Compiling syn v2.0.117
+   Compiling crossbeam-channel v0.5.15
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 18s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-3eec11113be8f940)
+
+running 1 test
+test bdrate::tests::bdrate_narrow_realistic_psnr_curves_match_high_precision_reference ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s
+
+HARNESS_BASELINE_EXIT: 0
+
+COMMAND: deltic timeout 300 cargo test -p rvp9-bench --bin bdrate measured_bdrate_matches_high_precision_narrow_psnr_reference -- --exact --nocapture </dev/null
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.1
+   Compiling libc v0.2.186
+   Compiling cfg-if v1.0.4
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-harness)
+   Compiling generic-array v0.14.7
+   Compiling cpufeatures v0.2.17
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 21.39s
+     Running unittests src/bin/bdrate.rs (target/debug/deps/bdrate-e6fcfe29003cd9c3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.00s
+
+BENCH_BASELINE_EXIT: 0
+
+CORRECTION: prior --exact filter selected 0 tests (exit 0), so it is not pass evidence.
+COMMAND: deltic timeout 300 cargo test -p rvp9-bench --bin bdrate measured_bdrate_matches_high_precision_narrow_psnr_reference -- --nocapture </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.90s
+     Running unittests src/bin/bdrate.rs (target/debug/deps/bdrate-e6fcfe29003cd9c3)
+
+running 1 test
+test tests::measured_bdrate_matches_high_precision_narrow_psnr_reference ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+BENCH_BASELINE_SELECTED_FILTER_EXIT: 0
+
+MUTANT: identity transform in shared harness polyfit3 (center=0, scale=1), so z=x raw PSNR; benchmark delegates to this function.
+mutated_harness_source_sha256=a133d281895003f94c3254074ef1699e9d8ef9270b05e60344781796a3015292
+MUTATION_EXIT: 0
+diff --git a/crates/rvp9-harness/src/bdrate.rs b/crates/rvp9-harness/src/bdrate.rs
+index fc810a30..61867890 100644
+--- a/crates/rvp9-harness/src/bdrate.rs
++++ b/crates/rvp9-harness/src/bdrate.rs
+@@ -339,8 +339,8 @@ fn polyfit3(pts: &[(f64, f64)]) -> Option<CubicFit> {
+         .map(|point| point.0)
+         .fold(f64::NEG_INFINITY, f64::max);
+     let x_range = max_x - min_x;
+-    let scale = x_range / 2.0;
+-    let center = min_x + scale;
++    let scale = 1.0;
++    let center = 0.0;
+     if !x_range.is_finite() || !scale.is_finite() || scale <= 0.0 || !center.is_finite() {
+         return None;
+     }
+
+MUTANT COMMAND: deltic timeout 300 cargo test -p rvp9-harness --lib bdrate::tests::bdrate_narrow_realistic_psnr_curves_match_high_precision_reference -- --exact --nocapture </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-encoder)
+error[E0689]: can't call method `is_finite` on ambiguous numeric type `{float}`
+   --> crates/rvp9-harness/src/bdrate.rs:344:39
+    |
+344 |     if !x_range.is_finite() || !scale.is_finite() || scale <= 0.0 || !center.is_finite() {
+    |                                       ^^^^^^^^^
+    |
+help: you must specify a type for this binding, like `f32`
+    |
+342 |     let scale: f32 = 1.0;
+    |              +++++
+
+error[E0689]: can't call method `is_finite` on ambiguous numeric type `{float}`
+   --> crates/rvp9-harness/src/bdrate.rs:344:78
+    |
+344 |     if !x_range.is_finite() || !scale.is_finite() || scale <= 0.0 || !center.is_finite() {
+    |                                                                              ^^^^^^^^^
+    |
+help: you must specify a type for this binding, like `f32`
+    |
+343 |     let center: f32 = 0.0;
+    |               +++++
+
+For more information about this error, try `rustc --explain E0689`.
+error: could not compile `rvp9-harness` (lib test) due to 2 previous errors
+HARNESS_MUTANT_EXIT: 101
+
+MUTANT TYPE CORRECTION: keep the identity raw-PSNR basis and make the f64 literals explicit.
+typed_raw_basis_mutant_sha256=272e8a958628351f9f22a5cc7bd2534f4f7ce29878298c3399c8d49e6b1efe23
+MUTANT_TYPE_CORRECTION_EXIT: 0
+
+RAW-BASIS MUTANT COMMAND: deltic timeout 300 cargo test -p rvp9-harness --lib bdrate::tests::bdrate_narrow_realistic_psnr_curves_match_high_precision_reference -- --exact --nocapture </dev/null
+    Blocking waiting for file lock on package cache
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.14s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-3eec11113be8f940)
+
+running 1 test
+
+thread 'bdrate::tests::bdrate_narrow_realistic_psnr_curves_match_high_precision_reference' (288663069) panicked at crates/rvp9-harness/src/bdrate.rs:597:9:
+narrow-curve BD-rate should match Decimal80 reference -1.788791640314%, got NaN%
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test bdrate::tests::bdrate_narrow_realistic_psnr_curves_match_high_precision_reference ... FAILED
+
+failures:
+
+failures:
+    bdrate::tests::bdrate_narrow_realistic_psnr_curves_match_high_precision_reference
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-harness --lib`
+HARNESS_RAW_BASIS_MUTANT_EXIT: 101
+
+RAW-BASIS MUTANT COMMAND: deltic timeout 300 cargo test -p rvp9-bench --bin bdrate measured_bdrate_matches_high_precision_narrow_psnr_reference -- --nocapture </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 8.74s
+     Running unittests src/bin/bdrate.rs (target/debug/deps/bdrate-e6fcfe29003cd9c3)
+
+running 1 test
+
+thread 'tests::measured_bdrate_matches_high_precision_narrow_psnr_reference' (288670203) panicked at crates/rvp9-bench/src/bin/bdrate.rs:1016:55:
+valid curves: "insufficient, singular, or non-overlapping RD points"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::measured_bdrate_matches_high_precision_narrow_psnr_reference ... FAILED
+
+failures:
+
+failures:
+    tests::measured_bdrate_matches_high_precision_narrow_psnr_reference
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --bin bdrate`
+BENCH_RAW_BASIS_MUTANT_EXIT: 101
+
+RESTORE: inverse the typed identity-coordinate mutant and require the original source SHA-256.
+restored_harness_source_sha256=0d94020529c3a1f971fed53d1821181b1371200b846001321d2b074023b4797b
+RESTORE_EXIT: 0
+
+RESTORED COMMAND: deltic timeout 300 cargo test -p rvp9-harness --lib bdrate::tests::bdrate_narrow_realistic_psnr_curves_match_high_precision_reference -- --exact --nocapture </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 16.96s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_harness-3eec11113be8f940)
+
+running 1 test
+test bdrate::tests::bdrate_narrow_realistic_psnr_curves_match_high_precision_reference ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s
+
+RESTORED_HARNESS_EXIT: 0
+
+RESTORED COMMAND: deltic timeout 300 cargo test -p rvp9-bench --bin bdrate measured_bdrate_matches_high_precision_narrow_psnr_reference -- --nocapture </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.92s
+     Running unittests src/bin/bdrate.rs (target/debug/deps/bdrate-e6fcfe29003cd9c3)
+
+running 1 test
+test tests::measured_bdrate_matches_high_precision_narrow_psnr_reference ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+RESTORED_BENCH_EXIT: 0
+
+FINAL FIX ANCESTRY COMMAND: git merge-base --is-ancestor 43fc27dd3d2c28278f5202f48c590c03febbee90 origin/main
+FINAL_FIX_ANCESTOR_ORIGIN_MAIN_EXIT: 0
+CURRENT_ORIGIN_MAIN: 89336d2d91ad9b3ec4a1950f8481e3b0f1144688 claim(RVP9-BUG-FLU-00048): verify owner
+
+FINAL SOURCE SHA-256:
+0d94020529c3a1f971fed53d1821181b1371200b846001321d2b074023b4797b  crates/rvp9-harness/src/bdrate.rs
+6304fce0e4b381d686948165d0ddee267676ba112478b891e1c25b93d140cf96  crates/rvp9-bench/src/bin/bdrate.rs
+
+SOURCE DIFF CHECK: git diff --check -- crates/rvp9-harness/src/bdrate.rs crates/rvp9-bench/src/bin/bdrate.rs
+SOURCE_DIFF_CHECK_EXIT: 0
+SOURCE_DIFF_QUIET_EXIT: 0
+WORKTREE STATUS:
+## task/20261018-VER-CDX-verify-flu-00042-narrow-bd-rate...origin/main [behind 8]
