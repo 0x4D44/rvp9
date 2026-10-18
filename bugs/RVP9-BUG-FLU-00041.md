@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00041 — Spatial quality summary emits unescaped bitrate lists into CSV columns
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** qualification/spatial-summary
 - **Raised:** 2026-10-16T14:08:49Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261018T200522Z-71a33145
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00041-run-fix-20261018T200522Z-71a33145
-- **Owner base:** 4252bb14f44e11050abe60bc3c37d8759fab16b8
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-18T20:05:22Z
-- **Owner until:** 2026-10-19T00:05:22Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-16T14:08:49Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-10-16T14:08:49Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T20:10:15Z, deltic:auto role=fix run=fix-20261018T200522Z-71a33145 branch=task/bug-RVP9-BUG-FLU-00041-run-fix-20261018T200522Z-71a33145 code=c326b78713bc65befbc4392b521e637b8abcee41 gate=manual)
 
 ## Observation
 
