@@ -27,6 +27,8 @@ On the exact fb5c0c917038db6c640b3dbc7c2b84b567233333 candidate on native Window
 
 ## Fix
 
-<unfixed — raised only>
+The production runner now resumes speed at complete speed-group boundaries and latency at complete feature/mode/target/CPU groups. Receipts bind each completed batch to the sealed run fingerprint and a stable hash of its retained artifacts. Resume validates receipts and latency row/load evidence, reuses only complete batches, and preserves interrupted batches for whole-group retry in a new attempt. The phase aggregate is rebuilt from sealed batches and published with its canonical summary files in one directory rename.
+
+The regression assertion failed before the change with `resume self-test: sealed timing batch could not resume` (exit 1). After the change, `--self-test-resume` and the stubbed `--self-test-timing` passed; the latter verified reuse of completed speed and latency batches, whole-group retries, preserved partial attempts, and duplicate-free summaries. No real encoder timing or performance result was produced.
 
 ## Notes
