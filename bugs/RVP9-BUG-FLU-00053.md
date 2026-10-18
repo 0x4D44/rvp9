@@ -27,6 +27,8 @@ The safe AArch64 convolve8_scaled_neon dispatch path accepts nonnegative i32 Q4 
 
 ## Fix
 
-<unfixed — raised only>
+The safe AArch64 wrapper now computes the final horizontal and vertical Q4 coordinates with checked multiplication and addition before deriving the source footprint or entering the raw-pointer passes. Nonnegative steps and validated dimensions mean each checked endpoint bounds all row or column coordinates used by the kernel. Intermediate height is derived from the checked vertical endpoint.
+
+The release regression failed before the fix because the selected vertical overflow case did not panic; unchecked arithmetic wrapped and the undersized fixture passed footprint validation. On the final source, both horizontal and vertical overflow tests pass under the release profile. The complete scaled-NEON test module passed all four tests on arm64, including both scalar-vs-NEON differential tests. No invalid coordinate reached a pointer operation.
 
 ## Notes
