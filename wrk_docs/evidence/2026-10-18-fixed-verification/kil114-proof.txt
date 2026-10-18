@@ -1,0 +1,125 @@
+RVP9-BUG-KIL-00114 verification transcript
+==========================================
+
+Scope: verify exact host + build-profile selection for throughput ratchet baselines. No ledger verdict or bug-record edits are made by this verifier. The bug record's `## Fix` still contains the stale placeholder `<unfixed — raised only>`; it is intentionally left untouched.
+
+Claim: `deltic bugs claim RVP9-BUG-KIL-00114 --role verify`
+Owner run: `verify-20261018T180101Z-a2338d05`
+Claim branch from Deltic: `task/bug-RVP9-BUG-KIL-00114-run-verify-20261018T180101Z-a2338d05`
+Fix commit: `34a232d6ba4ab4cc00b7a1f99181f258259e916f`
+Fix commit ancestry: single parent `be0a8627971ac7c8105d8a31d95d7cbe99d27610`; `git merge-base --is-ancestor <fix> origin/main` exited 0 before claim, and the same check against the verification worktree HEAD exited 0. Fresh task worktree was created from `origin/main` at `8d2d2dec5084588149d18454423d84c34ef4e368`. Deltic subsequently advanced `origin/main` to the claim commit (`c0575836ef0ec930350ff78a74252ee076a62d74`); the verifier remains on its clean claim-time code base, which contains the fix.
+
+Overlap inspection: KIL-00108 covers throughput CSV parsing/metric validation; KIL-00115 covers concurrent CSV appends and is the one same-file overlap Deltic reported. Neither changes host/profile baseline eligibility. KIL-00110 and CRU-00003 concern tile profiling and SIMD oracle coverage, respectively. The KIL-00114 fix changes selector eligibility to exact host and build-profile matching, and the retained mixed-identity tests below exercise that selector.
+
+Environment:
+- Worktree: `/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-kil-00114-throughput-bas`
+- Host: macOS Darwin 25.6.0, arm64, hostname `flux.home.arpa`
+- `rustc 1.95.0 (59807616e 2026-04-14)`; `cargo 1.95.0 (f2d3ce0bd 2026-03-21)`; `deltic 7.1.0`
+- Test execution is native arm64 Rust test execution; neither test invokes a decoder or hardware-specific path.
+
+Initial tracked worktree state was clean. Initial source SHA-256:
+- `crates/rvp9-bench/src/throughput.rs`: `68aa7f746dd631ac59116488ad7d6bd257ebf0694adf877c6e1077bdb91dc1a6`
+- `crates/rvp9-bench/tests/decode_throughput_ratchet.rs`: `25fce36d37b79401eea44609f223fef1b1db728b68a73ac3d57d2eac2e1952dd`
+
+Commands and raw output follow. Every cargo test was run with stdin closed and bounded by `deltic timeout 300`.
+
+Baseline test 1
+---------------
+Command: `deltic timeout 300 cargo test -p rvp9-bench latest_per_fixture_for_build_requires_exact_identity`
+Exit: 0
+Selected-test output:
+```
+running 1 test
+test throughput::tests::latest_per_fixture_for_build_requires_exact_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out
+```
+Cargo also enumerated other crate test targets with 0 matching tests; no other tests executed.
+
+Baseline test 2
+---------------
+Command: `deltic timeout 300 cargo test -p rvp9-bench --test decode_throughput_ratchet ratchet_baseline_requires_allowlisted_current_identity -- --exact`
+Exit: 0
+Output:
+```
+running 1 test
+test ratchet_baseline_requires_allowlisted_current_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out
+```
+
+
+Fails-before mutant
+-------------------
+Mutation: in `latest_per_fixture_for_build`, removed only the production filter line `&& r.build_profile_hash == build_profile_hash`. No test or other production code changed. This lets a newer pinned row with the same host but another build profile enter the per-fixture timestamp reduction.
+Mutant source SHA-256: `9f0ca603a627cdeda80c8579afde26f223d73e19ba4c63b064ae1fd5fb09f27a`.
+
+Command: `deltic timeout 300 cargo test -p rvp9-bench latest_per_fixture_for_build_requires_exact_identity`
+Exit: 101
+Selected-test output:
+```
+running 1 test
+test throughput::tests::latest_per_fixture_for_build_requires_exact_identity ... FAILED
+assertion `left == right` failed: newer incompatible rows must not win
+  left: 80
+ right: 20
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out
+```
+The test was selected and failed at its timestamp assertion: the newer profile-b row (80) displaced the requested profile-a row (20). Cargo emitted an unused-variable warning for `build_profile_hash` because the mutant removed its only use; compilation succeeded and the assertion executed.
+
+Command: `deltic timeout 300 cargo test -p rvp9-bench --test decode_throughput_ratchet ratchet_baseline_requires_allowlisted_current_identity -- --exact`
+Exit: 101
+Selected-test output:
+```
+running 1 test
+test ratchet_baseline_requires_allowlisted_current_identity ... FAILED
+assertion `left == right` failed
+  left: 30
+ right: 10
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out
+```
+The retained integration assertion executed and failed because the newer same-host `other-profile` row (30) displaced `current-profile` (10). This was an assertion failure caused by absent profile rejection, not a build/cfg failure.
+
+Restore: copied the saved exact baseline bytes from the Deltic-registered scratch backup to `crates/rvp9-bench/src/throughput.rs`. Restored source SHA-256 and backup SHA-256 both equal `68aa7f746dd631ac59116488ad7d6bd257ebf0694adf877c6e1077bdb91dc1a6`; `git diff -- crates/rvp9-bench/src/throughput.rs` was empty immediately after restoration.
+
+
+Restored rerun
+--------------
+After exact-byte restoration, reran the same commands:
+
+Command: `deltic timeout 300 cargo test -p rvp9-bench latest_per_fixture_for_build_requires_exact_identity`
+Exit: 0
+Selected-test output:
+```
+running 1 test
+test throughput::tests::latest_per_fixture_for_build_requires_exact_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out
+```
+Other crate test targets were enumerated with 0 matching tests; no other tests executed.
+
+Command: `deltic timeout 300 cargo test -p rvp9-bench --test decode_throughput_ratchet ratchet_baseline_requires_allowlisted_current_identity -- --exact`
+Exit: 0
+Output:
+```
+running 1 test
+test ratchet_baseline_requires_allowlisted_current_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out
+```
+
+Final source SHA-256:
+- `crates/rvp9-bench/src/throughput.rs`: `68aa7f746dd631ac59116488ad7d6bd257ebf0694adf877c6e1077bdb91dc1a6` (exactly equals the pre-mutation saved bytes)
+- `crates/rvp9-bench/tests/decode_throughput_ratchet.rs`: `25fce36d37b79401eea44609f223fef1b1db728b68a73ac3d57d2eac2e1952dd`
+
+Final checks: pending below.
+
+Final checks
+------------
+- `git diff --check`: exit 0, no output.
+- `git diff --name-only`: no output.
+- `git diff -- crates/rvp9-bench/src/throughput.rs crates/rvp9-bench/tests/decode_throughput_ratchet.rs bugs/RVP9-BUG-KIL-00114.md`: no output; exit 0 for each path-specific quiet check.
+- `git status --short --branch`: `## task/20261018-TSK-HUM-verify-rvp9-bug-kil-00114-throughput-bas...origin/main [behind 3]`; no tracked or untracked status entries. The `.scratch/kil114-proof.txt` evidence is ignored by git as expected.
+- No bug record verdict or content edit was made. The verify claim remains for the lead's review.
+
+The only verification scope was the two retained mixed host/build-profile selector assertions named above. No full crate, workspace, benchmark, or performance sweep was run.
