@@ -27,6 +27,6 @@ On an x86_64 host using the SIMD table, a safe call through SimdDispatch::idct32
 
 ## Fix
 
-<unfixed — raised only>
+The SSE2 8x32 and AVX2 16x32 final-store loops now advance the destination pointer only when another row remains. They share a guarded row-advance helper, so the final store does not form a pointer beyond the tight destination allocation. Added an exact-final-row pointer regression: under Miri it failed before the guard because the pointer advanced by one stride, then passed after the fix. The x86_64 `idct32x32` filter passed all 70 tests under Rosetta; scoped x86 Clippy, rustfmt, `git diff --check`, and the exact smoke passed.
 
 ## Notes

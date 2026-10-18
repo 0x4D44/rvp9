@@ -225,7 +225,7 @@ unsafe fn store_buffer_8x32(in_: &mut [__m128i; 32], mut dst: *mut u8, stride: u
         recon_and_store_8x1(dst, in_[j]);
         dst = dst.add(stride);
         recon_and_store_8x1(dst, in_[j + 1]);
-        dst = dst.add(stride);
+        dst = super::super::advance_idct_dst_row(dst, stride, j + 2 < 32);
         j += 2;
     }
 }

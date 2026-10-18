@@ -49,6 +49,28 @@ pub(crate) mod aarch64;
 #[cfg(target_arch = "x86_64")]
 pub(crate) mod x86_64;
 
+/// Advance a tight IDCT destination to its next row when another row remains.
+///
+/// # Safety
+///
+/// When `has_more_rows` is true, adding `stride` to `dst` must remain within
+/// the destination allocation or point one past its end.
+#[cfg(any(target_arch = "x86_64", test))]
+#[inline(always)]
+pub(crate) unsafe fn advance_idct_dst_row(
+    dst: *mut u8,
+    stride: usize,
+    has_more_rows: bool,
+) -> *mut u8 {
+    if has_more_rows {
+        // SAFETY: The caller guarantees that the next row remains within the
+        // destination allocation or points one past its end.
+        unsafe { dst.add(stride) }
+    } else {
+        dst
+    }
+}
+
 pub use dispatch::{SimdDispatch, get, get_ref, init};
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
@@ -90,7 +112,20 @@ pub(crate) fn validate_intra_predictor_layout(
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_intra_predictor_layout, validate_predictor_storage};
+    use super::{
+        advance_idct_dst_row, validate_intra_predictor_layout, validate_predictor_storage,
+    };
+
+    #[test]
+    fn idct32x32_final_row_does_not_advance_destination_pointer() {
+        let mut pixels = [0u8; 32 * 32];
+        // This x offset matches the final eight-byte SSE2 store in the last row.
+        // SAFETY: Row 31, x=24 is the final eight-byte span of the allocation.
+        let final_store = unsafe { pixels.as_mut_ptr().add(31 * 32 + 24) };
+        // SAFETY: The no-next-row case must preserve the valid in-allocation pointer.
+        let next = unsafe { advance_idct_dst_row(final_store, 32, false) };
+        assert_eq!(next, final_store);
+    }
 
     #[test]
     fn intra_predictor_layout_rejects_non_vp9_block_size() {

@@ -181,7 +181,7 @@ pub(super) unsafe fn store_buffer_16x32(in_: &mut [__m256i; 32], mut dst: *mut u
         recon_and_store16(dst, in_[j]);
         dst = dst.add(stride);
         recon_and_store16(dst, in_[j + 1]);
-        dst = dst.add(stride);
+        dst = super::super::advance_idct_dst_row(dst, stride, j + 2 < 32);
         j += 2;
     }
 }
