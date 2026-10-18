@@ -1,0 +1,8 @@
+Task worktree revision: b29b33112c3a63d6fa45f9af4c9b2477c7d9a067.
+Qualified product-source revision: fb5c0c917038db6c640b3dbc7c2b84b567233333.
+The workspace/fuzz production source, fuzz target, dictionary, project manifests, lockfiles, scripts, and .cargo/config.toml match fb5c0c917038db6c640b3dbc7c2b84b567233333 by path-level comparison. Since that source revision, the only tracked changes under crates are crates/rvp9-bench/tests/soak_cli.rs (test-only fixture correction) and crates/rvp9-fuzz/README.md (documentation-only correction).
+Cargo.lock SHA-256: 98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf.
+crates/rvp9-fuzz/Cargo.lock SHA-256: f9fc43384144cc74b2634885ed3235026e7ddde72ae0f73c7deede6fcc15bd1b.
+Both lockfiles were byte-identical to the task worktree revision before and after the run; git diff against HEAD is empty.
+Built fuzz_parse_packet executable SHA-256: 2a070365112923a3ed17f0a56d57657241623853ef0951e0ea42f795184a16aa.
+Fuzz dictionary SHA-256: ee3fa1558b7d541800ef79c32124009cc6aab54ab7adfb43fa4e4dc0d86bd00f.

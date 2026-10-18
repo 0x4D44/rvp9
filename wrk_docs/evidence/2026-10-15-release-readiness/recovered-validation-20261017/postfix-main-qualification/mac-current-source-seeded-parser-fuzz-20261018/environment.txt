@@ -1,0 +1,9 @@
+Run date: 2026-10-18 UTC; exact start time was not retained.
+Host: flux, Apple Silicon, aarch64-apple-darwin.
+OS: macOS 26.6.2 (25G83), Darwin 25.6.0 arm64.
+rustc: 1.98.0-nightly (bd08c9e71874a81670fe3938dbf85148e42c2b96), LLVM 22.1.7.
+cargo: 1.98.0-nightly (a595d0da2 2026-06-20).
+cargo-fuzz: 0.13.2; binary SHA-256 0c085ea1a2c113cab9574fee83cee2954351b76a6eadf83be20e7882ad95b124.
+The cargo-fuzz binary was reused from the registered task scratch tool setup. No project dependency or toolchain configuration was changed.
+The run used the cargo-fuzz default AddressSanitizer instrumentation documented in crates/rvp9-fuzz/README.md; no UBSan mode was selected.
+CARGO_NET_OFFLINE=true; compile jobs=2; fuzz workers=1; nice priority=19.

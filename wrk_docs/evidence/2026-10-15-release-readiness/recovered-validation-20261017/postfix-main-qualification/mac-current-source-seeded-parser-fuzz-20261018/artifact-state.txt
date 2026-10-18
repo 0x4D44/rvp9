@@ -1,0 +1,3 @@
+No crash or sanitizer artifact was found in the explicitly selected scratch artifact directory or crates/rvp9-fuzz/artifacts/fuzz_parse_packet after the run. The run returned exit code 0.
+The corpus directory was used as an external scratch target and accumulated generated/reduced corpus inputs; those generated files are not included in this evidence commit. The tracked initial-seed manifest lists only the 307 official conformance vectors supplied before fuzzing.
+cargo-fuzz printed both its automatically supplied repository-relative artifact prefix and the explicit scratch prefix. Both locations were checked for files after completion and were empty.

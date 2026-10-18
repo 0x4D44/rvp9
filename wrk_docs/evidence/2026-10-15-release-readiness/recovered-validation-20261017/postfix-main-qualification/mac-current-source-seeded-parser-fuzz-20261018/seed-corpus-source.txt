@@ -1,0 +1,3 @@
+The initial official conformance-vector files were copied byte-for-byte from:
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/conformance/vectors
+The manifest hashes were independently rechecked against that source directory after the run: 307 files, 25,545,475 bytes, all sizes and SHA-256 values match.
