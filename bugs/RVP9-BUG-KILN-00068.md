@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00068 — Stage 4a source-drift detection is not pinned by its regression tests
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/stage4a validation
 - **Raised:** 2026-07-31T10:23:06Z
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T161822Z-ebd3a48c
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00068-run-verify-20261018T161822Z-ebd3a48c
-- **Owner base:** 6a067e483f70acf6f5969f8bd263c2040ee029f4
-- **Owner fingerprint:** sha256:33135824f9573c64c90f31dd75f7e599d7e2e914e7ce38944d69de4608730e0d
-- **Owner since:** 2026-10-18T16:18:22Z
-- **Owner until:** 2026-10-18T20:18:22Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:23:06Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T05:20:28Z, deltic:auto role=fix run=fix-20261016T051313Z-ea0592df branch=task/bug-RVP9-BUG-KILN-00068-run-fix-20261016T051313Z-ea0592df code=6166d9a23e1720051d803dbf3aa1d061643db89c gate=manual)
+- **State history:** Open (2026-07-31T10:23:06Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T05:20:28Z, deltic:auto role=fix run=fix-20261016T051313Z-ea0592df branch=task/bug-RVP9-BUG-KILN-00068-run-fix-20261016T051313Z-ea0592df code=6166d9a23e1720051d803dbf3aa1d061643db89c gate=manual) -> Closed (2026-10-18T16:25:22Z, deltic:manual role=verify run=verify-20261018T161822Z-ebd3a48c verified_fix_run=fix-20261016T051313Z-ea0592df verdict=close)
 
 ## Observation
 
@@ -38,5 +38,9 @@ Confirmed by reading the current tree at 4abe0d8 + 3a7aba2; both named tests obs
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:25:22Z, deltic:auto run=verify-20261018T161822Z-ebd3a48c verified_fix_run=fix-20261016T051313Z-ea0592df verdict=close)
+
+Verifier note: Manual verify: Independent: stage4a_source_drift 6/6 pass; removing final sha256_file rehash wiring makes changed-source test fail; overwriting report hash loses run-start fingerprint and fails retained assertion. Exact source restored (git diff empty). Evidence: .scratch/kiln68-proof.txt.
 
 ## Notes
