@@ -1,0 +1,121 @@
+Claim verify-20261018T170407Z-eab466a3
+PROVENANCE git rev-parse HEAD
+d7cf0fb03de8514507837d5696551f3188180841
+EXIT: 0
+PROVENANCE git merge-base --is-ancestor 4780fcc841d9bba4f467bfaf40dd82b5bcc0365f HEAD
+EXIT: 0
+INITIAL seven partial-height and stride regressions COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --test w_altref_partial_height </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.32s
+     Running tests/w_altref_partial_height.rs (target/debug/deps/w_altref_partial_height-dc1f9878f984bed9)
+
+running 7 tests
+test altref_partial_blocks_preserve_visible_pixels_and_strides ... ok
+test altref_partial_height_32_not_64_delayed ... ok
+test altref_partial_height_32_not_64_flush ... ok
+test altref_partial_height_720p_flush ... ok
+test altref_partial_height_720p_delayed ... ok
+test altref_partial_height_1080p_delayed ... ok
+test altref_partial_height_1080p_flush ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.50s
+
+
+EXIT: 0
+MUTANT restore original temporal-filter alignment assertion COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --test w_altref_partial_height altref_partial_height_720p_delayed -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 18.38s
+     Running tests/w_altref_partial_height.rs (target/debug/deps/w_altref_partial_height-dc1f9878f984bed9)
+
+running 1 test
+test altref_partial_height_720p_delayed ... FAILED
+
+failures:
+
+---- altref_partial_height_720p_delayed stdout ----
+
+thread 'altref_partial_height_720p_delayed' (287836235) panicked at crates/rvp9-encoder/src/temporal_filter.rs:1571:5:
+rvp9 temporal filter requires BW/BH-aligned dimensions
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'altref_partial_height_720p_delayed' (287836235) panicked at crates/rvp9-encoder/tests/w_altref_partial_height.rs:67:5:
+RVP9-BUG-KILN-00069: ALTREF must filter, reconstruct and decode 1280x720 (flush=false) without panicking
+
+
+failures:
+    altref_partial_height_720p_delayed
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.16s
+
+error: test failed, to rerun pass `-p rvp9-encoder --test w_altref_partial_height`
+
+EXIT: 101
+MUTANT restore original visible-height ARF reconstruction allocation COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --test w_altref_partial_height altref_partial_height_32_not_64_delayed -- --exact </dev/null
+    Blocking waiting for file lock on package cache
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 40.59s
+     Running tests/w_altref_partial_height.rs (target/debug/deps/w_altref_partial_height-dc1f9878f984bed9)
+
+running 1 test
+test altref_partial_height_32_not_64_delayed ... FAILED
+
+failures:
+
+---- altref_partial_height_32_not_64_delayed stdout ----
+
+thread 'altref_partial_height_32_not_64_delayed' (287855314) panicked at crates/rvp9-encoder/src/lib.rs:4823:9:
+assertion `left == right` failed: inter recon plane storage does not match its layout
+  left: 6144
+ right: 8192
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'altref_partial_height_32_not_64_delayed' (287855314) panicked at crates/rvp9-encoder/tests/w_altref_partial_height.rs:67:5:
+RVP9-BUG-KILN-00069: ALTREF must filter, reconstruct and decode 64x96 (flush=false) without panicking
+
+
+failures:
+    altref_partial_height_32_not_64_delayed
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-encoder --test w_altref_partial_height`
+
+EXIT: 101
+RESTORED seven partial-height and stride regressions COMMAND: deltic timeout 300 cargo test -p rvp9-encoder --test w_altref_partial_height </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-kiln00066-throughput-sweep-exit-s/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 40.48s
+     Running tests/w_altref_partial_height.rs (target/debug/deps/w_altref_partial_height-dc1f9878f984bed9)
+
+running 7 tests
+test altref_partial_blocks_preserve_visible_pixels_and_strides ... ok
+test altref_partial_height_32_not_64_delayed ... ok
+test altref_partial_height_32_not_64_flush ... ok
+test altref_partial_height_720p_delayed ... ok
+test altref_partial_height_720p_flush ... ok
+test altref_partial_height_1080p_delayed ... ok
+test altref_partial_height_1080p_flush ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.69s
+
+
+EXIT: 0
+
+Closure tool exit0: Verified RVP9-BUG-KILN-00069 — Fixed -> Closed, verify claim cleared
+Exact-byte restoration confirmed in finally for temporal_filter.rs/frame_loop.rs; scoped git diff exit0 and git status --short empty.
+Platform/corpus limits: native macOS arm64; self-contained generated constant/patterned inputs; no external corpus or libvpx/x86 parity claim.

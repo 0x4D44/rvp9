@@ -1,0 +1,108 @@
+CLAIM verify-20261018T170413Z-35642b87; fix0fd918f2 ancestor; HEAD=06e93811c6ea1a52386395d1d6ad42de8865f421
+ORIGINAL scripts/qualify-alpha-encoder.sh SHA256=028c1db1d0e8488d8810c7053f0712edfa6d590d688acaff8dda9fddd9c9d826
+ORIGINAL scripts/qualify-reference-decoder.sh SHA256=724412c365855bbd2a675c1f6911844b782ad4084038715638253fcbe1e8b936
+BASELINE COMMAND: deltic timeout 90 python3 scripts/test_qualification_file_size.py -v < /dev/null
+test_bsd_stat_size_is_accepted_exactly (__main__.QualificationFileSizeTests) ... ok
+test_gnu_stat_filesystem_text_falls_back_to_exact_byte_count (__main__.QualificationFileSizeTests) ... ok
+test_leading_zero_size_is_canonicalized_before_exact_comparison (__main__.QualificationFileSizeTests) ... ok
+test_mismatched_or_oversized_decimal_size_is_rejected (__main__.QualificationFileSizeTests) ... ok
+test_missing_or_malformed_size_never_emits_pass (__main__.QualificationFileSizeTests) ... ok
+test_numeric_stdout_with_failed_stat_status_is_rejected (__main__.QualificationFileSizeTests) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 11.830s
+
+OK
+BASELINE EXIT=0
+BASELINE_PRODUCTION_ROW_PROBE {"script": "qualify-alpha-encoder.sh", "status": 1, "manifest_has_PASS": false, "stderr": "could not determine numeric decoded file size: /Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/.scratch/qualification-file-size-ji5hwn__/probe.rvp9.yuv\n", "stat_calls": ["-f", "-c"]}
+BASELINE_PRODUCTION_ROW_PROBE {"script": "qualify-reference-decoder.sh", "status": 1, "manifest_has_PASS": false, "stderr": "could not determine numeric decoded file size: /Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/.scratch/qualification-file-size-ji5hwn__/probe.rvp9.i420\n", "stat_calls": ["-f", "-c"]}
+ROOT REVERSAL: original measurement and arithmetic row guards in both qualifiers; original reference stat adapter; tests/shared helper retained.
+PRE_FIX_MALFORMED_REGRESSION COMMAND: deltic timeout 90 python3 scripts/test_qualification_file_size.py QualificationFileSizeTests.test_missing_or_malformed_size_never_emits_pass -v < /dev/null
+test_missing_or_malformed_size_never_emits_pass (__main__.QualificationFileSizeTests) ... 
+======================================================================
+FAIL: test_missing_or_malformed_size_never_emits_pass (__main__.QualificationFileSizeTests) (script='qualify-alpha-encoder.sh', stat_mode='failure')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/scripts/test_qualification_file_size.py", line 212, in test_missing_or_malformed_size_never_emits_pass
+    self.assertNotEqual(
+AssertionError: 0 == 0 : qualify-alpha-encoder.sh accepted missing/nonnumeric decoded size (failure)
+
+======================================================================
+FAIL: test_missing_or_malformed_size_never_emits_pass (__main__.QualificationFileSizeTests) (script='qualify-alpha-encoder.sh', stat_mode='empty')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/scripts/test_qualification_file_size.py", line 212, in test_missing_or_malformed_size_never_emits_pass
+    self.assertNotEqual(
+AssertionError: 0 == 0 : qualify-alpha-encoder.sh accepted missing/nonnumeric decoded size (empty)
+
+======================================================================
+FAIL: test_missing_or_malformed_size_never_emits_pass (__main__.QualificationFileSizeTests) (script='qualify-alpha-encoder.sh', stat_mode='nonnumeric')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/scripts/test_qualification_file_size.py", line 212, in test_missing_or_malformed_size_never_emits_pass
+    self.assertNotEqual(
+AssertionError: 0 == 0 : qualify-alpha-encoder.sh accepted missing/nonnumeric decoded size (nonnumeric)
+
+======================================================================
+FAIL: test_missing_or_malformed_size_never_emits_pass (__main__.QualificationFileSizeTests) (script='qualify-reference-decoder.sh', stat_mode='failure')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/scripts/test_qualification_file_size.py", line 212, in test_missing_or_malformed_size_never_emits_pass
+    self.assertNotEqual(
+AssertionError: 0 == 0 : qualify-reference-decoder.sh accepted missing/nonnumeric decoded size (failure)
+
+======================================================================
+FAIL: test_missing_or_malformed_size_never_emits_pass (__main__.QualificationFileSizeTests) (script='qualify-reference-decoder.sh', stat_mode='empty')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/scripts/test_qualification_file_size.py", line 212, in test_missing_or_malformed_size_never_emits_pass
+    self.assertNotEqual(
+AssertionError: 0 == 0 : qualify-reference-decoder.sh accepted missing/nonnumeric decoded size (empty)
+
+======================================================================
+FAIL: test_missing_or_malformed_size_never_emits_pass (__main__.QualificationFileSizeTests) (script='qualify-reference-decoder.sh', stat_mode='nonnumeric')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/scripts/test_qualification_file_size.py", line 212, in test_missing_or_malformed_size_never_emits_pass
+    self.assertNotEqual(
+AssertionError: 0 == 0 : qualify-reference-decoder.sh accepted missing/nonnumeric decoded size (nonnumeric)
+
+----------------------------------------------------------------------
+Ran 1 test in 6.348s
+
+FAILED (failures=6)
+PRE_FIX_MALFORMED_REGRESSION EXIT=1
+PRE_FIX_PRODUCTION_ROW_PROBE {"script": "qualify-alpha-encoder.sh", "status": 0, "manifest_has_PASS": true, "stderr": "/bin/bash: line 58: [: not-a-byte-count: integer expression expected\n/bin/bash: line 58: [: not-a-byte-count: integer expression expected\n/bin/bash: line 58: [: not-a-byte-count: integer expression expected\n", "stat_calls": ["-f", "-f", "-f"]}
+PRE_FIX_PRODUCTION_ROW_PROBE {"script": "qualify-reference-decoder.sh", "status": 0, "manifest_has_PASS": true, "stderr": "/bin/bash: line 49: [: not-a-byte-count: integer expression expected\n/bin/bash: line 49: [: not-a-byte-count: integer expression expected\n", "stat_calls": ["-f", "-f"]}
+RESTORED scripts/qualify-alpha-encoder.sh SHA256=028c1db1d0e8488d8810c7053f0712edfa6d590d688acaff8dda9fddd9c9d826
+RESTORED scripts/qualify-reference-decoder.sh SHA256=724412c365855bbd2a675c1f6911844b782ad4084038715638253fcbe1e8b936
+RESTORED COMMAND: deltic timeout 90 python3 scripts/test_qualification_file_size.py -v < /dev/null
+test_bsd_stat_size_is_accepted_exactly (__main__.QualificationFileSizeTests) ... ok
+test_gnu_stat_filesystem_text_falls_back_to_exact_byte_count (__main__.QualificationFileSizeTests) ... ok
+test_leading_zero_size_is_canonicalized_before_exact_comparison (__main__.QualificationFileSizeTests) ... ok
+test_mismatched_or_oversized_decimal_size_is_rejected (__main__.QualificationFileSizeTests) ... ok
+test_missing_or_malformed_size_never_emits_pass (__main__.QualificationFileSizeTests) ... ok
+test_numeric_stdout_with_failed_stat_status_is_rejected (__main__.QualificationFileSizeTests) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 11.241s
+
+OK
+RESTORED EXIT=0
+RESTORED_PRODUCTION_ROW_PROBE {"script": "qualify-alpha-encoder.sh", "status": 1, "manifest_has_PASS": false, "stderr": "could not determine numeric decoded file size: /Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/.scratch/qualification-file-size-89g59ur4/probe.rvp9.yuv\n", "stat_calls": ["-f", "-c"]}
+RESTORED_PRODUCTION_ROW_PROBE {"script": "qualify-reference-decoder.sh", "status": 1, "manifest_has_PASS": false, "stderr": "could not determine numeric decoded file size: /Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/.scratch/qualification-file-size-89g59ur4/probe.rvp9.i420\n", "stat_calls": ["-f", "-c"]}
+BASH_SYNTAX COMMAND: deltic timeout 30 bash -n scripts/qualify-alpha-encoder.sh scripts/qualify-reference-decoder.sh scripts/qualification-file-size.sh < /dev/null
+BASH_SYNTAX EXIT=0
+NATIVE_STAT_SPACES COMMAND: deltic timeout 30 bash -c source "$1"; qualification_file_size "$2" probe /Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/scripts/qualification-file-size.sh /Users/md/worktrees/rvp9/20261018-VER-CDX-flu-00043-native-arm64-verification/.scratch/flu45-size with spaces.bin < /dev/null
+13
+NATIVE_STAT_SPACES EXIT=0
+FINAL_DIFF COMMAND: git diff --exit-code < /dev/null
+FINAL_DIFF EXIT=0
+SYNTAX CLARIFICATION: bash -n parses only its first script argument; check each file separately below.
+SYNTAX ['deltic', 'timeout', '30', 'bash', '-n', 'scripts/qualify-alpha-encoder.sh']
+EXIT=0
+SYNTAX ['deltic', 'timeout', '30', 'bash', '-n', 'scripts/qualify-reference-decoder.sh']
+EXIT=0
+SYNTAX ['deltic', 'timeout', '30', 'bash', '-n', 'scripts/qualification-file-size.sh']
+EXIT=0
+FINAL_STATUS=''
