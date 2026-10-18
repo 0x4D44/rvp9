@@ -6,15 +6,15 @@
 - **Area:** cli/path safety
 - **Raised:** 2026-08-22T20:44:01Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T170803Z-05cc4059
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00117-run-verify-20261018T170803Z-05cc4059
+- **Owner base:** 498e3d1e56d92e6867255600bc9a44c74dcda8c0
+- **Owner fingerprint:** sha256:9315a3630d82247b4a36c8f7d6937a09d001a5c80facb3028a586fce16f8404b
+- **Owner since:** 2026-10-18T17:08:03Z
+- **Owner until:** 2026-10-18T21:08:03Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
