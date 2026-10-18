@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00056 — AArch64 IDCT16 destination span check can wrap before unsafe stores
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/transforms/inverse-neon
 - **Raised:** 2026-10-18T16:12:39Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T170008Z-73d30c0f
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00056-run-verify-20261018T170008Z-73d30c0f
-- **Owner base:** 6f1391968607ad1ed276f455f738124aa6826ad7
-- **Owner fingerprint:** sha256:29a0676773253cda8fe0a715094c65457e0e525ceebbcc96277b456d6d09b560
-- **Owner since:** 2026-10-18T17:00:08Z
-- **Owner until:** 2026-10-18T21:00:08Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-18T16:12:39Z, raised via `deltic bugs new --land`) -> Fixed (2026-10-18T16:44:38Z, deltic:auto role=fix run=fix-20261018T163646Z-66a5c8ca branch=task/bug-RVP9-BUG-FLU-00056-run-fix-20261018T163646Z-66a5c8ca code=352e2be84ef18b5e5530349ffcec932a9e71430c gate=manual)
+- **State history:** Open (2026-10-18T16:12:39Z, raised via `deltic bugs new --land`) -> Fixed (2026-10-18T16:44:38Z, deltic:auto role=fix run=fix-20261018T163646Z-66a5c8ca branch=task/bug-RVP9-BUG-FLU-00056-run-fix-20261018T163646Z-66a5c8ca code=352e2be84ef18b5e5530349ffcec932a9e71430c gate=manual) -> Closed (2026-10-18T17:10:38Z, deltic:manual role=verify run=verify-20261018T170008Z-73d30c0f verified_fix_run=fix-20261018T163646Z-66a5c8ca verdict=close)
 
 ## Observation
 
@@ -35,5 +35,9 @@ Evidence fingerprint: `manual:v1:aarch64-idct16-span-wrap`
 ## Fix
 
 The required 16×16 destination span now uses checked multiplication and addition, and an unconditional shared guard validates the stride and slice length before scalar writes or entry into the unsafe AArch64 NEON kernel. The same guard covers the DC-only scalar helper. The regression checks both multiplication and addition overflow and verifies rejection without invoking an unsafe kernel.
+
+### Verification summary (2026-10-18T17:10:38Z, deltic:auto run=verify-20261018T170008Z-73d30c0f verified_fix_run=fix-20261018T163646Z-66a5c8ca verdict=close)
+
+Verifier note: Manual verify: Independent native arm64 verification on the fixed build. The retained overflow test passes in optimized dev with CARGO_PROFILE_DEV_OVERFLOW_CHECKS=false; the workspace release fat-LTO test build exceeded 300s before execution. Replacing only checked span arithmetic with the original unchecked multiply/add makes the retained test fail: the overflowing stride produces Some(30) instead of None. Restored rerun passes and inverse.rs hash matches its pre-mutation SHA-256; scoped diff is empty. The unsafe public call with invalid geometry was deliberately not executed; source routing ...
 
 ## Notes
