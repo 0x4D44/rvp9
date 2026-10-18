@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00082 — Parallel decoder retains full-frame metadata slabs per tile
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** decoder/parallel tile metadata
 - **Raised:** 2026-08-22T10:24:29Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T172611Z-bacc71dc
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00082-run-verify-20261018T172611Z-bacc71dc
-- **Owner base:** f26924fd99a3bc4053ffd40b2fceba8bdc32f9be
-- **Owner fingerprint:** sha256:f6d4d011a3a5d74cf7a69c79bb5e3bd42c12e82e17b4838c1a4a90b5c4f101b6
-- **Owner since:** 2026-10-18T17:26:11Z
-- **Owner until:** 2026-10-18T21:26:11Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T10:24:29Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T02:34:07Z, deltic:auto role=fix run=fix-20261016T022804Z-9d7700c8 branch=task/bug-RVP9-BUG-KIL-00082-run-fix-20261016T022804Z-9d7700c8 code=dc19bcea3f41952f6d0a2a53b027c852a79a5aed gate=manual)
+- **State history:** Open (2026-08-22T10:24:29Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T02:34:07Z, deltic:auto role=fix run=fix-20261016T022804Z-9d7700c8 branch=task/bug-RVP9-BUG-KIL-00082-run-fix-20261016T022804Z-9d7700c8 code=dc19bcea3f41952f6d0a2a53b027c852a79a5aed gate=manual) -> Closed (2026-10-18T17:30:18Z, deltic:manual role=verify run=verify-20261018T172611Z-bacc71dc verified_fix_run=fix-20261016T022804Z-9d7700c8 verdict=close)
 
 ## Observation
 
@@ -32,6 +32,10 @@ Expected: worker metadata should scale with tile-local area or the number of act
 ## Fix
 
 Store tile-local compact rectangles and translate indices at the worker boundary, or own full-frame metadata per active worker and reuse it across scheduled tiles. Keep merge indexing explicit so tile-row and tile-column isolation remains intact. Add an inspectable capacity/allocation regression for a high-column-count frame that proves metadata retention is bounded independently of tile count. Estimated effort: medium.
+
+### Verification summary (2026-10-18T17:30:18Z, deltic:auto run=verify-20261018T172611Z-bacc71dc verified_fix_run=fix-20261016T022804Z-9d7700c8 verdict=close)
+
+Verifier note: Manual verify: The retained decoder worker-count bound test passes; removing the tile-count<=worker-count gate makes its 64-tiles/two-workers assertion fail. Inspection confirms both intra/inter metadata allocation paths follow that common gate and pool conservation keeps retained slab count <= worker count. This proves worker-count eligibility, not a measured capacity or RSS bound; KIL-00080 covers distinct YUV scratch behavior.
 
 ## Notes
 
