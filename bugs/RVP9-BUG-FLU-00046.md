@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00046 — AArch64 convolution stride validation wraps before raw-pointer reads
 
-- **State:** Fixed
+- **State:** Open
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/dsp/convolve8-neon
 - **Raised:** 2026-10-17T09:23:28Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T214336Z-b2440949
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00046-run-verify-20261018T214336Z-b2440949
-- **Owner base:** 326f675e6f55fa987bc55aa4580691f49c656df9
-- **Owner fingerprint:** sha256:0d7c3d08a2b59eed0bbd0b9112cd2348624ee8c5427b9b655cd6b7ce58d54b48
-- **Owner since:** 2026-10-18T21:43:36Z
-- **Owner until:** 2026-10-19T01:43:36Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
-- **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T09:23:28Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:46:28Z, deltic:auto role=fix run=fix-20261018T193520Z-291db43a branch=task/bug-RVP9-BUG-FLU-00046-run-fix-20261018T193520Z-291db43a code=b91d8917aa172d52a52dd4052ac668761a9f7098 gate=manual)
+- **Attempts:** fix=0, doubt=1, indeterminate=0
+- **State history:** Open (2026-10-17T09:23:28Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:46:28Z, deltic:auto role=fix run=fix-20261018T193520Z-291db43a branch=task/bug-RVP9-BUG-FLU-00046-run-fix-20261018T193520Z-291db43a code=b91d8917aa172d52a52dd4052ac668761a9f7098 gate=manual) -> Open (2026-10-18T21:50:39Z, deltic:manual role=verify run=verify-20261018T214336Z-b2440949 verified_fix_run=fix-20261018T193520Z-291db43a verdict=doubt reason=independent-review-finds-recorded-residual-remains-notes-explicitly-include-sibl)
 
 ## Observation
 
@@ -28,6 +28,10 @@ On 64-bit AArch64 release builds, the public safe `convolve8_horiz_neon` wrapper
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T21:50:39Z, deltic:auto run=verify-20261018T214336Z-b2440949 verified_fix_run=fix-20261018T193520Z-291db43a verdict=doubt)
+
+Verifier note: Manual verify: Independent review finds recorded residual remains: Notes explicitly include sibling unchecked span guards, but minmax_8x8_neon still validates with unchecked 7 * stride + 8 before raw-pointer dispatch. Original horizontal convolution repair verified on native arm64 Rust 1.95 release: exactly two safe-validator regressions pass, root-cause span-arithmetic reversal fails both named wrapped-source/destination assertions, restored code passes. No invalid pointer counterexample executed. Reopen same ID because its already-recorded sibling span issue was not fixed; do not treat focus...
 
 ## Notes
 
