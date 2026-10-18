@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00041 — Spatial quality summary emits unescaped bitrate lists into CSV columns
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** qualification/spatial-summary
 - **Raised:** 2026-10-16T14:08:49Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T214212Z-dcb96f95
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00041-run-verify-20261018T214212Z-dcb96f95
-- **Owner base:** 5b4b3f62a0f07b946ff85662c627d494541229b4
-- **Owner fingerprint:** sha256:eee08813808a1db08dc82fd66a3318143e3df03742d52a27b9ab350d1772b260
-- **Owner since:** 2026-10-18T21:42:12Z
-- **Owner until:** 2026-10-19T01:42:12Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-16T14:08:49Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T20:10:15Z, deltic:auto role=fix run=fix-20261018T200522Z-71a33145 branch=task/bug-RVP9-BUG-FLU-00041-run-fix-20261018T200522Z-71a33145 code=c326b78713bc65befbc4392b521e637b8abcee41 gate=manual)
+- **State history:** Open (2026-10-16T14:08:49Z, raised via `deltic bugs new`) -> Fixed (2026-10-18T20:10:15Z, deltic:auto role=fix run=fix-20261018T200522Z-71a33145 branch=task/bug-RVP9-BUG-FLU-00041-run-fix-20261018T200522Z-71a33145 code=c326b78713bc65befbc4392b521e637b8abcee41 gate=manual) -> Closed (2026-10-18T21:44:29Z, deltic:manual role=verify run=verify-20261018T214212Z-dcb96f95 verified_fix_run=fix-20261018T200522Z-71a33145 verdict=close)
 
 ## Observation
 
@@ -30,5 +30,9 @@ At release readiness spatial quality campaign sourced from 1a84f60a, Python csv.
 The spatial quality summary now writes the comma-separated bitrate grid as a quoted CSV field. The tested `format_quality_summary_row` helper is shared by `run_quality_curve`, and the script's no-I/O self-test checks a representative row with the six-rate grid intact as one field.
 
 Validation: before the formatter fix, the new self-test failed only the bitrate-field assertion and showed the grid split into extra comma-delimited fields. After the fix, `scripts/qualify-spatial-svc.sh --self-test`, `bash -n scripts/qualify-spatial-svc.sh`, and a Python `csv.reader` check for 13 columns with the full bitrate list in column 9 passed. `git diff --check` passed.
+
+### Verification summary (2026-10-18T21:44:29Z, deltic:auto run=verify-20261018T214212Z-dcb96f95 verified_fix_run=fix-20261018T200522Z-71a33145 verdict=close)
+
+Verifier note: Manual verify: Independent verification at 5b4b3f62: reviewed c326b787 formatter and production run_quality_curve call. Re-ran six-rate original CSV observation through production formatter: csv.reader yields exactly 13 columns and preserves all six rates at index 8. bash scripts/qualify-spatial-svc.sh --self-test and bash -n passed. Reversing only bitrate-field quoting selected the self-test and failed its quality-summary assertion; restored exact source and self-test passed. git diff --check clean. No codec or numeric-quality claim.
 
 ## Notes
