@@ -124,10 +124,10 @@ rvp9/
 
 ## Quick start
 
-The canonical corpus fetch currently stops at Parkrun because its configured
-URL returns HTTP 404 (RVP9-BUG-FLU-00036). See the [current release-readiness
-status](wrk_docs/2026.10.15%20-%20STATUS%20-%20final%20release%20readiness.md)
-before treating corpus setup as complete.
+The documented corpus fetch is incomplete: it omits Foreman and returns HTTP
+404 for Parkrun (RVP9-BUG-FLU-00036). The [local qualification runbook's corpus
+instructions](wrk_docs/2026.10.15%20-%20RUN%20-%20local%20release%20qualification.md#pin-tools-and-fixtures)
+include the required Foreman hash and recovery steps.
 
 ```bash
 # 1. Clone with submodules (libvpx is a submodule).
