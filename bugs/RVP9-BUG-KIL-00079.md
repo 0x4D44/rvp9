@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00079 — ScaleFactors accepts zero dimensions then divides by zero
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** core/inter scaling
 - **Raised:** 2026-08-22T08:57:01Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T161001Z-d8fb7c20
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00079-run-verify-20261018T161001Z-d8fb7c20
-- **Owner base:** 4d1c3c8108d7f2ea9a2e03329602fd019846127e
-- **Owner fingerprint:** sha256:370829cb6fdc071ba7b71dc5a20cd75b8e2e7a3bac5adbaab5a8964f47201c51
-- **Owner since:** 2026-10-18T16:10:01Z
-- **Owner until:** 2026-10-18T20:10:01Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T08:57:01Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T05:47:54Z, deltic:auto role=fix run=fix-20261016T054106Z-5067f680 branch=task/bug-RVP9-BUG-KIL-00079-run-fix-20261016T054106Z-5067f680 code=c49db873520cbded462e47a99e7e1182bdf7b5cc gate=manual)
+- **State history:** Open (2026-08-22T08:57:01Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T05:47:54Z, deltic:auto role=fix run=fix-20261016T054106Z-5067f680 branch=task/bug-RVP9-BUG-KIL-00079-run-fix-20261016T054106Z-5067f680 code=c49db873520cbded462e47a99e7e1182bdf7b5cc gate=manual) -> Closed (2026-10-18T16:16:36Z, deltic:manual role=verify run=verify-20261018T161001Z-d8fb7c20 verified_fix_run=fix-20261016T054106Z-5067f680 verdict=close)
 
 ## Observation
 
@@ -38,5 +38,9 @@ Confirmed independently by the correctness reviewer, the lead's call trace, and 
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:16:36Z, deltic:auto run=verify-20261018T161001Z-d8fb7c20 verified_fix_run=fix-20261016T054106Z-5067f680 verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer; basef9498d46 includesc49db873. Original all-zero/mixed-zero API cases return invalid-scale sentinel/zero steps without unwind; scale22 pass. Remove only zero-axis guard: zero_dimensions selects4, both scaling regressions assertion-fail accepted zero tuple and ScaleFactors::new panicked;2 unrelated controls pass. Harness expected count2 was corrected, originals restored in finally/diff empty; final scale22 pass. No release run claimed. Fmt/clippy pass; full-suite limits/raw proof in2026.10.18 journal.
 
 ## Notes
