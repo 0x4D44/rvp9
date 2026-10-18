@@ -6,15 +6,15 @@
 - **Area:** cli/tests
 - **Raised:** 2026-08-22T20:44:05Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T165858Z-9a4002b3
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00125-run-verify-20261018T165858Z-9a4002b3
+- **Owner base:** e3ca07aa934274ab2a10e0621c46c5221ccf5ec4
+- **Owner fingerprint:** sha256:15df46c2557180bc517c085fe66d4a96fae5aeaa0817c17b46153750413af843
+- **Owner since:** 2026-10-18T16:58:58Z
+- **Owner until:** 2026-10-18T20:58:58Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
