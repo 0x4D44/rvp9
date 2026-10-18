@@ -1,0 +1,87 @@
+RVP9-BUG-CRU-00003 verification transcript
+Date: 2026-10-18
+Worktree: /Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-cru-00003-scalar-varianc
+Worktree HEAD: c3534368d339ecded2e6128911827deaf3bd56ed
+Claim command: deltic bugs claim RVP9-BUG-CRU-00003 --role verify
+Claim result: succeeded; run token verify-20261018T174640Z-f144e8fc; lease until 2026-10-18T21:46:40Z
+Fix commit: 68516c6480e166cb07b80579f59145d24fa4185b; parent 42195fad13597080b73801fb6cfa5fafb43fd5be
+Ancestry command: git merge-base --is-ancestor 68516c6480e166cb07b80579f59145d24fa4185b origin/main
+Ancestry result before tests: exit 0; worktree HEAD and origin/main were c3534368d339ecded2e6128911827deaf3bd56ed.
+
+Overlap and ledger scope
+------------------------
+Inspected FLU-00032 and FLU-00048 fix stats before claiming. FLU-00032 changes subtract_sse2.rs, separate from the projection variance scalar/SSE2 functions. FLU-00048's bounds changes do not touch mv_search/int_pro_me.rs or dsp/x86_64/int_pro_sse2.rs. CRU-00003 fix commit 68516c64 changes those two variance source files and a wrk_docs bundle document. The CRU-00003 ledger record is Fixed but its Fix section still says `<unfixed — raised only>`; it was left unchanged as requested. No ledger verdict or bundle document was changed.
+
+Environment
+-----------
+Host architecture: arm64. `arch -x86_64 /usr/bin/uname -m` printed `x86_64`; `arch -x86_64 /usr/sbin/sysctl -in sysctl.proc_translated` printed `1`. Installed target: x86_64-apple-darwin. Cargo test commands use `--target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]'` and `RUSTFLAGS='-C target-cpu=x86-64'`, so the retained unit test executes in the x86_64 Rosetta process. SSE2 is supported by this x86_64 runtime. This does not measure native x86 performance or other CPU microarchitectures.
+
+Pre-mutation source SHA-256
+---------------------------
+crates/rvp9-core/src/mv_search/int_pro_me.rs  1c07ea1ec391a879d4958baeb69122a09ea3e629c35f81b1ffabed633682d981
+saved exact copy .scratch/cru03-int_pro_me.rs.before  (hash recorded with final transcript)
+crates/rvp9-core/src/dsp/x86_64/int_pro_sse2.rs  bd2c5f4ed999212cd0a5057c7c04646993cfc226b14b6589283c4b39a7f25b7c
+
+Baseline retained SSE2 vector-variance comparison
+-----------------------------------------------
+Command:
+RUSTFLAGS='-C target-cpu=x86-64' deltic timeout 300 cargo test --offline --target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]' -p rvp9-core --lib vector_var_matches_scalar_random_and_extreme_projections -- --exact dsp::x86_64::int_pro_sse2::tests::vector_var_matches_scalar_random_and_extreme_projections --test-threads=1 </dev/null
+Raw output follows.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-cru-00003-scalar-varianc/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.30s
+     Running unittests src/lib.rs (target/x86_64-apple-darwin/debug/deps/rvp9_core-a8e4dfdb5f9e423b)
+
+running 1 test
+test dsp::x86_64::int_pro_sse2::tests::vector_var_matches_scalar_random_and_extreme_projections ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2130 filtered out; finished in 0.00s
+
+Mutation: perturbed only the production oracle formula in vpx_vector_var_scalar from shift (bwl + 2) to (bwl + 1). Mutant source SHA-256: ca889c2d31f73ec6591d1a125db9ea38f9802a432dc3ccd3b42fe0f1b1136161.
+Mutation command:
+RUSTFLAGS='-C target-cpu=x86-64' deltic timeout 300 cargo test --offline --target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]' -p rvp9-core --lib vector_var_matches_scalar_random_and_extreme_projections -- --exact dsp::x86_64::int_pro_sse2::tests::vector_var_matches_scalar_random_and_extreme_projections --nocapture --test-threads=1 </dev/null
+Raw mutation output follows.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-cru-00003-scalar-varianc/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 13.29s
+     Running unittests src/lib.rs (target/x86_64-apple-darwin/debug/deps/rvp9_core-a8e4dfdb5f9e423b)
+
+running 1 test
+test dsp::x86_64::int_pro_sse2::tests::vector_var_matches_scalar_random_and_extreme_projections ... 
+thread 'dsp::x86_64::int_pro_sse2::tests::vector_var_matches_scalar_random_and_extreme_projections' (289128240) panicked at crates/rvp9-core/src/dsp/x86_64/int_pro_sse2.rs:608:17:
+assertion `left == right` failed
+  left: 704552
+ right: 628652
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    dsp::x86_64::int_pro_sse2::tests::vector_var_matches_scalar_random_and_extreme_projections
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2130 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-core --lib`
+Restoration
+-----------
+Restored exact saved bytes with:
+cp .scratch/cru03-int_pro_me.rs.before crates/rvp9-core/src/mv_search/int_pro_me.rs
+Restored source SHA-256: 1c07ea1ec391a879d4958baeb69122a09ea3e629c35f81b1ffabed633682d981 (identical to the pre-mutation source and saved copy). `git diff --check` exited 0; the target source has no diff.
+Restored baseline command:
+RUSTFLAGS='-C target-cpu=x86-64' deltic timeout 300 cargo test --offline --target x86_64-apple-darwin --config 'target.x86_64-apple-darwin.runner=["arch","-x86_64"]' -p rvp9-core --lib vector_var_matches_scalar_random_and_extreme_projections -- --exact dsp::x86_64::int_pro_sse2::tests::vector_var_matches_scalar_random_and_extreme_projections --test-threads=1 </dev/null
+Raw restored output follows.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-TSK-HUM-verify-rvp9-bug-cru-00003-scalar-varianc/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 19.37s
+     Running unittests src/lib.rs (target/x86_64-apple-darwin/debug/deps/rvp9_core-a8e4dfdb5f9e423b)
+
+running 1 test
+test dsp::x86_64::int_pro_sse2::tests::vector_var_matches_scalar_random_and_extreme_projections ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2130 filtered out; finished in 0.00s
+
+
+Exit codes and final state
+--------------------------
+Baseline retained SSE2 comparison: exit 0 (1 passed, 0 failed, 0 ignored, 2130 filtered out).
+Formula-mutant retained SSE2 comparison: exit 101; the test compiled, ran, and failed at the retained assertion in int_pro_sse2.rs:608 (`left: 704552`, `right: 628652`). This was a production-formula mismatch, not a compile or cfg failure.
+Restored retained SSE2 comparison: exit 0 (1 passed, 0 failed, 0 ignored, 2130 filtered out).
+Final worktree: tracked diff, staged diff, and `git diff --check` are clean. HEAD remains c3534368d339ecded2e6128911827deaf3bd56ed. At final check origin/main was 27059fa666c8cd64077eca1dc7dfe6976f14ffc2, with this worktree behind by 5 commits; `git merge-base --is-ancestor 68516c6480e166cb07b80579f59145d24fa4185b origin/main` still exited 0. The changed scalar source was restored byte-for-byte: source and saved-copy SHA-256 both 1c07ea1ec391a879d4958baeb69122a09ea3e629c35f81b1ffabed633682d981. The SSE2 source SHA-256 remains bd2c5f4ed999212cd0a5057c7c04646993cfc226b14b6589283c4b39a7f25b7c. The bug record and bundle docs have no diff; no verdict was recorded.
