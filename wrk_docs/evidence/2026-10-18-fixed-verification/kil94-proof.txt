@@ -1,0 +1,240 @@
+INITIAL all75 include legal unknown Segments/Clusters + invalid schema IDs COMMAND: deltic timeout 300 cargo test -p rvp9-io --test error_paths </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 22.13s
+     Running tests/error_paths.rs (target/debug/deps/error_paths-ea11547c7a12ceb1)
+
+running 75 tests
+test ivf_truncated_below_header_size_reports_truncated ... ok
+test ivf_header_vp9_constructor_sets_fourcc ... ok
+test ivf_frame_size_overflow_is_bad_frame_size ... ok
+test ivf_writer_rejects_packets_too_large_for_u32 ... ok
+test ivf_rejects_bad_magic_with_dedicated_variant ... ok
+test ivf_roundtrip_preserves_payloads_byte_for_byte ... ok
+test ivf_truncated_frame_record_header_is_rejected ... ok
+test container_error_display_covers_every_variant ... ok
+test ivf_frame_payload_running_past_eof_is_bad_frame_size ... ok
+test packet_range_slice_len_is_empty_agree ... ok
+test read_cropped_centre_crop_extracts_inner_region ... ok
+test read_packets_missing_file_is_io_error ... ok
+test packet_reader_ivf_stops_before_unread_malformed_tail ... ok
+test read_cropped_consumes_extended_frame_params_to_newline ... ok
+test webm_bare_block_at_top_level_is_skipped_not_recursed ... ok
+test read_cropped_partial_frame_header_is_rejected ... ok
+test webm_bare_block_with_lacing_inside_cluster_is_rejected ... ok
+test webm_block_group_at_top_level_is_skipped_not_recursed ... ok
+test read_cropped_rejects_crop_exceeding_source_dims ... ok
+test webm_block_group_inside_cluster_recurses_to_block ... ok
+test read_cropped_missing_frame_tag_rejected ... ok
+test webm_block_missing_timecode_and_flags_rejected ... ok
+test webm_block_with_lacing_set_is_rejected ... ok
+test webm_block_payload_smaller_than_4_bytes_rejected ... ok
+test webm_block_with_zero_frame_bytes_rejected_as_bad_frame_size ... ok
+test webm_cluster_with_simple_block_yields_one_packet ... ok
+test webm_ebml_header_element_is_recursed_into ... ok
+test webm_element_payload_running_past_parent_end_rejected ... ok
+test read_packets_dispatches_uppercase_extension_case_insensitively ... ok
+test webm_empty_buffer_yields_no_packets ... ok
+test webm_filters_other_tracks_and_returns_only_the_vp9_track ... ok
+test webm_id_eof_inside_id_rejected ... ok
+test webm_id_wider_than_4_bytes_rejected ... ok
+test webm_id_zero_first_byte_rejected ... ok
+test webm_non_vp9_track_is_rejected ... ok
+test read_cropped_full_frame_passthrough_preserves_bytes ... ok
+test webm_segment_wraps_cluster_and_yields_packet ... ok
+test webm_simple_block_outside_cluster_is_skipped_not_returned ... ok
+test webm_unknown_cluster_boundaries_memory ... ok
+test webm_unknown_cluster_root_boundaries_memory ... ok
+test read_cropped_eof_before_any_frame_returns_empty ... ok
+test packet_reader_webm_yields_video_blocks_incrementally ... ok
+test read_cropped_eof_in_frame_params_rejected ... ok
+test webm_unknown_cluster_siblings_memory ... ok
+test read_packets_dispatches_webm_extension_to_webm_reader ... ok
+test webm_unknown_element_is_skipped ... ok
+test read_cropped_rejects_odd_height_only ... ok
+test webm_unknown_size_segment_runs_to_eof ... ok
+test webm_vint_eof_at_size_position ... ok
+test webm_vint_zero_first_byte_rejected ... ok
+test read_cropped_rejects_odd_crop_dimensions ... ok
+test webm_vint_eof_inside_vint_rejected ... ok
+test y4m_header_framerate_helper_returns_quotient ... ok
+test read_packets_rejects_unknown_extension_before_filesystem_read ... ok
+test read_cropped_rejects_height_only_exceeding_source ... ok
+test read_packets_dispatches_ivf_extension_to_ivf_reader ... ok
+test read_cropped_truncated_frame_body_propagates_read_exact_error ... ok
+test read_packets_no_extension_returns_unknown_extension_empty ... ok
+test read_packets_unknown_extension_returns_unknown_extension ... ok
+test webm_known_size_blocks_and_skipped_elements_keep_exact_packets ... ok
+test y4m_chroma_jpeg_variant_accepted ... ok
+test y4m_chroma_omitted_treated_as_acceptable ... ok
+test y4m_unterminated_header_is_rejected ... ok
+test y4m_missing_magic_is_invalid_data ... ok
+test y4m_unsupported_chroma_format_rejected ... ok
+test webm_unknown_size_track_entry_is_rejected_by_both_readers ... ok
+test y4m_missing_required_field_rejected ... ok
+test y4m_oversized_header_is_rejected ... ok
+test y4m_writer_reader_roundtrip_preserves_bytes ... ok
+test webm_unknown_cluster_siblings_stream ... ok
+test webm_unknown_cluster_root_boundaries_stream ... ok
+test webm_excessive_container_depth_is_rejected ... ok
+test webm_unknown_size_block_leaves_are_rejected_by_both_readers ... ok
+test webm_unknown_size_forbidden_element_ids_are_rejected_by_both_readers ... ok
+test webm_unknown_cluster_boundaries_stream ... ok
+
+test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+EXIT: 0
+MUTANT COMMAND: deltic timeout 300 cargo test -p rvp9-io --test error_paths unknown_size </dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 22.20s
+     Running tests/error_paths.rs (target/debug/deps/error_paths-ea11547c7a12ceb1)
+
+running 4 tests
+test webm_unknown_size_segment_runs_to_eof ... ok
+test webm_unknown_size_track_entry_is_rejected_by_both_readers ... FAILED
+test webm_unknown_size_block_leaves_are_rejected_by_both_readers ... FAILED
+test webm_unknown_size_forbidden_element_ids_are_rejected_by_both_readers ... FAILED
+
+failures:
+
+---- webm_unknown_size_track_entry_is_rejected_by_both_readers stdout ----
+
+thread 'webm_unknown_size_track_entry_is_rejected_by_both_readers' (285518703) panicked at crates/rvp9-io/tests/error_paths.rs:922:5:
+accepted unknown-size TrackEntry: [
+    "unknown_track_entry_width_1: memory=Ok([[7]]), streaming=Ok([[7]])",
+    "unknown_track_entry_width_8: memory=Ok([[7]]), streaming=Ok([[7]])",
+]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- webm_unknown_size_block_leaves_are_rejected_by_both_readers stdout ----
+
+thread 'webm_unknown_size_block_leaves_are_rejected_by_both_readers' (285518700) panicked at crates/rvp9-io/tests/error_paths.rs:890:5:
+accepted unknown-size blocks: [
+    "unknown_simple_width_1: memory=Ok([[117, 110, 107, 110, 111, 119, 110, 45, 98, 108, 111, 99, 107, 45, 112, 97, 121, 108, 111, 97, 100, 163, 16, 0, 0, 5, 129, 0, 0, 0, 90]]), streaming=Ok([[117, 110, 107, 110, 111, 119, 110, 45, 98, 108, 111, 99, 107, 45, 112, 97, 121, 108, 111, 97, 100, 163, 16, 0, 0, 5, 129, 0, 0, 0, 90]])",
+    "unknown_block_width_1: memory=Ok([[117, 110, 107, 110, 111, 119, 110, 45, 98, 108, 111, 99, 107, 45, 112, 97, 121, 108, 111, 97, 100, 251, 16, 0, 0, 1, 0]]), streaming=Ok([[117, 110, 107, 110, 111, 119, 110, 45, 98, 108, 111, 99, 107, 45, 112, 97, 121, 108, 111, 97, 100, 251, 16, 0, 0, 1, 0]])",
+    "unknown_simple_width_8: memory=Ok([[117, 110, 107, 110, 111, 119, 110, 45, 98, 108, 111, 99, 107, 45, 112, 97, 121, 108, 111, 97, 100, 163, 16, 0, 0, 5, 129, 0, 0, 0, 90]]), streaming=Ok([[117, 110, 107, 110, 111, 119, 110, 45, 98, 108, 111, 99, 107, 45, 112, 97, 121, 108, 111, 97, 100, 163, 16, 0, 0, 5, 129, 0, 0, 0, 90]])",
+    "unknown_block_width_8: memory=Ok([[117, 110, 107, 110, 111, 119, 110, 45, 98, 108, 111, 99, 107, 45, 112, 97, 121, 108, 111, 97, 100, 251, 16, 0, 0, 1, 0]]), streaming=Ok([[117, 110, 107, 110, 111, 119, 110, 45, 98, 108, 111, 99, 107, 45, 112, 97, 121, 108, 111, 97, 100, 251, 16, 0, 0, 1, 0]])",
+]
+
+---- webm_unknown_size_forbidden_element_ids_are_rejected_by_both_readers stdout ----
+
+thread 'webm_unknown_size_forbidden_element_ids_are_rejected_by_both_readers' (285518701) panicked at crates/rvp9-io/tests/error_paths.rs:1030:5:
+accepted unknown-size elements outside the allowlist: [
+    "unknown_ebml_width_1: memory=Ok([[1]]), streaming=Ok([[1]])",
+    "unknown_tracks_width_1: memory=Ok([]), streaming=Ok([])",
+    "unknown_block_group_width_1: memory=Ok([[65]]), streaming=Ok([[65]])",
+    "unknown_block_group_child_width_1: memory=Ok([[49, 251, 16, 0, 0, 1, 0]]), streaming=Ok([[49, 251, 16, 0, 0, 1, 0]])",
+    "unknown_info_width_1: memory=Ok([]), streaming=Ok([])",
+    "unknown_void_width_1: memory=Ok([]), streaming=Ok([])",
+    "unknown_unknown_id_width_1: memory=Ok([]), streaming=Ok([])",
+    "unknown_ebml_width_8: memory=Ok([[1]]), streaming=Ok([[1]])",
+    "unknown_tracks_width_8: memory=Ok([]), streaming=Ok([])",
+    "unknown_block_group_width_8: memory=Ok([[65]]), streaming=Ok([[65]])",
+    "unknown_block_group_child_width_8: memory=Ok([[49, 251, 16, 0, 0, 1, 0]]), streaming=Ok([[49, 251, 16, 0, 0, 1, 0]])",
+    "unknown_info_width_8: memory=Ok([]), streaming=Ok([])",
+    "unknown_void_width_8: memory=Ok([]), streaming=Ok([])",
+    "unknown_unknown_id_width_8: memory=Ok([]), streaming=Ok([])",
+]
+
+
+failures:
+    webm_unknown_size_block_leaves_are_rejected_by_both_readers
+    webm_unknown_size_forbidden_element_ids_are_rejected_by_both_readers
+    webm_unknown_size_track_entry_is_rejected_by_both_readers
+
+test result: FAILED. 1 passed; 3 failed; 0 ignored; 0 measured; 71 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-io --test error_paths`
+
+EXIT: 101
+RESTORED COMMAND: deltic timeout 300 cargo test -p rvp9-io --test error_paths </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3.02s
+     Running tests/error_paths.rs (target/debug/deps/error_paths-ea11547c7a12ceb1)
+
+running 75 tests
+test ivf_header_vp9_constructor_sets_fourcc ... ok
+test ivf_frame_payload_running_past_eof_is_bad_frame_size ... ok
+test ivf_rejects_bad_magic_with_dedicated_variant ... ok
+test ivf_frame_size_overflow_is_bad_frame_size ... ok
+test ivf_roundtrip_preserves_payloads_byte_for_byte ... ok
+test container_error_display_covers_every_variant ... ok
+test ivf_truncated_below_header_size_reports_truncated ... ok
+test ivf_truncated_frame_record_header_is_rejected ... ok
+test ivf_writer_rejects_packets_too_large_for_u32 ... ok
+test packet_range_slice_len_is_empty_agree ... ok
+test packet_reader_ivf_stops_before_unread_malformed_tail ... ok
+test read_cropped_eof_before_any_frame_returns_empty ... ok
+test read_cropped_consumes_extended_frame_params_to_newline ... ok
+test read_cropped_centre_crop_extracts_inner_region ... ok
+test read_cropped_missing_frame_tag_rejected ... ok
+test webm_bare_block_at_top_level_is_skipped_not_recursed ... ok
+test read_cropped_partial_frame_header_is_rejected ... ok
+test webm_bare_block_with_lacing_inside_cluster_is_rejected ... ok
+test read_cropped_full_frame_passthrough_preserves_bytes ... ok
+test webm_block_group_at_top_level_is_skipped_not_recursed ... ok
+test webm_block_group_inside_cluster_recurses_to_block ... ok
+test webm_block_missing_timecode_and_flags_rejected ... ok
+test read_packets_missing_file_is_io_error ... ok
+test webm_block_payload_smaller_than_4_bytes_rejected ... ok
+test packet_reader_webm_yields_video_blocks_incrementally ... ok
+test webm_block_with_lacing_set_is_rejected ... ok
+test webm_block_with_zero_frame_bytes_rejected_as_bad_frame_size ... ok
+test webm_cluster_with_simple_block_yields_one_packet ... ok
+test webm_ebml_header_element_is_recursed_into ... ok
+test webm_element_payload_running_past_parent_end_rejected ... ok
+test webm_empty_buffer_yields_no_packets ... ok
+test webm_filters_other_tracks_and_returns_only_the_vp9_track ... ok
+test webm_id_eof_inside_id_rejected ... ok
+test read_cropped_rejects_crop_exceeding_source_dims ... ok
+test webm_id_wider_than_4_bytes_rejected ... ok
+test webm_id_zero_first_byte_rejected ... ok
+test webm_non_vp9_track_is_rejected ... ok
+test webm_segment_wraps_cluster_and_yields_packet ... ok
+test read_packets_dispatches_uppercase_extension_case_insensitively ... ok
+test webm_simple_block_outside_cluster_is_skipped_not_returned ... ok
+test read_cropped_rejects_odd_crop_dimensions ... ok
+test webm_unknown_cluster_boundaries_memory ... ok
+test read_cropped_rejects_height_only_exceeding_source ... ok
+test webm_unknown_cluster_root_boundaries_memory ... ok
+test read_cropped_eof_in_frame_params_rejected ... ok
+test webm_unknown_element_is_skipped ... ok
+test webm_unknown_cluster_siblings_memory ... ok
+test webm_unknown_size_segment_runs_to_eof ... ok
+test webm_vint_eof_at_size_position ... ok
+test webm_vint_eof_inside_vint_rejected ... ok
+test webm_vint_zero_first_byte_rejected ... ok
+test y4m_header_framerate_helper_returns_quotient ... ok
+test read_cropped_truncated_frame_body_propagates_read_exact_error ... ok
+test read_packets_unknown_extension_returns_unknown_extension ... ok
+test read_packets_dispatches_webm_extension_to_webm_reader ... ok
+test read_packets_rejects_unknown_extension_before_filesystem_read ... ok
+test read_cropped_rejects_odd_height_only ... ok
+test read_packets_dispatches_ivf_extension_to_ivf_reader ... ok
+test webm_known_size_blocks_and_skipped_elements_keep_exact_packets ... ok
+test y4m_oversized_header_is_rejected ... ok
+test read_packets_no_extension_returns_unknown_extension_empty ... ok
+test y4m_missing_magic_is_invalid_data ... ok
+test y4m_chroma_omitted_treated_as_acceptable ... ok
+test webm_excessive_container_depth_is_rejected ... ok
+test y4m_chroma_jpeg_variant_accepted ... ok
+test y4m_unterminated_header_is_rejected ... ok
+test y4m_missing_required_field_rejected ... ok
+test y4m_unsupported_chroma_format_rejected ... ok
+test y4m_writer_reader_roundtrip_preserves_bytes ... ok
+test webm_unknown_size_track_entry_is_rejected_by_both_readers ... ok
+test webm_unknown_cluster_root_boundaries_stream ... ok
+test webm_unknown_cluster_siblings_stream ... ok
+test webm_unknown_size_block_leaves_are_rejected_by_both_readers ... ok
+test webm_unknown_size_forbidden_element_ids_are_rejected_by_both_readers ... ok
+test webm_unknown_cluster_boundaries_stream ... ok
+
+test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+EXIT: 0

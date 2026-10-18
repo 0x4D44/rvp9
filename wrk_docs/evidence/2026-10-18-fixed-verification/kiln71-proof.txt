@@ -1,0 +1,171 @@
+ORIGINAL SHA256=6216563da86bddb70bd9cdcc75f227fc1191741b2af1bdc60617cf2ef3b7534b
+BASELINE COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib encoder_rejects_ -- --nocapture < /dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 13.31s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 21 tests
+test frame_loop::tests::stream_encoder_rejects_invalid_parallelism ... ok
+test frame_loop::tests::encoder_rejects_non_multiple_of_64 ... ok
+test frame_loop::tests::stream_encoder_rejects_non_multiple_of_64_width ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_framerate ... ok
+test frame_loop::tests::stream_encoder_rejects_negative_framerate ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_bitrate ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_height ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_width ... ok
+test frame_loop::tests::stream_encoder_rejects_nan_framerate ... ok
+test frame_loop::tests::stream_encoder_rejects_odd_height ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_gop_length ... ok
+test tests::encoder_rejects_non_multiple_of_64_height ... ok
+test tests::encoder_rejects_non_multiple_of_64_width ... ok
+test tests::encoder_rejects_luma_area_above_stream_encoder_maximum_before_allocating ... ok
+test frame_loop::tests::stream_encoder_rejects_unsupported_large_dimensions_before_allocating ... ok
+test frame_loop::tests::stream_encoder_rejects_unbounded_tpl_gop_before_allocating ... ok
+test tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating ... ok
+test tests::encoder_rejects_zero_height ... ok
+test tests::encoder_rejects_zero_qindex ... ok
+test frame_loop::tests::stream_encoder_rejects_svc_layer_bitrate_that_cannot_fit_i32 ... ok
+test tests::encoder_rejects_zero_width ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 804 filtered out; finished in 0.00s
+
+BASELINE EXIT=0
+INPUT ADAPTATION ONLY: existing luma-area test now constructs Config::new(524_288,524_288,50); assertion retained; no encode.
+ORIGINAL_OBSERVATION COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib tests::encoder_rejects_luma_area_above_stream_encoder_maximum_before_allocating -- --exact < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 21.79s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+test tests::encoder_rejects_luma_area_above_stream_encoder_maximum_before_allocating ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.00s
+
+ORIGINAL_OBSERVATION EXIT=0
+ROOT REVERSAL ONLY: disable coded_dimensions_supported constructor guard; retain checked geometry and tests.
+GUARD_REVERSED COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib tests::encoder_rejects_ -- --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 35.42s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 8 tests
+test frame_loop::tests::encoder_rejects_non_multiple_of_64 ... 
+thread 'tests::encoder_rejects_luma_area_above_stream_encoder_maximum_before_allocating' (285435909) panicked at crates/rvp9-encoder/src/lib.rs:19670:9:
+legacy Encoder must reject a luma area above the supported maximum before allocating frame storage
+oknote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+thread 'tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating' (285435908) panicked at crates/rvp9-encoder/src/lib.rs:19646:9:
+legacy Encoder must reject an oversized width before allocating frame storage
+test tests::encoder_rejects_non_multiple_of_64_height ... ok
+test tests::encoder_rejects_non_multiple_of_64_width ... ok
+test tests::encoder_rejects_zero_qindex ... ok
+test tests::encoder_rejects_zero_height ... ok
+test tests::encoder_rejects_zero_width ... ok
+test tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating ... FAILED
+test tests::encoder_rejects_luma_area_above_stream_encoder_maximum_before_allocating ... FAILED
+
+failures:
+
+failures:
+    tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating
+    tests::encoder_rejects_luma_area_above_stream_encoder_maximum_before_allocating
+
+test result: FAILED. 6 passed; 2 failed; 0 ignored; 0 measured; 817 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-encoder --lib`
+GUARD_REVERSED EXIT=101
+EXPECTED_ASSERTION_FAILURE_EXIT=101
+RESTORED SHA256=6216563da86bddb70bd9cdcc75f227fc1191741b2af1bdc60617cf2ef3b7534b
+RESTORED COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib encoder_rejects_ -- --nocapture < /dev/null
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 08s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 21 tests
+test frame_loop::tests::stream_encoder_rejects_invalid_parallelism ... ok
+test frame_loop::tests::encoder_rejects_non_multiple_of_64 ... ok
+test frame_loop::tests::stream_encoder_rejects_nan_framerate ... ok
+test frame_loop::tests::stream_encoder_rejects_negative_framerate ... ok
+test frame_loop::tests::stream_encoder_rejects_odd_height ... ok
+test frame_loop::tests::stream_encoder_rejects_non_multiple_of_64_width ... ok
+test tests::encoder_rejects_non_multiple_of_64_width ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_bitrate ... ok
+test frame_loop::tests::stream_encoder_rejects_unsupported_large_dimensions_before_allocating ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_framerate ... ok
+test frame_loop::tests::stream_encoder_rejects_unbounded_tpl_gop_before_allocating ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_height ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_width ... ok
+test tests::encoder_rejects_zero_qindex ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_gop_length ... ok
+test tests::encoder_rejects_luma_area_above_stream_encoder_maximum_before_allocating ... ok
+test tests::encoder_rejects_zero_height ... ok
+test tests::encoder_rejects_non_multiple_of_64_height ... ok
+test tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating ... ok
+test tests::encoder_rejects_zero_width ... ok
+test frame_loop::tests::stream_encoder_rejects_svc_layer_bitrate_that_cannot_fit_i32 ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 804 filtered out; finished in 0.00s
+
+RESTORED EXIT=0
+SUPPLEMENT: original unadapted dimensions16448x64; existing assertion unchanged except debug-result message; guard-only reversal.
+SUPPLEMENT ORIGINAL SHA256=6216563da86bddb70bd9cdcc75f227fc1191741b2af1bdc60617cf2ef3b7534b
+UNADAPTED_GUARD_REVERSED COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating -- --exact --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 25.99s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+
+thread 'tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating' (285491696) panicked at crates/rvp9-encoder/src/lib.rs:19646:9:
+legacy Encoder must reject an oversized width before allocating frame storage; actual result: Ok(Encoder { config: Config { width: 16448, height: 64, base_qindex: 50 }, geometry: LegacyFrameGeometry { mi_rows: 8, mi_cols: 2056, mi_rows_usize: 8, mi_cols_usize: 2056, mi_cell_count: 16448, luma_plane_len: 1052672, chroma_plane_len: 263168, sb_count: 257, keyframe_tile_capacity: 132608, residual_tile_capacity: 1069056 } })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating ... FAILED
+
+failures:
+
+failures:
+    tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-encoder --lib`
+UNADAPTED_GUARD_REVERSED EXIT=101
+SUPPLEMENT RESTORED SHA256=6216563da86bddb70bd9cdcc75f227fc1191741b2af1bdc60617cf2ef3b7534b
+UNADAPTED_RESTORED COMMAND: deltic timeout 180 cargo test -p rvp9-encoder --lib tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating -- --exact --nocapture < /dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 34.49s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_encoder-1e36a196bb871550)
+
+running 1 test
+test tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 824 filtered out; finished in 0.00s
+
+UNADAPTED_RESTORED EXIT=0

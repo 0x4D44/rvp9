@@ -1,0 +1,123 @@
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 36.54s
+     Running tests/bdrate_fps.rs (target/debug/deps/bdrate_fps-69452f4cfbe5d302)
+
+running 2 tests
+test rejects_zero_ivf_timebase_components ... ok
+test reports_each_ivfs_effective_frame_rate ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.64s
+
+
+MUTANT: parent source Y4M FPS duration calculation, Result wrapper retained; encoded IVF timebase ignored.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 26.38s
+     Running tests/bdrate_fps.rs (target/debug/deps/bdrate_fps-69452f4cfbe5d302)
+
+running 2 tests
+test reports_each_ivfs_effective_frame_rate ... FAILED
+test rejects_zero_ivf_timebase_components ... FAILED
+
+failures:
+
+---- reports_each_ivfs_effective_frame_rate stdout ----
+
+thread 'reports_each_ivfs_effective_frame_rate' (285529348) panicked at crates/rvp9-bench/tests/bdrate_fps.rs:98:17:
+anchor/100 measured 57.600 kbps; expected 34.560000 from 144 bytes at 30/1 fps
+CSV:
+role,target_kbps,measured_kbps,psnr_db
+anchor,100,57.600,36.0896
+test,100,57.600,36.0896
+anchor,200,97.600,38.5884
+test,200,97.600,38.5884
+anchor,400,177.600,42.1102
+test,400,177.600,42.1102
+anchor,800,337.600,48.1308
+test,800,337.600,48.1308
+bdrate_pct,0.0000
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- rejects_zero_ivf_timebase_components stdout ----
+
+thread 'rejects_zero_ivf_timebase_components' (285529347) panicked at crates/rvp9-bench/tests/bdrate_fps.rs:198:5:
+bdrate accepted IVF timebase 0/1
+stdout:
+=== BD-rate sweep ===
+anchor: /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/fake-vpxenc
+test:   /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/fake-vpxenc
+input:  /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/source.y4m
+reference input: /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/source.y4m
+artifacts: /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/invalid-0
+config: --rt --cpu-used=7 --end-usage=cbr --fps=0/1 --threads=1 --tile-columns=0 --lag-in-frames=0 --tune-content=default
+
+target   100k | anchor     58k psnr 36.09 | test     58k psnr 36.09
+target   200k | anchor     98k psnr 38.59 | test     98k psnr 38.59
+target   400k | anchor    178k psnr 42.11 | test    178k psnr 42.11
+target   800k | anchor    338k psnr 48.13 | test    338k psnr 48.13
+
+BD-rate: +0.000%  (anchor → test)
+
+csv: /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/invalid-0.csv
+
+stderr:
+
+
+bdrate accepted IVF timebase 30/0
+stdout:
+=== BD-rate sweep ===
+anchor: /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/fake-vpxenc
+test:   /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/fake-vpxenc
+input:  /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/source.y4m
+reference input: /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/source.y4m
+artifacts: /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/invalid-1
+config: --rt --cpu-used=7 --end-usage=cbr --fps=30/0 --threads=1 --tile-columns=0 --lag-in-frames=0 --tune-content=default
+
+target   100k | anchor     58k psnr 36.09 | test     58k psnr 36.09
+target   200k | anchor     98k psnr 38.59 | test     98k psnr 38.59
+target   400k | anchor    178k psnr 42.11 | test    178k psnr 42.11
+target   800k | anchor    338k psnr 48.13 | test    338k psnr 48.13
+
+BD-rate: +0.000%  (anchor → test)
+
+csv: /Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/.scratch/bdrate-fps-64285-1792339434580449000-0/invalid-1.csv
+
+stderr:
+
+
+
+failures:
+    rejects_zero_ivf_timebase_components
+    reports_each_ivfs_effective_frame_rate
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.25s
+
+error: test failed, to rerun pass `-p rvp9-bench --test bdrate_fps`
+
+RESTORED: exact original bdrate.rs bytes; final focused green follows.
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.87s
+     Running tests/bdrate_fps.rs (target/debug/deps/bdrate_fps-69452f4cfbe5d302)
+
+running 2 tests
+test rejects_zero_ivf_timebase_components ... ok
+test reports_each_ivfs_effective_frame_rate ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.48s
+

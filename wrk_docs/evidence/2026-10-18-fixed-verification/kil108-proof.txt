@@ -1,0 +1,263 @@
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 19.91s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_bench-3fde31152d775961)
+
+running 9 tests
+test throughput::tests::csv_00108_ratchet_rejects_invalid_operands_and_product ... ok
+test throughput::tests::csv_00108_latest_ignores_invalid_public_rows ... ok
+test throughput::tests::csv_00108_reads_independent_quoted_multiline_oracle ... ok
+test throughput::tests::csv_00108_preserves_tiny_positive_metrics ... ok
+test throughput::tests::csv_00108_writer_matches_independent_literal_oracle ... ok
+test throughput::tests::csv_00108_skips_invalid_typed_rows ... ok
+test throughput::tests::csv_00108_append_preserves_separatorless_existing_records ... ok
+test throughput::tests::csv_00108_rejects_ambiguous_quotes_and_bad_headers ... ok
+test throughput::tests::csv_00108_append_validates_batch_before_any_write ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 30 filtered out; finished in 0.00s
+
+
+ROOT MUTANT: writer raw fields
+COMMAND: deltic timeout 300 cargo test -p rvp9-bench --lib throughput::tests::csv_00108_writer_matches_independent_literal_oracle -- --exact
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 31.50s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_bench-3fde31152d775961)
+
+running 1 test
+test throughput::tests::csv_00108_writer_matches_independent_literal_oracle ... FAILED
+
+failures:
+
+---- throughput::tests::csv_00108_writer_matches_independent_literal_oracle stdout ----
+
+thread 'throughput::tests::csv_00108_writer_matches_independent_literal_oracle' (285441870) panicked at crates/rvp9-bench/src/throughput.rs:916:9:
+assertion `left == right` failed
+  left: "schema_version,timestamp_unix,host,unpinned,build_profile_hash,fixture,timed_frames,width,height,p50_us,p95_us,p99_us\n1,7,h,é,false,b\"p,a\r\nb\nc\rd,\"x\",1000,640,480,1.000,2.000,3.000\n"
+ right: "schema_version,timestamp_unix,host,unpinned,build_profile_hash,fixture,timed_frames,width,height,p50_us,p95_us,p99_us\n1,7,\"h,é\",false,\"b\"\"p\",\"a\r\nb\nc\rd,\"\"x\"\"\",1000,640,480,1.000,2.000,3.000\n"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    throughput::tests::csv_00108_writer_matches_independent_literal_oracle
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --lib`
+
+EXIT: 101
+
+ROOT MUTANT: reader original physical-line comma split adapted to helper
+COMMAND: deltic timeout 300 cargo test -p rvp9-bench --lib throughput::tests::csv_00108_reads_independent_quoted_multiline_oracle -- --exact
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 53.89s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_bench-3fde31152d775961)
+
+running 1 test
+test throughput::tests::csv_00108_reads_independent_quoted_multiline_oracle ... FAILED
+
+failures:
+
+---- throughput::tests::csv_00108_reads_independent_quoted_multiline_oracle stdout ----
+
+thread 'throughput::tests::csv_00108_reads_independent_quoted_multiline_oracle' (285459310) panicked at crates/rvp9-bench/src/throughput.rs:813:9:
+assertion `left == right` failed: quoted logical records must survive
+  left: 1
+ right: 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    throughput::tests::csv_00108_reads_independent_quoted_multiline_oracle
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --lib`
+
+EXIT: 101
+
+ROOT MUTANT: reader permits extra columns
+COMMAND: deltic timeout 300 cargo test -p rvp9-bench --lib throughput::tests::csv_00108_skips_invalid_typed_rows -- --exact
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3.25s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_bench-3fde31152d775961)
+
+running 1 test
+test throughput::tests::csv_00108_skips_invalid_typed_rows ... FAILED
+
+failures:
+
+---- throughput::tests::csv_00108_skips_invalid_typed_rows stdout ----
+
+thread 'throughput::tests::csv_00108_skips_invalid_typed_rows' (285460839) panicked at crates/rvp9-bench/src/throughput.rs:957:9:
+assertion `left == right` failed: invalid schema/typed/metric/column rows must be skipped
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    throughput::tests::csv_00108_skips_invalid_typed_rows
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --lib`
+
+EXIT: 101
+
+ROOT MUTANT: reader omits finite-positive metrics check
+COMMAND: deltic timeout 300 cargo test -p rvp9-bench --lib throughput::tests::csv_00108_skips_invalid_typed_rows -- --exact
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3.68s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_bench-3fde31152d775961)
+
+running 1 test
+test throughput::tests::csv_00108_skips_invalid_typed_rows ... FAILED
+
+failures:
+
+---- throughput::tests::csv_00108_skips_invalid_typed_rows stdout ----
+
+thread 'throughput::tests::csv_00108_skips_invalid_typed_rows' (285463264) panicked at crates/rvp9-bench/src/throughput.rs:957:9:
+assertion `left == right` failed: invalid schema/typed/metric/column rows must be skipped
+  left: 16
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    throughput::tests::csv_00108_skips_invalid_typed_rows
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --lib`
+
+EXIT: 101
+
+ROOT MUTANT: writer omits pre-write batch validation
+COMMAND: deltic timeout 300 cargo test -p rvp9-bench --lib throughput::tests::csv_00108_append_validates_batch_before_any_write -- --exact
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3.98s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_bench-3fde31152d775961)
+
+running 1 test
+test throughput::tests::csv_00108_append_validates_batch_before_any_write ... FAILED
+
+failures:
+
+---- throughput::tests::csv_00108_append_validates_batch_before_any_write stdout ----
+
+thread 'throughput::tests::csv_00108_append_validates_batch_before_any_write' (285464444) panicked at crates/rvp9-bench/src/throughput.rs:998:13:
+assertion failed: matches!(result, Err(ThroughputError::Io(e)) if e.kind() ==
+    std::io::ErrorKind::InvalidInput)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    throughput::tests::csv_00108_append_validates_batch_before_any_write
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --lib`
+
+EXIT: 101
+
+ROOT MUTANT: ratchet original unchecked operands and budget
+COMMAND: deltic timeout 300 cargo test -p rvp9-bench --lib throughput::tests::csv_00108_ratchet_rejects_invalid_operands_and_product -- --exact
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3.15s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_bench-3fde31152d775961)
+
+running 1 test
+test throughput::tests::csv_00108_ratchet_rejects_invalid_operands_and_product ... FAILED
+
+failures:
+
+---- throughput::tests::csv_00108_ratchet_rejects_invalid_operands_and_product stdout ----
+
+thread 'throughput::tests::csv_00108_ratchet_rejects_invalid_operands_and_product' (285466036) panicked at crates/rvp9-bench/src/throughput.rs:1043:22:
+invalid operands must fail closed: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    throughput::tests::csv_00108_ratchet_rejects_invalid_operands_and_product
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --lib`
+
+EXIT: 101
+
+RESTORED COMMAND: deltic timeout 300 cargo test -p rvp9-bench --lib throughput::tests
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3.48s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_bench-3fde31152d775961)
+
+running 20 tests
+test throughput::tests::check_ratchet_within_budget_ok ... ok
+test throughput::tests::csv_00108_ratchet_rejects_invalid_operands_and_product ... ok
+test throughput::tests::check_ratchet_over_budget_errs ... ok
+test throughput::tests::check_metric_ratchet_reports_metric_name_and_budget ... ok
+test throughput::tests::host_fingerprint_has_no_family_token ... ok
+test throughput::tests::latest_per_fixture_for_build_requires_exact_identity ... ok
+test throughput::tests::csv_00108_latest_ignores_invalid_public_rows ... ok
+test throughput::tests::latest_per_fixture_empty_when_no_pinned_rows ... ok
+test throughput::tests::read_csv_missing_file_returns_empty ... ok
+test throughput::tests::csv_00108_reads_independent_quoted_multiline_oracle ... ok
+test throughput::tests::csv_00108_skips_invalid_typed_rows ... ok
+test throughput::tests::read_csv_skips_other_schema_versions ... ok
+test throughput::tests::read_csv_skips_malformed_rows ... ok
+test throughput::tests::csv_00108_preserves_tiny_positive_metrics ... ok
+test throughput::tests::csv_00108_writer_matches_independent_literal_oracle ... ok
+test throughput::tests::csv_00108_append_preserves_separatorless_existing_records ... ok
+test throughput::tests::malformed_ivf_packet_is_reported_with_fixture_and_index ... ok
+test throughput::tests::csv_roundtrip_v1 ... ok
+test throughput::tests::csv_00108_rejects_ambiguous_quotes_and_bad_headers ... ok
+test throughput::tests::csv_00108_append_validates_batch_before_any_write ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s
+
+
+EXIT: 0

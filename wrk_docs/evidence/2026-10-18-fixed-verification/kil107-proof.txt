@@ -1,0 +1,120 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on artifact directory
+   Compiling proc-macro2 v1.0.106
+   Compiling version_check v0.9.5
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling libc v0.2.186
+   Compiling zmij v1.0.21
+   Compiling serde_json v1.0.149
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling serde v1.0.228
+   Compiling memchr v2.8.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling static_assertions v1.1.0
+   Compiling itoa v1.0.18
+   Compiling cfg-if v1.0.4
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling generic-array v0.14.7
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling syn v2.0.117
+   Compiling cpufeatures v0.2.17
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 34.86s
+     Running unittests src/bin/bdrate.rs (target/debug/deps/bdrate-e6fcfe29003cd9c3)
+
+running 6 tests
+test tests::measured_bdrate_rejects_repeated_psnr_on_both_curves_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_anchor_with_overlap ... ok
+test tests::measured_bdrate_rejects_failed_psnr_and_insufficient_points ... ok
+test tests::measured_bdrate_keeps_full_rank_fits_with_repeated_observations ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_test_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_realistic_psnr_with_overlap ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+MUTANT: parent polyfit3 body with Option-compatible Some return values; original singular zero fallback retained.
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 21.53s
+     Running unittests src/bin/bdrate.rs (target/debug/deps/bdrate-e6fcfe29003cd9c3)
+
+running 6 tests
+test tests::measured_bdrate_rejects_failed_psnr_and_insufficient_points ... ok
+test tests::measured_bdrate_keeps_full_rank_fits_with_repeated_observations ... ok
+test tests::measured_bdrate_rejects_repeated_realistic_psnr_with_overlap ... FAILED
+test tests::measured_bdrate_rejects_repeated_psnr_on_both_curves_with_overlap ... FAILED
+test tests::measured_bdrate_rejects_repeated_psnr_on_anchor_with_overlap ... FAILED
+test tests::measured_bdrate_rejects_repeated_psnr_on_test_with_overlap ... FAILED
+
+failures:
+
+---- tests::measured_bdrate_rejects_repeated_realistic_psnr_with_overlap stdout ----
+
+thread 'tests::measured_bdrate_rejects_repeated_realistic_psnr_with_overlap' (285405826) panicked at crates/rvp9-bench/src/bin/bdrate.rs:1084:9:
+rank-deficient curve at realistic PSNR values produced a BD-rate
+
+---- tests::measured_bdrate_rejects_repeated_psnr_on_both_curves_with_overlap stdout ----
+
+thread 'tests::measured_bdrate_rejects_repeated_psnr_on_both_curves_with_overlap' (285405824) panicked at crates/rvp9-bench/src/bin/bdrate.rs:1073:9:
+two rank-deficient curves produced a BD-rate
+
+---- tests::measured_bdrate_rejects_repeated_psnr_on_anchor_with_overlap stdout ----
+
+thread 'tests::measured_bdrate_rejects_repeated_psnr_on_anchor_with_overlap' (285405823) panicked at crates/rvp9-bench/src/bin/bdrate.rs:1051:9:
+rank-deficient anchor curve produced a BD-rate
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::measured_bdrate_rejects_repeated_psnr_on_test_with_overlap stdout ----
+
+thread 'tests::measured_bdrate_rejects_repeated_psnr_on_test_with_overlap' (285405825) panicked at crates/rvp9-bench/src/bin/bdrate.rs:1062:9:
+rank-deficient test curve produced a BD-rate
+
+
+failures:
+    tests::measured_bdrate_rejects_repeated_psnr_on_anchor_with_overlap
+    tests::measured_bdrate_rejects_repeated_psnr_on_both_curves_with_overlap
+    tests::measured_bdrate_rejects_repeated_psnr_on_test_with_overlap
+    tests::measured_bdrate_rejects_repeated_realistic_psnr_with_overlap
+
+test result: FAILED. 2 passed; 4 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --bin bdrate`
+
+RESTORED: exact original bdrate.rs bytes; final focused green follows.
+    Blocking waiting for file lock on artifact directory
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-fixed-bug-verification-batch-two/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.94s
+     Running unittests src/bin/bdrate.rs (target/debug/deps/bdrate-e6fcfe29003cd9c3)
+
+running 6 tests
+test tests::measured_bdrate_rejects_failed_psnr_and_insufficient_points ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_anchor_with_overlap ... ok
+test tests::measured_bdrate_keeps_full_rank_fits_with_repeated_observations ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_both_curves_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_realistic_psnr_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_test_with_overlap ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
