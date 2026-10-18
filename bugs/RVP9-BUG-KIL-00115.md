@@ -6,15 +6,15 @@
 - **Area:** bench/throughput CSV
 - **Raised:** 2026-08-22T19:31:49Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T181112Z-64c7264d
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00115-run-verify-20261018T181112Z-64c7264d
+- **Owner base:** bb00e6ded9e6d75d595b69b9dc68ecaf11d27e63
+- **Owner fingerprint:** sha256:68a21226da912cb023abfbc105d47bef0f5b765bba241839191c3eb31d656a45
+- **Owner since:** 2026-10-18T18:11:12Z
+- **Owner until:** 2026-10-18T22:11:12Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
