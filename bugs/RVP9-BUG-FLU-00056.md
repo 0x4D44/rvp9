@@ -6,15 +6,15 @@
 - **Area:** core/transforms/inverse-neon
 - **Raised:** 2026-10-18T16:12:39Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261018T163646Z-66a5c8ca
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00056-run-fix-20261018T163646Z-66a5c8ca
+- **Owner base:** 73ab3b91b4acc0cadc1ccdc0aaade629d0badfd9
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-18T16:36:46Z
+- **Owner until:** 2026-10-18T20:36:46Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
