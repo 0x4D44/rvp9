@@ -47,12 +47,12 @@ mod sse2;
 /// Function pointer for a 1D 4-point forward transform — either
 /// [`fdct4`] or [`fadst4`]. Used by the [`fht4x4`] dispatcher to pick
 /// per-axis kernels via the FHT_4 table.
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(not(target_arch = "aarch64"), test, miri))]
 type Fwd1d4 = fn(&[i32; 4], &mut [i32; 4]);
 
 /// Function pointer for a 1D 8-point forward transform — either
 /// [`fdct8`] or [`fadst8`]. Used by [`fht8x8`] via the FHT_8 table.
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(not(target_arch = "aarch64"), test, miri))]
 type Fwd1d8 = fn(&[i32; 8], &mut [i32; 8]);
 
 /// 1D 4-point forward DCT. The `tran_high_t` intermediates in the C
@@ -141,7 +141,7 @@ pub fn fadst4(input: &[i32; 4], output: &mut [i32; 4]) {
 /// and final `(x + 1) >> 2` step mirror libvpx `vpx_fdct4x4_c`
 /// (`vpx_dsp/fwd_txfm.c:15-79`). The DC bump (`if i == 0 &&
 /// in_high[0] { ++in_high[0]; }`) is preserved verbatim.
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(not(target_arch = "aarch64"), test, miri))]
 fn fdct4x4_scalar(input: &[i16], output: &mut [i32; 16], stride: usize) {
     debug_assert!(
         input.len() >= 3 * stride + 4,
@@ -230,7 +230,7 @@ pub fn fdct4x4(input: &[i16], output: &mut [i32; 16], stride: usize) {
 /// `(x + 1) >> 2` reduction.
 ///
 /// Mirrors libvpx `vp9_fht4x4_c` (`vp9/encoder/vp9_dct.c:530-555`).
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(not(target_arch = "aarch64"), test, miri))]
 fn fht4x4_scalar(input: &[i16], output: &mut [i32; 16], stride: usize, tx_type: TxType) {
     if matches!(tx_type, TxType::DctDct) {
         fdct4x4_scalar(input, output, stride);
@@ -601,7 +601,7 @@ fn fdct8_inner(
 /// `(x + (x < 0)) >> 1` reduction (= `/ 2` truncation toward zero).
 ///
 /// Mirrors libvpx `vp9_fht8x8_c` (`vp9/encoder/vp9_dct.c:557-582`).
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(not(target_arch = "aarch64"), test, miri))]
 fn fht8x8_scalar(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxType) {
     if matches!(tx_type, TxType::DctDct) {
         fdct8x8_scalar(input, output, stride);
@@ -677,7 +677,7 @@ pub fn fht8x8(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxT
 
 /// Function pointer for a 1D 16-point forward transform — either
 /// [`fdct16`] or [`fadst16`]. Used by [`fht16x16`] via the FHT_16 table.
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(not(target_arch = "aarch64"), test, miri))]
 type Fwd1d16 = fn(&[i32; 16], &mut [i32; 16]);
 
 /// 1D 16-point forward DCT. Computes the 8 even-indexed outputs via a
@@ -1133,7 +1133,7 @@ pub fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
 /// fdct16x16` semantics.
 ///
 /// Mirrors libvpx `vp9_fht16x16_c` (`vp9/encoder/vp9_dct.c:640-665`).
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(not(target_arch = "aarch64"), test, miri))]
 fn fht16x16_scalar(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: TxType) {
     if matches!(tx_type, TxType::DctDct) {
         fdct16x16(input, output, stride);
@@ -1505,7 +1505,7 @@ pub fn fdct32(input: &[i32; 32], output: &mut [i32; 32], round: bool) {
 ///
 /// Note: 32×32 has no `fht32x32` hybrid variant — libvpx never emits
 /// ADST at 32×32 (intra at 32×32 always selects `tx_type=DCT_DCT`).
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(not(target_arch = "aarch64"), test, miri))]
 fn fdct32x32_scalar(input: &[i16], output: &mut [i32; 1024], stride: usize) {
     debug_assert!(
         input.len() >= 31 * stride + 32,
