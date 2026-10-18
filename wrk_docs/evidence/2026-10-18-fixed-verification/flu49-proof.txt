@@ -1,0 +1,141 @@
+Claim accepted before tests: verify-20261018T173758Z-f423a902
+Platform: native macOSarm64 host, x86_64-apple-darwin execution via Rosetta. RUSTFLAGS=-C target-cpu=x86-64 -C overflow-checks=off
+Mutant is a pureOption arithmetic helper only; retained overflow test does notcallSIMD wrappers or access inputmemory. No sentinel necessary. Other fixes32/48/CRU3 untouched.
+PROVENANCE git rev-parse HEAD
+0df37437408ef8ef3fd6f02baa61dc0255e290c8
+EXIT: 0
+PROVENANCE git merge-base --is-ancestor 48b442451cc86416657ac75ca5e63424274e5fb9 HEAD
+EXIT: 0
+INITIAL COMMAND: deltic timeout 300 cargo test -p rvp9-core --target x86_64-apple-darwin --lib --no-run --message-format=json </dev/null
+Raw compilerstdout: .scratch/flu49-initial-build.json
+   Compiling libc v0.2.186
+   Compiling cfg-if v1.0.4
+   Compiling getrandom v0.3.4
+   Compiling zerocopy v0.8.48
+   Compiling rustix v1.1.4
+   Compiling getrandom v0.4.2
+   Compiling autocfg v1.5.0
+   Compiling bitflags v2.11.1
+   Compiling fastrand v2.4.1
+   Compiling crossbeam-utils v0.8.21
+   Compiling once_cell v1.21.4
+   Compiling fnv v1.0.7
+   Compiling quick-error v1.2.3
+   Compiling bit-vec v0.8.0
+   Compiling regex-syntax v0.8.10
+   Compiling unarray v0.1.4
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/crates/rvp9-core)
+   Compiling bit-set v0.8.0
+   Compiling num-traits v0.2.19
+   Compiling crossbeam-channel v0.5.15
+   Compiling errno v0.3.14
+   Compiling wait-timeout v0.2.1
+   Compiling rand_core v0.9.5
+   Compiling rand v0.9.4
+   Compiling rand_xorshift v0.4.0
+   Compiling tempfile v3.27.0
+   Compiling rusty-fork v0.3.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling proptest v1.11.0
+    Finished `test` profile [optimized + debuginfo] target(s) in 2m 12s
+
+EXIT: 0
+INITIAL fdct8x8 regressions architecture COMMAND: file /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/target/x86_64-apple-darwin/debug/deps/rvp9_core-e3c724829356d7da </dev/null
+/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/target/x86_64-apple-darwin/debug/deps/rvp9_core-e3c724829356d7da: Mach-O 64-bit executable x86_64
+
+EXIT: 0
+INITIAL fdct8x8 regressions COMMAND: deltic timeout 180 arch -x86_64 /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/target/x86_64-apple-darwin/debug/deps/rvp9_core-e3c724829356d7da fdct8x8 --nocapture </dev/null
+
+running 8 tests
+test transforms::forward::sse2::tests::fdct8x8_sse2_guard_includes_exact_signed_lane_boundaries ... ok
+test transforms::forward::sse2::tests::fdct8x8_sse2_near_guard_inputs_run_kernel_and_match_scalar ... ok
+test transforms::forward::sse2::tests::fdct8x8_sse2_outside_guard_inputs_fall_back_and_match_scalar ... ok
+test transforms::forward::tests::fdct8x8_input_span_rejects_arithmetic_overflow ... ok
+test transforms::forward::tests::fdct8x8_zero_input_zero_output ... ok
+test transforms::forward::tests::fdct8x8_stride_independence ... ok
+test transforms::forward::tests::fht8x8_dct_dct_matches_fdct8x8 ... ok
+test transforms::forward::sse2::tests::fdct8x8_sse2_matches_scalar_valid_residuals ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2122 filtered out; finished in 0.00s
+
+
+EXIT: 0
+MUTANT COMMAND: deltic timeout 300 cargo test -p rvp9-core --target x86_64-apple-darwin --lib --no-run --message-format=json </dev/null
+Raw compilerstdout: .scratch/flu49-mutant-build.json
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 17.18s
+
+EXIT: 0
+MUTANT pure overflow retainedassertion architecture COMMAND: file /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/target/x86_64-apple-darwin/debug/deps/rvp9_core-e3c724829356d7da </dev/null
+/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/target/x86_64-apple-darwin/debug/deps/rvp9_core-e3c724829356d7da: Mach-O 64-bit executable x86_64
+
+EXIT: 0
+MUTANT pure overflow retainedassertion COMMAND: deltic timeout 180 arch -x86_64 /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/target/x86_64-apple-darwin/debug/deps/rvp9_core-e3c724829356d7da --exact transforms::forward::tests::fdct8x8_input_span_rejects_arithmetic_overflow --nocapture </dev/null
+
+running 1 test
+test transforms::forward::tests::fdct8x8_input_span_rejects_arithmetic_overflow ... FAILED
+
+failures:
+
+failures:
+    transforms::forward::tests::fdct8x8_input_span_rejects_arithmetic_overflow
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2129 filtered out; finished in 0.00s
+
+
+thread 'transforms::forward::tests::fdct8x8_input_span_rejects_arithmetic_overflow' (288841134) panicked at crates/rvp9-core/src/transforms/forward.rs:1602:9:
+assertion `left == right` failed
+  left: Some(6)
+ right: None
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+EXIT: 101
+RESTORED COMMAND: deltic timeout 300 cargo test -p rvp9-core --target x86_64-apple-darwin --lib --no-run --message-format=json </dev/null
+Raw compilerstdout: .scratch/flu49-restored-build.json
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/crates/rvp9-core)
+    Finished `test` profile [optimized + debuginfo] target(s) in 21.78s
+
+EXIT: 0
+RESTORED fdct8x8 regressions architecture COMMAND: file /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/target/x86_64-apple-darwin/debug/deps/rvp9_core-e3c724829356d7da </dev/null
+/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/target/x86_64-apple-darwin/debug/deps/rvp9_core-e3c724829356d7da: Mach-O 64-bit executable x86_64
+
+EXIT: 0
+RESTORED fdct8x8 regressions COMMAND: deltic timeout 180 arch -x86_64 /Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00049-sse2-dct-checked-spans/target/x86_64-apple-darwin/debug/deps/rvp9_core-e3c724829356d7da fdct8x8 --nocapture </dev/null
+
+running 8 tests
+test transforms::forward::sse2::tests::fdct8x8_sse2_near_guard_inputs_run_kernel_and_match_scalar ... ok
+test transforms::forward::sse2::tests::fdct8x8_sse2_outside_guard_inputs_fall_back_and_match_scalar ... ok
+test transforms::forward::tests::fdct8x8_stride_independence ... ok
+test transforms::forward::sse2::tests::fdct8x8_sse2_matches_scalar_valid_residuals ... ok
+test transforms::forward::tests::fdct8x8_zero_input_zero_output ... ok
+test transforms::forward::tests::fdct8x8_input_span_rejects_arithmetic_overflow ... ok
+test transforms::forward::tests::fht8x8_dct_dct_matches_fdct8x8 ... ok
+test transforms::forward::sse2::tests::fdct8x8_sse2_guard_includes_exact_signed_lane_boundaries ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2122 filtered out; finished in 0.00s
+
+
+EXIT: 0
+FINAL CHECK COMMAND: git diff --exit-code -- crates/rvp9-core/src/transforms/forward.rs crates/rvp9-core/src/transforms/forward_sse2.rs </dev/null
+
+EXIT: 0
+FINAL CHECK COMMAND: git status --short </dev/null
+
+EXIT: 0
+FINAL CHECK COMMAND: git hash-object crates/rvp9-core/src/transforms/forward.rs </dev/null
+3b91cb450851ccfc5bc99ea260534b24daca20f6
+
+EXIT: 0
+FINAL CHECK COMMAND: git rev-parse HEAD:crates/rvp9-core/src/transforms/forward.rs </dev/null
+3b91cb450851ccfc5bc99ea260534b24daca20f6
+
+EXIT: 0
+Limits: actual x86_64/SSE2 execution under Rosetta, not native x86hardware or AVX. Checkedwrapperordering reviewed, malformed publicwrappercall not executed; retainedoverflow test executes pure arithmetic and cannot reach SIMDloads. No ledger verdict issued.
+FINAL git hash-object crates/rvp9-core/src/transforms/forward_sse2.rs
+863a80932b340d8c141066fc431c65d38f0f37e4
+EXIT: 0
+FINAL git rev-parse HEAD:crates/rvp9-core/src/transforms/forward_sse2.rs
+863a80932b340d8c141066fc431c65d38f0f37e4
+EXIT: 0
+All completed builds/test commands were within their bounds; no timeout occurred.
