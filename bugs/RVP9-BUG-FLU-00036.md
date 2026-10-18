@@ -6,15 +6,15 @@
 - **Area:** scripts/fetch-corpus
 - **Raised:** 2026-10-15T22:28:12Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261018T202454Z-f3cfdc4b
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00036-run-fix-20261018T202454Z-f3cfdc4b
+- **Owner base:** b78ad7f99d40b635264c00364ecf207e9cc55c65
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-18T20:24:54Z
+- **Owner until:** 2026-10-19T00:24:54Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
