@@ -6,15 +6,15 @@
 - **Area:** io/y4m and ivf public APIs
 - **Raised:** 2026-08-22T14:34:26Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261018T153644Z-0774daf8
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00099-run-verify-20261018T153644Z-0774daf8
+- **Owner base:** 117708bfe0a74a9f402dedb9d3237d6bafd8f0d6
+- **Owner fingerprint:** sha256:f1d5515f7480bd556a052a30f9af46dc6941836faea1d8bbe63b92179d3e4534
+- **Owner since:** 2026-10-18T15:36:44Z
+- **Owner until:** 2026-10-18T19:36:44Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
