@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00053 — Scaled NEON convolution overflows Q4 coordinates before pointer validation
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/dsp convolve8-scaled-neon
 - **Raised:** 2026-10-17T20:46:58Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T214412Z-6817f7b5
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00053-run-verify-20261018T214412Z-6817f7b5
-- **Owner base:** 7cd95d5c8a18250f12974eac27ffba3306b0ff6f
-- **Owner fingerprint:** sha256:3055687d42bbb1082768d6297642758ba1c5e3403e4b41d517e8759738476928
-- **Owner since:** 2026-10-18T21:44:12Z
-- **Owner until:** 2026-10-19T01:44:12Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-17T20:46:58Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:10:54Z, deltic:auto role=fix run=fix-20261018T183319Z-ba7a9bfd branch=task/bug-RVP9-BUG-FLU-00053-run-fix-20261018T183319Z-ba7a9bfd code=2bf1c72d4ecce5606a34da5065481ff3d2f1d879 gate=manual)
+- **State history:** Open (2026-10-17T20:46:58Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:10:54Z, deltic:auto role=fix run=fix-20261018T183319Z-ba7a9bfd branch=task/bug-RVP9-BUG-FLU-00053-run-fix-20261018T183319Z-ba7a9bfd code=2bf1c72d4ecce5606a34da5065481ff3d2f1d879 gate=manual) -> Closed (2026-10-18T21:52:29Z, deltic:manual role=verify run=verify-20261018T214412Z-6817f7b5 verified_fix_run=fix-20261018T183319Z-ba7a9bfd verdict=close)
 
 ## Observation
 
@@ -30,5 +30,9 @@ The safe AArch64 convolve8_scaled_neon dispatch path accepts nonnegative i32 Q4 
 The safe AArch64 wrapper now computes the final horizontal and vertical Q4 coordinates with checked multiplication and addition before deriving the source footprint or entering the raw-pointer passes. Nonnegative steps and validated dimensions mean each checked endpoint bounds all row or column coordinates used by the kernel. Intermediate height is derived from the checked vertical endpoint.
 
 The release regression failed before the fix because the selected vertical overflow case did not panic; unchecked arithmetic wrapped and the undersized fixture passed footprint validation. On the final source, both horizontal and vertical overflow tests pass under the release profile. The complete scaled-NEON test module passed all four tests on arm64, including both scalar-vs-NEON differential tests. No invalid coordinate reached a pointer operation.
+
+### Verification summary (2026-10-18T21:52:29Z, deltic:auto run=verify-20261018T214412Z-6817f7b5 verified_fix_run=fix-20261018T183319Z-ba7a9bfd verdict=close)
+
+Verifier note: Manual verify: Independent native arm64 Rust1.95 release verification: full dsp::aarch64::convolve8_scaled_neon::tests module passes 4 tests (2 endpoint-overflow regressions, 2 scalar differential parity tests). Reversing only checked_last_q4_coordinate to original unchecked endpoint arithmetic selects all four; both overflow tests fail expected-panic assertions and both parity tests pass. Restored exact source; 4/4 pass. Release overflow checks disabled; LTO=false/codegen-units=16 only speed compilation. Reviewed checked nonnegative endpoints bounding kernel coordinates. Used safe validator r...
 
 ## Notes
