@@ -281,6 +281,9 @@ mod rss {
     // forwarded by kernel32.dll on modern Windows but linking against
     // psapi is the documented contract).
     #[link(name = "psapi")]
+    // SAFETY: This matches GetProcessMemoryInfo's documented system-ABI
+    // signature. ProcessMemoryCounters follows PROCESS_MEMORY_COUNTERS with
+    // DWORD fields and pointer-sized SIZE_T fields.
     unsafe extern "system" {
         fn GetProcessMemoryInfo(
             process: *mut core::ffi::c_void,
@@ -290,6 +293,8 @@ mod rss {
     }
 
     #[link(name = "kernel32")]
+    // SAFETY: This matches kernel32's documented system-ABI
+    // `HANDLE GetCurrentProcess()` signature; HANDLE is pointer-sized.
     unsafe extern "system" {
         fn GetCurrentProcess() -> *mut core::ffi::c_void;
     }

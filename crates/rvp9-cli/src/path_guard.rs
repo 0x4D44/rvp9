@@ -183,6 +183,9 @@ fn windows_identity(file: &File) -> io::Result<Identity> {
         file_id: [u8; 16],
     }
     #[link(name = "kernel32")]
+    // SAFETY: These declarations match kernel32's documented system-ABI
+    // signatures. HANDLE is pointer-sized, DWORD is u32, and FileIdInfo uses
+    // the C layout of Windows FILE_ID_INFO.
     unsafe extern "system" {
         fn GetFileType(handle: *mut c_void) -> u32;
         fn GetFileInformationByHandleEx(
