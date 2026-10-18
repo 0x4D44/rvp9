@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00103 — StreamEncoder accepts unsupported speed values
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/config validation
 - **Raised:** 2026-08-22T18:32:50Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T154633Z-8728e103
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00103-run-verify-20261018T154633Z-8728e103
-- **Owner base:** eca70aaea5b14214150bf56613086080bd7011ca
-- **Owner fingerprint:** sha256:2189022885e656f477040f41ccb86b807309d3b132b844965a01108536fe76c9
-- **Owner since:** 2026-10-18T15:46:33Z
-- **Owner until:** 2026-10-18T19:46:33Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T18:32:50Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:18:31Z, deltic:auto role=fix run=fix-20261015T231350Z-4d16639f branch=task/bug-RVP9-BUG-KIL-00103-run-fix-20261015T231350Z-4d16639f code=25ca2643cb0c43003c21a58590e30289168979e9 gate=manual)
+- **State history:** Open (2026-08-22T18:32:50Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:18:31Z, deltic:auto role=fix run=fix-20261015T231350Z-4d16639f branch=task/bug-RVP9-BUG-KIL-00103-run-fix-20261015T231350Z-4d16639f code=25ca2643cb0c43003c21a58590e30289168979e9 gate=manual) -> Closed (2026-10-18T15:51:40Z, deltic:manual role=verify run=verify-20261018T154633Z-8728e103 verified_fix_run=fix-20261015T231350Z-4d16639f verdict=close)
 
 ## Observation
 
@@ -30,6 +30,10 @@ Unsupported values therefore construct successfully. The dispatcher takes `speed
 ## Fix
 
 Validate `-9..=9` before constructing any encoder state and return `InvalidConfig` outside that range. Add boundary regressions for -9, 9, -10, and 10 through the public constructor. Estimated effort: small.
+
+### Verification summary (2026-10-18T15:51:40Z, deltic:auto run=verify-20261018T154633Z-8728e103 verified_fix_run=fix-20261015T231350Z-4d16639f verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer. Fix25ca2643 present. Original public StreamEncoder constructor speed observation: stream_encoder_speed_ selects2 and passes, -9/9 accepted, -10/10/i32 extrema InvalidConfig. Remove only speed guard:2 execute; unsupported-values assertion fails all4 rejections, boundaries pass. Exact bytes restored/source diff empty; restored2 pass, lead binary rerun2 pass. Early guard precedes encoder allocation. Workspace fmt/clippy pass; full workspace test failure/retry recorded without green claim. Full evidence:2026.10.18 verification journal.
 
 ## Notes
 
