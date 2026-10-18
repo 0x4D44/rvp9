@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00033 — encode-headtohead spends 60 seconds sampling load at every clip without a ceiling
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Low
 - **Area:** bench/encode-headtohead
 - **Raised:** 2026-09-23T02:49:38Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T173112Z-8f58d4bd
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00033-run-verify-20261018T173112Z-8f58d4bd
-- **Owner base:** ce8a038f547e98507aa9377c93c87f9eee838fd4
-- **Owner fingerprint:** sha256:33bd3d63232a58d6a6176d40ba0ff388fc518d6bb5ca5e181de1aa9508224bc4
-- **Owner since:** 2026-10-18T17:31:12Z
-- **Owner until:** 2026-10-18T21:31:12Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-09-23T02:49:38Z, raised via `deltic bugs new --land`) -> Fixed (2026-10-16T02:07:48Z, deltic:auto role=fix run=fix-20261016T015734Z-7c798c86 branch=task/bug-RVP9-BUG-FLU-00033-run-fix-20261016T015734Z-7c798c86 code=a436015d8ce317b690531f77dabb10726b529145 gate=manual)
+- **State history:** Open (2026-09-23T02:49:38Z, raised via `deltic bugs new --land`) -> Fixed (2026-10-16T02:07:48Z, deltic:auto role=fix run=fix-20261016T015734Z-7c798c86 branch=task/bug-RVP9-BUG-FLU-00033-run-fix-20261016T015734Z-7c798c86 code=a436015d8ce317b690531f77dabb10726b529145 gate=manual) -> Closed (2026-10-18T17:33:52Z, deltic:manual role=verify run=verify-20261018T173112Z-8f58d4bd verified_fix_run=fix-20261016T015734Z-7c798c86 verdict=close)
 
 ## Observation
 
@@ -31,5 +31,9 @@ Evidence fingerprint: `manual:v1:encode-headtohead-spends-60-seconds-sampling-lo
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T17:33:52Z, deltic:auto run=verify-20261018T173112Z-8f58d4bd verified_fix_run=fix-20261016T015734Z-7c798c86 verdict=close)
+
+Verifier note: Manual verify: Load-mode, script-setting and enforcement tests pass; removing the bounded sampling policy makes the retained enforcement test observe the old 60-second interval instead of one second. Exact source restored and the six load tests pass again. Scope is portable ARM64 tests with injected load observations; Windows live PDH and wall-clock behavior were not run.
 
 ## Notes
