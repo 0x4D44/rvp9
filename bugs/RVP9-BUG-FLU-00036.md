@@ -27,6 +27,12 @@ At candidate 1a84f60a24e8d82e8e6454743fbb80521280df0e on macOS arm64, running `d
 
 ## Fix
 
-<unfixed — raised only>
+Both corpus fetch scripts now map Xiph's current source filename,
+`720p50_parkrun_ter.y4m`, to the existing local name
+`parkrun_ter_720p50.y4m`. The POSIX script's mocked regression run rejected
+the old URL before the change and accepted all four current mappings after
+it; PowerShell `-WhatIf` reports the corrected URL. The HLD source note now
+documents the remote and local names. No replacement clip or quality
+threshold was introduced.
 
 ## Notes
