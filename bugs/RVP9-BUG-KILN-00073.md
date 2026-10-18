@@ -1,25 +1,25 @@
 # RVP9-BUG-KILN-00073 — noise_sensitivity magnitudes all select medium denoising
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/denoiser configuration
 - **Raised:** 2026-08-16T08:19:31Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T175317Z-e1a34adb
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00073-run-verify-20261018T175317Z-e1a34adb
-- **Owner base:** cb5f8c3daa9737e8a4e4835ce2b843f8d712b268
-- **Owner fingerprint:** sha256:f1e66d936a6d5d304a1e061805737492e48416ccf257d95bb8ad78c8b071262f
-- **Owner since:** 2026-10-18T17:53:17Z
-- **Owner until:** 2026-10-18T21:53:17Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-16T08:19:31Z, raised via `deltic bugs new`) → Blocked (2026-10-16, Codex; Arthur decision required on temporal-denoiser contract) → Open (2026-10-17T05:13:55Z, deltic:manual host=flux verdict=reopen) → Fixed (2026-10-17T05:38:09Z, deltic:auto role=fix run=fix-20261017T051408Z-68ec08e1 branch=task/bug-RVP9-BUG-KILN-00073-run-fix-20261017T051408Z-68ec08e1 code=ae19661e3c230b600ad74257f8e3785f195a4ff4 gate=manual)
+- **State history:** Open (2026-08-16T08:19:31Z, raised via `deltic bugs new`) → Blocked (2026-10-16, Codex; Arthur decision required on temporal-denoiser contract) → Open (2026-10-17T05:13:55Z, deltic:manual host=flux verdict=reopen) → Fixed (2026-10-17T05:38:09Z, deltic:auto role=fix run=fix-20261017T051408Z-68ec08e1 branch=task/bug-RVP9-BUG-KILN-00073-run-fix-20261017T051408Z-68ec08e1 code=ae19661e3c230b600ad74257f8e3785f195a4ff4 gate=manual) → Closed (2026-10-18T17:58:08Z, deltic:manual role=verify run=verify-20261018T175317Z-e1a34adb verified_fix_run=fix-20261017T051408Z-68ec08e1 verdict=close)
 
 ## Observation
 
@@ -45,6 +45,10 @@ remains rejected.
 Original proposed remedy, superseded by Arthur's explicit contract decision:
 
 > Validate noise_sensitivity as 0..=6 when StreamEncoder is constructed, map each supported magnitude to the intended DenoiserLevel, and update the level where libvpx does. Add behavior tests that distinguish at least low and high sensitivity and reject 7.
+
+### Verification summary (2026-10-18T17:58:08Z, deltic:auto run=verify-20261018T175317Z-e1a34adb verified_fix_run=fix-20261017T051408Z-68ec08e1 verdict=close)
+
+Verifier note: Manual verify: Fifteen adaptive estimate/filter/lifecycle/range tests plus two enable/disable tests pass; estimate-to-denoiser wiring removal fails the retained real packet lifecycle assertion (Medium instead of LowLow), then restore passes. Approved contract confirmed: 0 off, 1..6 enable, estimates set strength; configured magnitudes are not distinct strengths.
 
 ## Notes
 
