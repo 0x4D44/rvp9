@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00096 — Zero-frame Y4M reads allocate a full source frame
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Medium
 - **Area:** io/y4m reader
 - **Raised:** 2026-08-22T14:33:55Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T154807Z-312588d7
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00096-run-verify-20261018T154807Z-312588d7
-- **Owner base:** e4103f6d53fa7916da003da5cd8fa7292cfeb738
-- **Owner fingerprint:** sha256:d2e6aa6b7b6abb04c68769a3a8e1c38de92a314444b5f7ffeb8e749537108320
-- **Owner since:** 2026-10-18T15:48:07Z
-- **Owner until:** 2026-10-18T19:48:07Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T14:33:55Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T06:51:09Z, deltic:auto role=fix run=fix-20261016T064334Z-c44f9b5a branch=task/bug-RVP9-BUG-KIL-00096-run-fix-20261016T064334Z-c44f9b5a code=ba4383249a2af57dfeabecc4b09e82c53cccfb1f gate=manual)
+- **State history:** Open (2026-08-22T14:33:55Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T06:51:09Z, deltic:auto role=fix run=fix-20261016T064334Z-c44f9b5a branch=task/bug-RVP9-BUG-KIL-00096-run-fix-20261016T064334Z-c44f9b5a code=ba4383249a2af57dfeabecc4b09e82c53cccfb1f gate=manual) -> Closed (2026-10-18T15:51:52Z, deltic:manual role=verify run=verify-20261018T154807Z-312588d7 verified_fix_run=fix-20261016T064334Z-c44f9b5a verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ Y4mReader::open always allocates and zeroes source.frame_bytes at crates/rvp9-io
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T15:51:52Z, deltic:auto run=verify-20261018T154807Z-312588d7 verified_fix_run=fix-20261016T064334Z-c44f9b5a verdict=close)
+
+Verifier note: Manual verify: Independent session01a14fa5, not fixer. Fixba438324 present. Exact y4m_zero_frame_limit_leaves_source_body_unallocated selects1, passes before/after. Original maximum16384x16384 header retains body len/capacity0; header/crop errors and caller buffers preserved. Restore unconditional zeroed_buffer: selected1 assertion fails capacity96!=0 on small full-frame source before maximum allocation. Exact bytes restored/source diff empty; lead inspected raw proof. Workspace fmt/clippy pass; workspace failure/retry and IO doctest artifact failure disclosed in2026.10.18 verification journal...
 
 ## Notes
