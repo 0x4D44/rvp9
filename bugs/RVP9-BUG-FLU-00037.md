@@ -6,15 +6,15 @@
 - **Area:** core/transforms-miri
 - **Raised:** 2026-10-15T22:32:06Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261018T195040Z-e3bd6992
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00037-run-fix-20261018T195040Z-e3bd6992
+- **Owner base:** 74b0f2d2074414ec5b0996875dac764c7478ed56
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-18T19:50:40Z
+- **Owner until:** 2026-10-18T23:50:40Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
