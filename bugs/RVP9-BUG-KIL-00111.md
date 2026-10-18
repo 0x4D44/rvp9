@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00111 — Realtime benchmark runs collide through one default IVF path
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/realtime
 - **Raised:** 2026-08-22T19:31:16Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T162039Z-53141d13
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00111-run-verify-20261018T162039Z-53141d13
-- **Owner base:** 6d4a10437b0c32c8d981d2603cda5a1fbd71b3b9
-- **Owner fingerprint:** sha256:1147996b405d9c49945637531a14e72af1aacb55894f04fc3430302cb0626244
-- **Owner since:** 2026-10-18T16:20:39Z
-- **Owner until:** 2026-10-18T20:20:39Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:31:16Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T04:20:37Z, deltic:auto role=fix run=fix-20261016T040432Z-f59e60cf branch=task/bug-RVP9-BUG-KIL-00111-run-fix-20261016T040432Z-f59e60cf code=07b1a8e5689358e0d095452b6bd71a2726220c0f gate=manual)
+- **State history:** Open (2026-08-22T19:31:16Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T04:20:37Z, deltic:auto role=fix run=fix-20261016T040432Z-f59e60cf branch=task/bug-RVP9-BUG-KIL-00111-run-fix-20261016T040432Z-f59e60cf code=07b1a8e5689358e0d095452b6bd71a2726220c0f gate=manual) -> Closed (2026-10-18T16:27:44Z, deltic:manual role=verify run=verify-20261018T162039Z-53141d13 verified_fix_run=fix-20261016T040432Z-f59e60cf verdict=close)
 
 ## Observation
 
@@ -28,5 +28,9 @@ crates/rvp9-bench/src/bin/realtime.rs:118-120 assigns every invocation the same 
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T16:27:44Z, deltic:auto run=verify-20261018T162039Z-53141d13 verified_fix_run=fix-20261016T040432Z-f59e60cf verdict=close)
+
+Verifier note: Manual verify: Independent: realtime_output regressions 6/6. Parent shared-path mutant caused the concurrent-path, stale-output false-success, and timing-cleanup assertions to fail; restored focused suite rerun 6/6. Exact source restored. Controlled fake encoders/IVFs exercise output ownership, not production timing. Evidence: .scratch/kil111-proof.txt.
 
 ## Notes
