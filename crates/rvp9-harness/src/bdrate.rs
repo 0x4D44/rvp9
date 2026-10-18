@@ -3,14 +3,14 @@
 //!
 //! Implements the standard Bjøntegaard 2001 procedure:
 //!
-//! 1. For each curve, fit a least-squares cubic polynomial
-//!    `ln(bitrate) = a + b*P + c*P^2 + d*P^3` where `P` is PSNR.
+//! 1. For each curve, fit a least-squares cubic polynomial in centered,
+//!    scaled PSNR coordinates `z = (P - center) / scale`.
 //! 2. Identify the overlapping PSNR range
 //!    `[P_lo, P_hi] = [max(min_a, min_b), min(max_a, max_b)]`.
-//! 3. Integrate each cubic over that range in closed form, take the
-//!    difference, divide by the range width to get mean log-bitrate gap.
+//! 3. Compute each cubic's mean over the transformed overlap directly,
+//!    avoiding cancellation from raw PSNR powers and antiderivatives.
 //! 4. Convert to a percentage:
-//!    `BD-rate = (exp(mean_diff) - 1) * 100`.
+//!    `BD-rate = exp_m1(mean_diff) * 100`.
 //!
 //! Sign convention: positive BD-rate means curve B uses MORE bits than
 //! curve A at the same PSNR (curve B is worse). Negative means curve B
@@ -54,8 +54,8 @@ pub const BDRATE_NO_OVERLAP: f64 = f64::NAN;
 /// - The PSNR ranges don't overlap → returns `BDRATE_NO_OVERLAP`.
 /// - Any bitrate sample is non-positive or non-finite → returns NaN
 ///   (the natural log is undefined).
-/// - The normal-equations matrix is numerically singular (e.g. all
-///   PSNRs collinear) → returns NaN.
+/// - Either curve has fewer than four distinct PSNR values, or its cubic
+///   fit is numerically ill-conditioned → returns NaN.
 #[must_use]
 pub fn bdrate(curve_a: &[(f64, f64)], curve_b: &[(f64, f64)]) -> f64 {
     if curve_a.len() < 4 || curve_b.len() < 4 {
@@ -73,10 +73,10 @@ pub fn bdrate(curve_a: &[(f64, f64)], curve_b: &[(f64, f64)]) -> f64 {
     let b_xy: Vec<(f64, f64)> = curve_b.iter().map(|&(br, ps)| (ps, br.ln())).collect();
 
     // Cubic fit for each curve.
-    let Some(coef_a) = polyfit3(&a_xy) else {
+    let Some(fit_a) = polyfit3(&a_xy) else {
         return BDRATE_NO_OVERLAP;
     };
-    let Some(coef_b) = polyfit3(&b_xy) else {
+    let Some(fit_b) = polyfit3(&b_xy) else {
         return BDRATE_NO_OVERLAP;
     };
 
@@ -94,13 +94,18 @@ pub fn bdrate(curve_a: &[(f64, f64)], curve_b: &[(f64, f64)]) -> f64 {
         return BDRATE_NO_OVERLAP;
     }
 
-    // Mean log-bitrate over the overlap for each cubic, then ratio.
-    let mean_a = integrate_cubic(&coef_a, lo, hi) / (hi - lo);
-    let mean_b = integrate_cubic(&coef_b, lo, hi) / (hi - lo);
+    // Mean log-bitrate over the overlap for each normalized cubic, then ratio.
+    let mean_a = mean_cubic(&fit_a, lo, hi);
+    let mean_b = mean_cubic(&fit_b, lo, hi);
     if !mean_a.is_finite() || !mean_b.is_finite() {
         return BDRATE_NO_OVERLAP;
     }
-    ((mean_b - mean_a).exp() - 1.0) * 100.0
+    let result = (mean_b - mean_a).exp_m1() * 100.0;
+    if result.is_finite() {
+        result
+    } else {
+        BDRATE_NO_OVERLAP
+    }
 }
 
 fn curve_samples_are_valid(curve: &[(f64, f64)]) -> bool {
@@ -269,37 +274,88 @@ pub fn psnr_delta_summary(
     })
 }
 
-/// Definite integral of the cubic `c[0] + c[1]*x + c[2]*x^2 + c[3]*x^3`
-/// over `[lo, hi]`, computed in closed form.
-fn integrate_cubic(c: &[f64; 4], lo: f64, hi: f64) -> f64 {
-    let antideriv = |x: f64| -> f64 {
-        let x2 = x * x;
-        let x3 = x2 * x;
-        let x4 = x3 * x;
-        c[0] * x + c[1] * x2 / 2.0 + c[2] * x3 / 3.0 + c[3] * x4 / 4.0
-    };
-    antideriv(hi) - antideriv(lo)
+#[derive(Clone, Copy)]
+struct CubicFit {
+    center: f64,
+    scale: f64,
+    coefficients: [f64; 4],
 }
 
-/// Least-squares cubic fit `y = c0 + c1*x + c2*x^2 + c3*x^3` via the
-/// 4×4 normal equations, solved by Gauss-Jordan with partial pivoting.
+/// Mean of a normalized cubic over the overlap `[lo, hi]` in original
+/// PSNR coordinates. The affine scale cancels when taking the mean, so
+/// this avoids subtracting two large raw-coordinate antiderivatives.
+fn mean_cubic(fit: &CubicFit, lo: f64, hi: f64) -> f64 {
+    let lo = (lo - fit.center) / fit.scale;
+    let hi = (hi - fit.center) / fit.scale;
+    let midpoint = lo + (hi - lo) / 2.0;
+    let half_width = (hi - lo) / 2.0;
+    let midpoint_squared = midpoint * midpoint;
+    let [c0, c1, c2, c3] = fit.coefficients;
+
+    // For z = midpoint + u, with u uniform on [-half_width, half_width],
+    // E[z] = midpoint, E[z^2] = midpoint^2 + half_width^2/3, and
+    // E[z^3] = midpoint^3 + midpoint*half_width^2.
+    c0 + c1 * midpoint
+        + c2 * (midpoint_squared + half_width * half_width / 3.0)
+        + c3 * (midpoint_squared * midpoint + midpoint * half_width * half_width)
+}
+
+/// Least-squares cubic fit in normalized coordinates
+/// `z = (x - center) / scale`, using a 4×4 normal-equations solve.
 ///
-/// Returns `None` if the normal-equations matrix is numerically
-/// singular (e.g. all x values equal, or fewer effective independent
-/// samples than columns).
+/// Scaling x to `[-1, 1]` keeps the Vandermonde matrix well-conditioned
+/// when the PSNR values are narrow or offset. Returns `None` for fewer
+/// than four distinct x values or a numerically ill-conditioned fit.
 ///
 /// The index-based loops are deliberate: the matrix-elimination
 /// invariants are clearer with explicit `m[i][j]` than iterator chains.
 #[allow(clippy::needless_range_loop)]
-fn polyfit3(pts: &[(f64, f64)]) -> Option<[f64; 4]> {
-    // Build the normal-equations augmented matrix [A | b] where
-    //   A[i][j] = sum(x^(i+j)) for i,j in 0..4
-    //   b[i]    = sum(y * x^i)
+fn polyfit3(pts: &[(f64, f64)]) -> Option<CubicFit> {
+    if pts.len() < 4 || pts.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
+        return None;
+    }
+
+    // A cubic needs four distinct PSNR positions. Check this directly,
+    // rather than relying on roundoff in the normal-equations pivots.
+    let mut distinct_x = Vec::with_capacity(4);
+    for &(x, _) in pts {
+        if !distinct_x.contains(&x) {
+            distinct_x.push(x);
+            if distinct_x.len() == 4 {
+                break;
+            }
+        }
+    }
+    if distinct_x.len() < 4 {
+        return None;
+    }
+
+    let min_x = pts
+        .iter()
+        .map(|point| point.0)
+        .fold(f64::INFINITY, f64::min);
+    let max_x = pts
+        .iter()
+        .map(|point| point.0)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let x_range = max_x - min_x;
+    let scale = x_range / 2.0;
+    let center = min_x + scale;
+    if !x_range.is_finite() || !scale.is_finite() || scale <= 0.0 || !center.is_finite() {
+        return None;
+    }
+
+    // Build the normalized normal-equations augmented matrix [A | b]
+    // where A[i][j] = sum(z^(i+j)) and b[i] = sum(y * z^i).
     let mut m = [[0.0f64; 5]; 4];
     for &(x, y) in pts {
+        let z = (x - center) / scale;
+        if !z.is_finite() {
+            return None;
+        }
         let mut xp = [1.0f64; 7];
         for i in 1..7 {
-            xp[i] = xp[i - 1] * x;
+            xp[i] = xp[i - 1] * z;
         }
         for i in 0..4 {
             for j in 0..4 {
@@ -308,6 +364,19 @@ fn polyfit3(pts: &[(f64, f64)]) -> Option<[f64; 4]> {
             m[i][4] += y * xp[i];
         }
     }
+    if m.iter().flatten().any(|value| !value.is_finite()) {
+        return None;
+    }
+    let matrix_scale = m
+        .iter()
+        .take(4)
+        .flat_map(|row| row.iter().take(4))
+        .fold(0.0f64, |largest, value| largest.max(value.abs()));
+    if matrix_scale == 0.0 {
+        return None;
+    }
+    let pivot_tolerance = matrix_scale * 1e-12;
+
     // Gauss-Jordan elimination with partial pivoting.
     for i in 0..4 {
         // Find pivot row.
@@ -319,7 +388,7 @@ fn polyfit3(pts: &[(f64, f64)]) -> Option<[f64; 4]> {
         }
         m.swap(i, max_row);
         let pivot = m[i][i];
-        if pivot.abs() < 1e-12 {
+        if !pivot.is_finite() || pivot.abs() <= pivot_tolerance {
             return None;
         }
         for j in 0..5 {
@@ -334,13 +403,17 @@ fn polyfit3(pts: &[(f64, f64)]) -> Option<[f64; 4]> {
             }
         }
     }
-    let coefs = [m[0][4], m[1][4], m[2][4], m[3][4]];
-    for c in coefs {
-        if !c.is_finite() {
+    let coefficients = [m[0][4], m[1][4], m[2][4], m[3][4]];
+    for coefficient in coefficients {
+        if !coefficient.is_finite() {
             return None;
         }
     }
-    Some(coefs)
+    Some(CubicFit {
+        center,
+        scale,
+        coefficients,
+    })
 }
 
 #[cfg(test)]
@@ -481,19 +554,50 @@ mod tests {
         );
     }
 
-    /// Polyfit3 reproduces the coefficients of a known cubic exactly
-    /// (within float epsilon) when given samples drawn from that cubic.
+    /// Polyfit3 reproduces a known cubic when given samples drawn from it.
     #[test]
     fn polyfit3_recovers_known_cubic() {
         // y = 1 + 2x + 3x^2 + 4x^3
         let f = |x: f64| 1.0 + 2.0 * x + 3.0 * x * x + 4.0 * x * x * x;
         let xs = [0.5, 1.5, 2.5, 3.5, 4.5];
         let pts: Vec<(f64, f64)> = xs.iter().map(|&x| (x, f(x))).collect();
-        let c = polyfit3(&pts).expect("non-singular");
-        assert!((c[0] - 1.0).abs() < 1e-9, "c0={}", c[0]);
-        assert!((c[1] - 2.0).abs() < 1e-9, "c1={}", c[1]);
-        assert!((c[2] - 3.0).abs() < 1e-9, "c2={}", c[2]);
-        assert!((c[3] - 4.0).abs() < 1e-9, "c3={}", c[3]);
+        let fit = polyfit3(&pts).expect("non-singular");
+        for &(x, expected) in &pts {
+            let z = (x - fit.center) / fit.scale;
+            let [c0, c1, c2, c3] = fit.coefficients;
+            let actual = c0 + c1 * z + c2 * z * z + c3 * z * z * z;
+            assert!((actual - expected).abs() < 1e-9, "fit({x})={actual}");
+        }
+    }
+
+    /// Rounded six-point CPU8/S2 1080p30 observations reproduced more
+    /// than a percentage point of error in the raw-PSNR normal equations.
+    /// This reference is a Decimal80 least-squares cubic over the same
+    /// PSNR overlap, expressed as BD-rate percent.
+    #[test]
+    fn bdrate_narrow_realistic_psnr_curves_match_high_precision_reference() {
+        let curve_a = [
+            (1152.068, 25.670945),
+            (1174.084, 25.723668),
+            (1207.220, 25.767877),
+            (1253.696, 25.822174),
+            (1326.328, 25.884390),
+            (1569.352, 26.307338),
+        ];
+        let curve_b = [
+            (1151.356, 25.697093),
+            (1175.428, 25.747508),
+            (1207.796, 25.794290),
+            (1251.228, 25.841255),
+            (1326.504, 25.908804),
+            (1568.004, 26.298732),
+        ];
+        let actual = bdrate(&curve_a, &curve_b);
+        let expected = -1.788_791_640_314_064;
+        assert!(
+            (actual - expected).abs() < 1e-8,
+            "narrow-curve BD-rate should match Decimal80 reference {expected:.12}%, got {actual:.12}%",
+        );
     }
 
     /// `psnr_at_bitrate` reproduces an endpoint exactly.

@@ -404,47 +404,16 @@ fn measured_bitrate_kbps(ivf: &Path, frames: u32) -> Result<f64, String> {
 /// Reference: Bjontegaard, "Calculation of Average PSNR Differences between
 /// RD-curves", ITU-T VCEG Q6/16, Doc. VCEG-M33, 2001.
 fn bd_rate(anchor: &[RdPoint], test: &[RdPoint]) -> Option<f64> {
-    if anchor.len() < 4 || test.len() < 4 {
-        return None;
-    }
-    // Convert bitrate to log-scale for the fit.
-    let to_xy = |p: &RdPoint| (p.psnr_db, p.bitrate_kbps.ln());
-    let anchor_xy: Vec<(f64, f64)> = anchor.iter().map(to_xy).collect();
-    let test_xy: Vec<(f64, f64)> = test.iter().map(to_xy).collect();
-
-    // Cubic least-squares fit of log_bitrate as a function of PSNR.
-    let a = polyfit3(&anchor_xy)?;
-    let b = polyfit3(&test_xy)?;
-
-    // Integration range: the OVERLAP of the two PSNR ranges (Bjontegaard
-    // integrates only over PSNR values where both curves are defined).
-    let anchor_min = anchor_xy.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
-    let anchor_max = anchor_xy
+    let anchor_curve: Vec<(f64, f64)> = anchor
         .iter()
-        .map(|p| p.0)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let test_min = test_xy.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
-    let test_max = test_xy
+        .map(|point| (point.bitrate_kbps, point.psnr_db))
+        .collect();
+    let test_curve: Vec<(f64, f64)> = test
         .iter()
-        .map(|p| p.0)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let range_lo = anchor_min.max(test_min);
-    let range_hi = anchor_max.min(test_max);
-    if range_hi <= range_lo {
-        return None;
-    }
-
-    // Definite integral of a cubic on [lo, hi].
-    let integrate = |c: &[f64; 4]| -> f64 {
-        let f = |x: f64| {
-            c[0] * x + c[1] * x * x / 2.0 + c[2] * x * x * x / 3.0 + c[3] * x * x * x * x / 4.0
-        };
-        f(range_hi) - f(range_lo)
-    };
-    let int_a = integrate(&a);
-    let int_b = integrate(&b);
-    let avg_diff = (int_b - int_a) / (range_hi - range_lo);
-    Some((avg_diff.exp() - 1.0) * 100.0)
+        .map(|point| (point.bitrate_kbps, point.psnr_db))
+        .collect();
+    let result = rvp9_harness::bdrate::bdrate(&anchor_curve, &test_curve);
+    result.is_finite().then_some(result)
 }
 
 fn measured_bd_rate(anchor: &[RdPoint], test: &[RdPoint]) -> Result<f64, &'static str> {
@@ -458,82 +427,6 @@ fn measured_bd_rate(anchor: &[RdPoint], test: &[RdPoint]) -> Result<f64, &'stati
         return Err("BD-rate calculation produced a non-finite result");
     }
     Ok(value)
-}
-
-/// Least-squares cubic fit y = c0 + c1*x + c2*x^2 + c3*x^3.
-/// Uses the normal equations (4x4 system) with Gauss-Jordan elimination.
-///
-/// The index-based loops below are deliberate — the matrix-elimination
-/// invariants are clearer with explicit `m[i][j]` than with iterator chains
-/// over rows. We allow `clippy::needless_range_loop` for that reason.
-#[allow(clippy::needless_range_loop)]
-fn polyfit3(pts: &[(f64, f64)]) -> Option<[f64; 4]> {
-    if pts.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
-        return None;
-    }
-
-    // Exact rank can be obscured by roundoff in the normal equations, so
-    // reject curves that do not provide four distinct PSNR values directly.
-    let mut distinct_x = Vec::with_capacity(4);
-    for &(x, _) in pts {
-        if !distinct_x.contains(&x) {
-            distinct_x.push(x);
-            if distinct_x.len() == 4 {
-                break;
-            }
-        }
-    }
-    if distinct_x.len() < 4 {
-        return None;
-    }
-
-    // Build the normal-equations augmented matrix [A | b] where
-    //   A[i][j] = sum(x^(i+j))
-    //   b[i]    = sum(y * x^i)
-    let mut m = [[0.0f64; 5]; 4];
-    for &(x, y) in pts {
-        let mut xp = [1.0; 7];
-        for i in 1..7 {
-            xp[i] = xp[i - 1] * x;
-        }
-        for i in 0..4 {
-            for j in 0..4 {
-                m[i][j] += xp[i + j];
-            }
-            m[i][4] += y * xp[i];
-        }
-    }
-    // Gauss-Jordan.
-    for i in 0..4 {
-        // Pivot.
-        let mut max = i;
-        for k in (i + 1)..4 {
-            if m[k][i].abs() > m[max][i].abs() {
-                max = k;
-            }
-        }
-        m.swap(i, max);
-        let pivot = m[i][i];
-        if !pivot.is_finite() || pivot.abs() < 1e-12 {
-            return None;
-        }
-        for j in 0..5 {
-            m[i][j] /= pivot;
-        }
-        for k in 0..4 {
-            if k != i {
-                let f = m[k][i];
-                for j in 0..5 {
-                    m[k][j] -= f * m[i][j];
-                }
-            }
-        }
-    }
-    let coefficients = [m[0][4], m[1][4], m[2][4], m[3][4]];
-    coefficients
-        .iter()
-        .all(|coefficient| coefficient.is_finite())
-        .then_some(coefficients)
 }
 
 fn main() -> ExitCode {
@@ -1064,6 +957,68 @@ mod tests {
                 psnr_db,
             })
             .collect()
+    }
+
+    #[test]
+    fn measured_bdrate_matches_high_precision_narrow_psnr_reference() {
+        let anchor = [
+            RdPoint {
+                bitrate_kbps: 1152.068,
+                psnr_db: 25.670945,
+            },
+            RdPoint {
+                bitrate_kbps: 1174.084,
+                psnr_db: 25.723668,
+            },
+            RdPoint {
+                bitrate_kbps: 1207.220,
+                psnr_db: 25.767877,
+            },
+            RdPoint {
+                bitrate_kbps: 1253.696,
+                psnr_db: 25.822174,
+            },
+            RdPoint {
+                bitrate_kbps: 1326.328,
+                psnr_db: 25.884390,
+            },
+            RdPoint {
+                bitrate_kbps: 1569.352,
+                psnr_db: 26.307338,
+            },
+        ];
+        let test = [
+            RdPoint {
+                bitrate_kbps: 1151.356,
+                psnr_db: 25.697093,
+            },
+            RdPoint {
+                bitrate_kbps: 1175.428,
+                psnr_db: 25.747508,
+            },
+            RdPoint {
+                bitrate_kbps: 1207.796,
+                psnr_db: 25.794290,
+            },
+            RdPoint {
+                bitrate_kbps: 1251.228,
+                psnr_db: 25.841255,
+            },
+            RdPoint {
+                bitrate_kbps: 1326.504,
+                psnr_db: 25.908804,
+            },
+            RdPoint {
+                bitrate_kbps: 1568.004,
+                psnr_db: 26.298732,
+            },
+        ];
+        let actual = measured_bd_rate(&anchor, &test).expect("valid curves");
+        let expected = -1.788_791_640_314_064;
+        assert!(
+            (actual - expected).abs() < 1e-8,
+            "narrow-curve BD-rate should match Decimal80 reference {expected:.12}%, got {actual:.12}%",
+        );
     }
 
     #[test]
