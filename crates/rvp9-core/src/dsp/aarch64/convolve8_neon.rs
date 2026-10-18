@@ -622,8 +622,17 @@ fn validate_horiz(
 ) {
     assert!(h > 0);
     assert!(w > 0 && w <= 64);
-    assert!(src.len() >= (h - 1) * src_stride + w + 7);
-    assert!(dst.len() >= (h - 1) * dst_stride + w);
+    let src_required = (h - 1)
+        .checked_mul(src_stride)
+        .and_then(|offset| offset.checked_add(w))
+        .and_then(|extent| extent.checked_add(7))
+        .expect("horizontal source extent overflow");
+    let dst_required = (h - 1)
+        .checked_mul(dst_stride)
+        .and_then(|offset| offset.checked_add(w))
+        .expect("horizontal destination extent overflow");
+    assert!(src.len() >= src_required);
+    assert!(dst.len() >= dst_required);
 }
 
 #[inline]
@@ -919,6 +928,30 @@ mod tests {
         // A width with a scalar tail has enough logical padding for the last
         // wide load and should retain the optimized path.
         assert!(has_horiz_wide_load_footprint(64, 16, 8, 4));
+    }
+
+    #[test]
+    fn horizontal_validation_rejects_overflowing_source_extent() {
+        let result = std::panic::catch_unwind(|| {
+            validate_horiz(&[0; 15], usize::MAX / 2 + 1, &[0; 24], 8, 8, 3);
+        });
+
+        assert!(
+            result.is_err(),
+            "validate_horiz accepted a wrapped source extent"
+        );
+    }
+
+    #[test]
+    fn horizontal_validation_rejects_overflowing_destination_extent() {
+        let result = std::panic::catch_unwind(|| {
+            validate_horiz(&[0; 15], 0, &[0; 8], usize::MAX / 2 + 1, 8, 3);
+        });
+
+        assert!(
+            result.is_err(),
+            "validate_horiz accepted a wrapped destination extent"
+        );
     }
 
     #[test]
