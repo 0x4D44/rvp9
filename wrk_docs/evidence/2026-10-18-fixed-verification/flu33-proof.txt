@@ -1,0 +1,118 @@
+Claim accepted beforetests: verify-20261018T173112Z-8f58d4bd
+Overlap: FLU00031 retry failure distinct, KIL00112 subprocess waits closed; no claim overlap warning.
+PROVENANCE git rev-parse HEAD
+ce8a038f547e98507aa9377c93c87f9eee838fd4
+EXIT: 0
+PROVENANCE git merge-base --is-ancestor a436015d8ce317b690531f77dabb10726b529145 HEAD
+EXIT: 0
+INITIAL retained load mode/script/enforcement tests COMMAND: deltic timeout 300 cargo test -p rvp9-bench --bin encode-headtohead load </dev/null
+   Compiling crossbeam-utils v0.8.21
+   Compiling proc-macro2 v1.0.106
+   Compiling version_check v0.9.5
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-core)
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling libc v0.2.186
+   Compiling zmij v1.0.21
+   Compiling serde_json v1.0.149
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-decoder)
+   Compiling serde v1.0.228
+   Compiling itoa v1.0.18
+   Compiling static_assertions v1.1.0
+   Compiling memchr v2.8.0
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-harness)
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling cpufeatures v0.2.17
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 19s
+     Running unittests src/bin/encode-headtohead.rs (target/debug/deps/encode_headtohead-b83644e19ff564b1)
+
+running 6 tests
+test tests::load_retry_does_not_repeat_a_valid_reading ... ok
+test tests::load_enforcement_uses_metadata_without_weakening_the_guard ... ok
+test tests::load_retry_fails_closed_after_two_failures ... ok
+test tests::load_retry_recovers_after_one_transient_failure ... ok
+test tests::windows_load_modes_use_expected_samples_and_truthful_metric_names ... ok
+test tests::median_geomean_and_load_parsing_are_deterministic ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+
+EXIT: 0
+MUTANT restore guarded fullminute mode without ceiling COMMAND: deltic timeout 300 cargo test -p rvp9-bench --bin encode-headtohead tests::load_enforcement_uses_metadata_without_weakening_the_guard -- --exact </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 13.52s
+     Running unittests src/bin/encode-headtohead.rs (target/debug/deps/encode_headtohead-b83644e19ff564b1)
+
+running 1 test
+test tests::load_enforcement_uses_metadata_without_weakening_the_guard ... FAILED
+
+failures:
+
+---- tests::load_enforcement_uses_metadata_without_weakening_the_guard stdout ----
+
+thread 'tests::load_enforcement_uses_metadata_without_weakening_the_guard' (288647242) panicked at crates/rvp9-bench/src/bin/encode-headtohead.rs:1864:17:
+assertion `left == right` failed
+  left: 60
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::load_enforcement_uses_metadata_without_weakening_the_guard
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --bin encode-headtohead`
+
+EXIT: 101
+RESTORED retained load mode/script/enforcement tests COMMAND: deltic timeout 300 cargo test -p rvp9-bench --bin encode-headtohead load </dev/null
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261018-VER-CDX-verify-flu00033-optional-load-sampling-c/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 12.64s
+     Running unittests src/bin/encode-headtohead.rs (target/debug/deps/encode_headtohead-b83644e19ff564b1)
+
+running 6 tests
+test tests::load_retry_recovers_after_one_transient_failure ... ok
+test tests::load_retry_fails_closed_after_two_failures ... ok
+test tests::load_retry_does_not_repeat_a_valid_reading ... ok
+test tests::windows_load_modes_use_expected_samples_and_truthful_metric_names ... ok
+test tests::load_enforcement_uses_metadata_without_weakening_the_guard ... ok
+test tests::median_geomean_and_load_parsing_are_deterministic ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+
+EXIT: 0
+FINAL git diff --exit-code -- crates/rvp9-bench/src/bin/encode-headtohead.rs
+EXIT: 0
+FINAL git status --short
+EXIT: 0
+FINAL git hash-object crates/rvp9-bench/src/bin/encode-headtohead.rs
+fa3adc27b03bfb96a232e23333496f164ea1fe04
+EXIT: 0
+FINAL git rev-parse HEAD:crates/rvp9-bench/src/bin/encode-headtohead.rs
+fa3adc27b03bfb96a232e23333496f164ea1fe04
+EXIT: 0
+Limits: native macOSarm64. Windows settings/scriptgeneration and injected enforcement execute as portable tests; Windows-only Get-Counter live PDH test not compiled/executed. No claimed Windows wall-clock or full encoding screen. No ledger verdict issued.
