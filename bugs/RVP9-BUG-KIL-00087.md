@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00087 — PSNR delta summary returns non-finite statistics
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** harness/bdrate
 - **Raised:** 2026-08-22T13:20:52Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261018T165858Z-f3876347
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00087-run-verify-20261018T165858Z-f3876347
-- **Owner base:** e3ca07aa934274ab2a10e0621c46c5221ccf5ec4
-- **Owner fingerprint:** sha256:8a6ce181e5c4d814932a3aa3286b48b2fd80f6df55abe1b184e8d22f33c44fea
-- **Owner since:** 2026-10-18T16:58:58Z
-- **Owner until:** 2026-10-18T20:58:58Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T07:59:11Z, deltic:auto role=fix run=fix-20261016T074641Z-b354a429 branch=task/bug-RVP9-BUG-KIL-00087-run-fix-20261016T074641Z-b354a429 code=e61bd7e2be6e2971edf589a932678589ae31ac93 gate=manual)
+- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T07:59:11Z, deltic:auto role=fix run=fix-20261016T074641Z-b354a429 branch=task/bug-RVP9-BUG-KIL-00087-run-fix-20261016T074641Z-b354a429 code=e61bd7e2be6e2971edf589a932678589ae31ac93 gate=manual) -> Closed (2026-10-18T17:03:04Z, deltic:manual role=verify run=verify-20261018T165858Z-f3876347 verified_fix_run=fix-20261016T074641Z-b354a429 verdict=close)
 
 ## Observation
 
@@ -36,6 +36,10 @@ present summary whose statistics cannot be meaningfully compared or reported.
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-18T17:03:04Z, deltic:auto run=verify-20261018T165858Z-f3876347 verified_fix_run=fix-20261016T074641Z-b354a429 verdict=close)
+
+Verifier note: Manual verify: Independent verification on the fixed build: 12 focused interpolation/summary tests passed. Reverting only psnr_delta_summary to its pre-fix implementation left 5 controls passing and failed 3 retained regressions, which observed a NaN partial summary, infinite statistics from finite-input overflow, and an invalid-bitrate partial result. Exact source restored; scoped diff clean. Adjacent cubic BD-rate fitting remains outside this record.
 
 ## Notes
 
