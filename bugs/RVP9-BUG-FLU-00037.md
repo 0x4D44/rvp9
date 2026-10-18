@@ -32,3 +32,14 @@ On 2026-10-18, the exact product source `fb5c0c917038db6c640b3dbc7c2b84b56723333
 <unfixed — raised only>
 
 ## Notes
+
+On 2026-10-17, exact-candidate Miri attempts on Apple Silicon reproduced the
+same compile-time blocker in dependent crates. The locked, offline
+`rvp9-io` parser suite exited 101 while compiling `rvp9-core`; all eight E0425
+missing-scalar-helper diagnostics appeared before the test harness started, so
+no parser or container tests ran. The `rvp9-decoder` `panic_safety` target also
+exited 101 before its four tests ran with the same missing-helper errors. The
+tested product source was `fb5c0c917038db6c640b3dbc7c2b84b567233333`; the
+`rvp9-io` runner checkout's relevant source paths were verified identical to
+that candidate. These attempts reproduce this configuration defect and add no
+parser or decoder runtime-safety result. [IO parser run identity and outcome](../wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-miri-20261017/io-parser-miri-attempt-20261017/qualification.json), [decoder panic-safety run identity and outcome](../wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-miri-decoder-panic-safety-20261017/qualification.json).
