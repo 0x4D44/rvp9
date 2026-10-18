@@ -1,0 +1,3 @@
+Exit code was 0; no crash or sanitizer artifact was found in the explicit scratch artifact directory or crates/rvp9-fuzz/artifacts/fuzz_decode_frame.
+cargo-fuzz printed its automatic repository-relative artifact prefix before the explicit scratch prefix. Both artifact locations were checked after completion and were empty.
+The external seed corpus grew during fuzzing. Generated/reduced corpus files are not committed; seed-input.txt records the single initial official frame packet.

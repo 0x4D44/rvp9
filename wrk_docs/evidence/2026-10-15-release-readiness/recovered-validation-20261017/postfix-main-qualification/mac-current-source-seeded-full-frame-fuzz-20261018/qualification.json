@@ -1,0 +1,32 @@
+{
+  "run_date_utc": "2026-10-18",
+  "exact_start_time_retained": false,
+  "task_worktree_revision": "707f6056350c2a03618158f25c91f2cf4405d7ad",
+  "product_source_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "target": "fuzz_decode_frame",
+  "status": "pass",
+  "exit_code": 0,
+  "requested_duration_seconds": 300,
+  "observed_duration_seconds": 301,
+  "executed_units": 64129,
+  "average_exec_per_second": 213,
+  "new_units_added": 1748,
+  "coverage_counters": 5118,
+  "features": 21578,
+  "retained_corpus_inputs": 1240,
+  "retained_corpus_kib": 3222,
+  "peak_rss_mib": 1051,
+  "seed": {
+    "type": "first raw VP9 keyframe packet from official conformance IVF",
+    "vector": "vp90-2-05-resize.ivf",
+    "vector_sha256": "84a345546e47e37de87d2959347bf731f9f440f9f2ab32bede3f0e416100c585",
+    "bytes": 3964,
+    "sha256": "bbefb3d4fd14137cff82cb1d47e1985064f1ace86a1e67d27be75cad77e46293"
+  },
+  "sanitizer": "cargo-fuzz default AddressSanitizer",
+  "crash_artifacts_found": 0,
+  "windows_qualified": false,
+  "billion_iteration_campaign_complete": false,
+  "project_lockfiles_changed": false,
+  "project_source_changed": false
+}

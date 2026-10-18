@@ -1,0 +1,6 @@
+Official VP9 conformance source vector: tests/conformance/vectors/vp90-2-05-resize.ivf.
+Source directory used: /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/conformance/vectors.
+Vector SHA-256: 84a345546e47e37de87d2959347bf731f9f440f9f2ab32bede3f0e416100c585.
+The IVF header declares 320x240 and its first frame packet is a keyframe. The packet was extracted without modification from the first IVF frame entry (32-byte file header, 12-byte frame record header).
+Extracted raw VP9 keyframe packet: 3,964 bytes, SHA-256 bbefb3d4fd14137cff82cb1d47e1985064f1ace86a1e67d27be75cad77e46293, first eight bytes 824983420015f011.
+The raw packet is not committed as a generated corpus file; it can be recreated from the identified official vector with the recorded extraction offsets and hash.
