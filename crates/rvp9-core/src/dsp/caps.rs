@@ -87,7 +87,7 @@ impl X86Caps {
 /// Drives the forced-scalar leg of the cross-process byte-identity oracle
 /// (HLD-simd-speed §8.2). Only the exact value `"1"` enables it; any other
 /// value (or absence) leaves SIMD detection untouched.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", all(target_arch = "aarch64", not(miri))))]
 fn force_scalar_env() -> bool {
     std::env::var_os("RVP9_FORCE_SCALAR").is_some_and(|v| v == "1")
 }
@@ -108,6 +108,11 @@ pub struct AArch64Caps {
 #[cfg(target_arch = "aarch64")]
 impl AArch64Caps {
     /// Detect the running CPU's aarch64 ISA support.
+    ///
+    /// `RVP9_FORCE_SCALAR=1` leaves the dispatch table's decoder kernels on
+    /// their scalar references. Public decoder IDCT16 wrappers also consult
+    /// these cached capabilities. Explicit ISA entry points and Arm encoder
+    /// kernels that call NEON directly retain their explicit selection behavior.
     pub fn detect() -> Self {
         #[cfg(miri)]
         {
@@ -118,6 +123,9 @@ impl AArch64Caps {
         }
         #[cfg(not(miri))]
         {
+            if force_scalar_env() {
+                return Self::default();
+            }
             Self {
                 neon: std::arch::is_aarch64_feature_detected!("neon"),
                 dotprod: std::arch::is_aarch64_feature_detected!("dotprod"),
@@ -188,7 +196,11 @@ mod tests {
     #[test]
     fn aarch64_neon_always_present() {
         let caps = AArch64Caps::detect();
-        assert!(caps.neon, "aarch64 CPUs always support NEON");
+        if force_scalar_env() {
+            assert_eq!(caps, AArch64Caps::default());
+        } else {
+            assert!(caps.neon, "aarch64 CPUs always support NEON");
+        }
     }
 
     /// Calling detect twice should return the same value (CPU caps don't
@@ -212,9 +224,9 @@ mod tests {
         assert_eq!(format!("{a:?}"), format!("{b:?}"));
     }
 
-    /// Non-x86_64 variant of [`detect_is_stable`]: those targets have no
-    /// `RVP9_FORCE_SCALAR` mask (the env hook is `#[cfg(target_arch =
-    /// "x86_64")]`), so detection is unconditionally deterministic.
+    /// Non-x86_64 variant of [`detect_is_stable`]: capabilities remain stable
+    /// across calls whether native or scalar-masked. This test does not modify
+    /// the environment.
     #[cfg(not(target_arch = "x86_64"))]
     #[test]
     fn detect_is_stable() {

@@ -7,6 +7,31 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use core::arch::aarch64::*;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(test)]
+static IDCT16X16_NEON_ENTRY_COUNTS: [AtomicUsize; 3] = [
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+];
+
+#[cfg(test)]
+pub(super) fn reset_idct16x16_neon_entry_trace() {
+    for count in &IDCT16X16_NEON_ENTRY_COUNTS {
+        count.store(0, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+pub(super) fn idct16x16_neon_entry_trace() -> [usize; 3] {
+    [
+        IDCT16X16_NEON_ENTRY_COUNTS[0].load(Ordering::Relaxed),
+        IDCT16X16_NEON_ENTRY_COUNTS[1].load(Ordering::Relaxed),
+        IDCT16X16_NEON_ENTRY_COUNTS[2].load(Ordering::Relaxed),
+    ]
+}
 
 use crate::transforms::constants::*;
 
@@ -267,6 +292,14 @@ pub(super) fn idct16x16_add(
     assert!(stride >= 16);
     assert!(dest.len() >= stride * 15 + 16);
     assert!(matches!(active_rows, 4 | 8 | 16));
+    #[cfg(test)]
+    IDCT16X16_NEON_ENTRY_COUNTS[match active_rows {
+        4 => 0,
+        8 => 1,
+        16 => 2,
+        _ => unreachable!("active_rows was validated above"),
+    }]
+    .fetch_add(1, Ordering::Relaxed);
     // SAFETY: The bounds above prove every four-pixel destination group.
     // `input` provides all coefficient loads, and NEON is mandatory on
     // AArch64.

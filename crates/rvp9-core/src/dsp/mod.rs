@@ -34,6 +34,8 @@
 //! module: bitstream, entropy, transforms, quant, intra-pred, loopfilter,
 //! frame-buffers).
 
+#[cfg(all(test, target_arch = "aarch64", not(miri)))]
+pub(crate) mod aarch64_force_scalar_tests;
 pub mod accelerated;
 pub mod caps;
 pub mod dispatch;

@@ -27,7 +27,13 @@ At native Apple M5 Max candidate ebca64b0, scripts/qualify-conformance.sh labels
 
 ## Fix
 
-<unfixed — raised only>
+AArch64 capability detection now honors exact `RVP9_FORCE_SCALAR=1`, and all three public IDCT16 wrappers use cached dispatch capabilities instead of entering NEON unconditionally. Their existing scalar helper is compiled in ordinary Arm library builds. Explicit ISA entry points and Arm encoder direct kernels retain their prior scope.
+
+Regression evidence: isolated capability-routing and actual NEON-entry trace parent tests both failed before the fixes, then passed after. The trace covers all three EOB buckets through direct and dispatch-getter calls; each child must execute exactly one selected test. Non-trigger values unset/0/true/01 preserve native capabilities. Existing NEON/scalar IDCT16 parity, normal decoder library check, targeted Clippy, formatting and diff checks passed.
+
+Focused native/forced-scalar decoder smoke at one/two threads selected two official vectors and passed all 20 frames per run, with zero mismatch or skip. This does not retroactively validate prior scalar-labelled runs or claim a fresh full-vector gate.
+
+Evidence: `wrk_journals/2026.10.18 - JRN - RVP9-BUG-FLU-00043 Arm decoder scalar routing.md`. Separate forward-transform Miri issue RVP9-BUG-FLU-00037 remains Open. Incidental native IDCT16 bounds overflow was recorded separately as RVP9-BUG-FLU-00056 without folding its repair into this fix.
 
 ## Notes
 

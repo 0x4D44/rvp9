@@ -565,7 +565,6 @@ pub fn idct16(input: &[i32; 16], output: &mut [i32; 16]) {
 /// `dest` and saturated to `[0, 255]`. The column-pass uses
 /// `ROUND_POWER_OF_TWO(_, 6)` per `vpx_idct16x16_256_add_c`
 /// (`vpx_dsp/inv_txfm.c:722-745`).
-#[cfg(any(not(target_arch = "aarch64"), test))]
 fn idct16x16_add_scalar(input: &[i32; 256], dest: &mut [u8], stride: usize, active_rows: usize) {
     debug_assert!(
         dest.len() >= stride * 15 + 16,
@@ -598,18 +597,28 @@ fn idct16x16_add_scalar(input: &[i32; 256], dest: &mut [u8], stride: usize, acti
     }
 }
 
+#[cfg(all(test, target_arch = "aarch64", not(miri)))]
+pub(crate) fn reset_idct16x16_neon_entry_trace() {
+    neon::reset_idct16x16_neon_entry_trace();
+}
+
+#[cfg(all(test, target_arch = "aarch64", not(miri)))]
+pub(crate) fn idct16x16_neon_entry_trace() -> [usize; 3] {
+    neon::idct16x16_neon_entry_trace()
+}
+
 /// Dispatch the full inverse 16×16 DCT to the exact AArch64 vector
 /// kernel when available, retaining [`idct16x16_add_scalar`] as the
 /// portable oracle.
 pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
     #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
-        neon::idct16x16_add(input, dest, stride, 16);
+        if crate::dsp::get_ref().caps.neon {
+            neon::idct16x16_add(input, dest, stride, 16);
+            return;
+        }
     }
-    #[cfg(any(not(target_arch = "aarch64"), miri))]
-    {
-        idct16x16_add_scalar(input, dest, stride, 16);
-    }
+    idct16x16_add_scalar(input, dest, stride, 16);
 }
 
 /// 2D 10-coefficient inverse 16×16 DCT — sparse-block fast path.
@@ -630,12 +639,12 @@ pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
 pub fn idct16x16_10_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
     #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
-        neon::idct16x16_add(input, dest, stride, 4);
+        if crate::dsp::get_ref().caps.neon {
+            neon::idct16x16_add(input, dest, stride, 4);
+            return;
+        }
     }
-    #[cfg(any(not(target_arch = "aarch64"), miri))]
-    {
-        idct16x16_add_scalar(input, dest, stride, 4);
-    }
+    idct16x16_add_scalar(input, dest, stride, 4);
 }
 
 /// 2D 38-coefficient inverse 16×16 DCT — sparse-block fast path.
@@ -654,12 +663,12 @@ pub fn idct16x16_10_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
 pub fn idct16x16_38_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
     #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
-        neon::idct16x16_add(input, dest, stride, 8);
+        if crate::dsp::get_ref().caps.neon {
+            neon::idct16x16_add(input, dest, stride, 8);
+            return;
+        }
     }
-    #[cfg(any(not(target_arch = "aarch64"), miri))]
-    {
-        idct16x16_add_scalar(input, dest, stride, 8);
-    }
+    idct16x16_add_scalar(input, dest, stride, 8);
 }
 
 /// 2D 1-coefficient inverse 16×16 DCT (DC-only fast path).
