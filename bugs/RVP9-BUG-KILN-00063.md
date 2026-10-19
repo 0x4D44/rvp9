@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00063 — Vector- and corpus-dependent tests still report green having asserted nothing
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** tests/false-green
 - **Raised:** 2026-07-31T10:21:56Z
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T162645Z-76d5d0c7
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00063-run-verify-20261019T162645Z-76d5d0c7
-- **Owner base:** 8a6160ab2ab62ba9759a8a5bdf45a8e6062960f3
-- **Owner fingerprint:** sha256:911624f852e880f7bbde528886672d2de7580617a5456d6afe145c805484bd37
-- **Owner since:** 2026-10-19T16:26:45Z
-- **Owner until:** 2026-10-19T20:26:45Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:21:56Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-08-12T14:48:53Z, deltic:auto role=fix run=fix-20260812T144418Z-p60165-n787396000-c1 branch=task/bug-RVP9-BUG-KILN-00063-run-fix-20260812T144418Z-p60165-n787396000-c1 code=cb9b5f64 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260812T144418Z-p60165-n787396000-c1 branch=task/bug-RVP9-BUG-KILN-00063-run-fix-20260812T144418Z-p60165-n787396000-c1 code=b18266bcbb3cec312da313eefb0d9fb286112445 gate=manual provenance-only=true reconciled-by=Codex)
+- **State history:** Open (2026-07-31T10:21:56Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-08-12T14:48:53Z, deltic:auto role=fix run=fix-20260812T144418Z-p60165-n787396000-c1 branch=task/bug-RVP9-BUG-KILN-00063-run-fix-20260812T144418Z-p60165-n787396000-c1 code=cb9b5f64 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260812T144418Z-p60165-n787396000-c1 branch=task/bug-RVP9-BUG-KILN-00063-run-fix-20260812T144418Z-p60165-n787396000-c1 code=b18266bcbb3cec312da313eefb0d9fb286112445 gate=manual provenance-only=true reconciled-by=Codex) -> Closed (2026-10-19T16:40:34Z, deltic:manual role=verify run=verify-20261019T162645Z-76d5d0c7 verified_fix_run=fix-20260812T144418Z-p60165-n787396000-c1 verdict=close)
 
 ## Observation
 
@@ -47,5 +47,9 @@ Historical Fixed ledger commit `ce87e15a53a39694ebc64cb6873f68a1307f3f68` has th
 Adds core build.rs fixture detection; replaces silent NotFound returns in captured_header_round_trip and write_compressed_header_captured_frame_round_trip with visible cfg_attr ignores plus hard read failures; conformance_runner_walks_all_vectors receives same visible-ignore contract; real_world_corpus_decodes_bit_exact replaces empty-fixture success with assert.
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T16:40:34Z, deltic:auto run=verify-20261019T162645Z-76d5d0c7 verified_fix_run=fix-20260812T144418Z-p60165-n787396000-c1 verdict=close)
+
+Verifier note: Manual verify: Verified fix b18266bc on origin/main. With 307 fetched vector/MD5 pairs checksum-verified: core captured tests 2/2; conformance 4,816 frames, 0 mismatches/skips; real-world 2 clips, 42 visible MD5 matches, 0 mismatches (one hidden). Without inputs, fixed core (2) and conformance tests report ignored; real_world fails at its no-fixtures assertion. A 3-case verifier on pre-fix 3511f69 failed each contract assertion because selected old tests passed green without data; same verifier passed 3/3 on fixed tree. Fixtures restored; scratch removed.
 
 ## Notes
