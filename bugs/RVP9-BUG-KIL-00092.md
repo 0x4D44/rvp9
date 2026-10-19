@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00092 — Additional vector-dependent tests report green without fixtures
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** tests/false-green
 - **Raised:** 2026-08-22T13:20:54Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T110633Z-085c0d6d
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00092-run-verify-20261019T110633Z-085c0d6d
-- **Owner base:** 1154689959219ae4b2bee412e4ce4b18a7a8fcf5
-- **Owner fingerprint:** sha256:0220974184225dd1dd315bc6d791fd516fad15e60ca0f67e2ec306ae06304503
-- **Owner since:** 2026-10-19T11:06:33Z
-- **Owner until:** 2026-10-19T15:06:33Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:54Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:33:14Z, deltic:auto role=fix run=fix-20260822T133005Z-22df6bc2 branch=task/bug-RVP9-BUG-KIL-00092-run-fix-20260822T133005Z-22df6bc2 code=e9f7adf9 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T133005Z-22df6bc2 branch=task/bug-RVP9-BUG-KIL-00092-run-fix-20260822T133005Z-22df6bc2 code=745a0814fd3184b1282480003d348718f3cc127e gate=manual provenance-only=true reconciled-by=Codex)
+- **State history:** Open (2026-08-22T13:20:54Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:33:14Z, deltic:auto role=fix run=fix-20260822T133005Z-22df6bc2 branch=task/bug-RVP9-BUG-KIL-00092-run-fix-20260822T133005Z-22df6bc2 code=e9f7adf9 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T133005Z-22df6bc2 branch=task/bug-RVP9-BUG-KIL-00092-run-fix-20260822T133005Z-22df6bc2 code=745a0814fd3184b1282480003d348718f3cc127e gate=manual provenance-only=true reconciled-by=Codex) -> Closed (2026-10-19T11:08:34Z, deltic:manual role=verify run=verify-20261019T110633Z-085c0d6d verified_fix_run=fix-20260822T133005Z-22df6bc2 verdict=close)
 
 ## Observation
 
@@ -48,6 +48,10 @@ Historical Fixed ledger commit `554d598263f9f36fbb2eecfcf40bf0cfe4793602` has th
 Adds rvp9_conformance_vectors cfg_attr visible ignores to all six tests across buffer_pool_recycle, intra_only, lossless, multi_tile; removes exact missing-file early returns, leaving required vector/sidecar expect reads.
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T11:08:34Z, deltic:auto run=verify-20261019T110633Z-085c0d6d verified_fix_run=fix-20260822T133005Z-22df6bc2 verdict=close)
+
+Verifier note: Manual verify: Verified against ancestor fix 745a0814fd3184b1282480003d348718f3cc127e on origin/main. The corpus build script only enables vector tests for .ivf/.webm files; this worktree has only incomplete .part files. All six affected tests across four integration binaries were visibly ignored. Fails-before: restoring the old missing-file early return and removing the ignore attribute for vp90_2_08_tile_1x2_decodes_after_e2 made the selected test print “skip” and report 1 passed without reaching decode assertions. Restoring the fix returned all six tests to visible ignored status. With vect...
 
 ## Notes
 
