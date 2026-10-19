@@ -6,15 +6,15 @@
 - **Area:** tests/false-green
 - **Raised:** 2026-08-22T13:20:54Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T070652Z-ca8b312c
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00092-run-verify-20261019T070652Z-ca8b312c
-- **Owner base:** 385045a243dcffa83df9d2931dda76c05ab4b206
-- **Owner fingerprint:** sha256:c379c7dc3bcdea1ffaf881e104e93cf23139d1d565351e05b100c0c3a63ad34e
-- **Owner since:** 2026-10-19T07:06:52Z
-- **Owner until:** 2026-10-19T11:06:52Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
