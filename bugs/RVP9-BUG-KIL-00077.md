@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00077 — Mode-decision 16x16 and 32x32 IDCT bypass SIMD dispatch
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/mode-decision transforms
 - **Raised:** 2026-08-22T08:56:35Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T070249Z-6db58ac6
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00077-run-verify-20261019T070249Z-6db58ac6
-- **Owner base:** 754088c5a2d900770552051fbbbf4ee3b09e1d18
-- **Owner fingerprint:** sha256:bfdf8b144151c188723b8714a1e40133e099f72a2b71e5acddb8ac5ebf2a63ff
-- **Owner since:** 2026-10-19T07:02:49Z
-- **Owner until:** 2026-10-19T11:02:49Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T08:56:35Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:20:45Z, deltic:auto role=fix run=fix-20260822T131414Z-6ea9886c branch=task/bug-RVP9-BUG-KIL-00077-run-fix-20260822T131414Z-6ea9886c code=daae16aa gate=manual)
+- **State history:** Open (2026-08-22T08:56:35Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:20:45Z, deltic:auto role=fix run=fix-20260822T131414Z-6ea9886c branch=task/bug-RVP9-BUG-KIL-00077-run-fix-20260822T131414Z-6ea9886c code=daae16aa gate=manual) -> Closed (2026-10-19T07:07:10Z, deltic:manual role=verify run=verify-20261019T070249Z-6db58ac6 verified_fix_run=fix-20260822T131414Z-6ea9886c verdict=close)
 
 ## Observation
 
@@ -38,5 +38,9 @@ Confirmed independently by the performance reviewer, the lead's source trace, an
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-19T07:07:10Z, deltic:auto run=verify-20261019T070249Z-6db58ac6 verified_fix_run=fix-20260822T131414Z-6ea9886c verdict=close)
+
+Verifier note: Manual verify: On origin/main, commit 4d7305951d0a44bdce9550a7eef049542f1ba834 is the landed IDCT dispatch fix and is an ancestor of trunk; reconstruct_via_round_trip routes Tx8x8, Tx16x16, and Tx32x32 through RoundTripIdctDispatch populated from the runtime DSP table. The recorded fix hash daae16aa does not resolve in this checkout; the matching landed change is 4d730595. Focused cargo test -p rvp9-core round_trip_idct_dispatch_routes_each_realtime_tx_size passed (1 selected). Reversing Tx16x16 to scalar made its assertion fail (left 8, expected 16); reversing Tx32x32 to scalar failed (left 1...
 
 ## Notes
