@@ -6,15 +6,15 @@
 - **Area:** encoder/AQ tests
 - **Raised:** 2026-08-09T20:10:46Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T063420Z-3fcbfdae
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00012-run-verify-20261019T063420Z-3fcbfdae
+- **Owner base:** 22be9c944a95a4354b5c2d5307560a73449377c7
+- **Owner fingerprint:** sha256:a2a8f143e99524e0230f76437b2480f451afa9173f1aa1396a3d043b5114930f
+- **Owner since:** 2026-10-19T06:34:20Z
+- **Owner until:** 2026-10-19T10:34:20Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
