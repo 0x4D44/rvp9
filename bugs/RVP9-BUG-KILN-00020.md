@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00020 - Public AVX2 predictor wrapper exposes unsafe CPU and slice preconditions
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/dsp x86_64 SIMD API
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T161832Z-d3f9e156
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00020-run-verify-20261019T161832Z-d3f9e156
-- **Owner base:** c07594271149949874a279cca31b6a6a514f9afb
-- **Owner fingerprint:** sha256:dab22f3d62cfa1178e06bf1b8c0b31ce4da14860a6ddccee9737957395a6c352
-- **Owner since:** 2026-10-19T16:18:32Z
-- **Owner until:** 2026-10-19T20:18:32Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T171112Z-p5310-n568069000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260730T171112Z-p5310-n568069000-c1 code=ce657a77ef476ba946f167a581c7f111e5bdb97d gate=manual) -> Open (2026-07-31, reopened by independent two-eyes verify pass on `4abe0d8`: the fix regresses the encoder's 64x64 intra fallback) -> Fixed (2026-08-12T14:43:28Z, deltic:auto role=fix run=fix-20260812T143904Z-p46812-n519221000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260812T143904Z-p46812-n519221000-c1 code=5d694b76 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260812T143904Z-p46812-n519221000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260812T143904Z-p46812-n519221000-c1 code=5456910982231296dcc6c7d3cf923f377eb130d8 gate=manual provenance-only=true reconciled-by=Codex)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T171112Z-p5310-n568069000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260730T171112Z-p5310-n568069000-c1 code=ce657a77ef476ba946f167a581c7f111e5bdb97d gate=manual) -> Open (2026-07-31, reopened by independent two-eyes verify pass on `4abe0d8`: the fix regresses the encoder's 64x64 intra fallback) -> Fixed (2026-08-12T14:43:28Z, deltic:auto role=fix run=fix-20260812T143904Z-p46812-n519221000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260812T143904Z-p46812-n519221000-c1 code=5d694b76 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260812T143904Z-p46812-n519221000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260812T143904Z-p46812-n519221000-c1 code=5456910982231296dcc6c7d3cf923f377eb130d8 gate=manual provenance-only=true reconciled-by=Codex) -> Closed (2026-10-19T16:25:43Z, deltic:manual role=verify run=verify-20261019T161832Z-d3f9e156 verified_fix_run=fix-20260812T143904Z-p46812-n519221000-c1 verdict=close)
 
 ## Observation
 
@@ -52,6 +52,10 @@ Historical Fixed ledger commit `57e5445aed27a1f9005f9ee6125743892cd3e46a` has th
 Original reopened defect was strict size validator rejecting64; candidate introduces separately checked storage helper and64 scalar fallback, preserving CPU guard. Same-commit release journal UnitA4 explicitly names bug and change.
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T16:25:43Z, deltic:auto run=verify-20261019T161832Z-d3f9e156 verified_fix_run=fix-20260812T143904Z-p46812-n519221000-c1 verdict=close)
+
+Verifier note: Manual verify: At origin/main fix 5456910, the x86_64-targeted public_wrapper_rejects_invalid_geometry passed under Rosetta (1/1); intra_predictor_layout passed 2/2; predictor_storage_accepts_checked_scalar_fallback_size passed 1/1. Fails-before: removing the wrapper storage and CPU guards made the same selected regression fail at inner debug_assert_eq!(bs, 64), reached with bs=3 (0 passed/1 failed). Restored source diff is empty. This ARM host does not expose AVX2, so no SIMD execution is claimed.
 
 ## Notes
 
