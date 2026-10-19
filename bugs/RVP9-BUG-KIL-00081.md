@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00081 — TileMiView geometry can drive safe methods out of bounds
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** decoder/tile context API
 - **Raised:** 2026-08-22T10:24:23Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T110150Z-0ab7339f
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00081-run-verify-20261019T110150Z-0ab7339f
-- **Owner base:** 158291a8f5cf241d9103c58ff82b7f5ef3eef2d0
-- **Owner fingerprint:** sha256:1757d78dde6cc25bb9ead81262b99403c26093e18d46f0cb6fa906c3f1c1ee2e
-- **Owner since:** 2026-10-19T11:01:50Z
-- **Owner until:** 2026-10-19T15:01:50Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T10:24:23Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-08-22T12:44:28Z, deltic:auto role=fix run=fix-20260822T123644Z-5dab34f7 branch=task/bug-RVP9-BUG-KIL-00081-run-fix-20260822T123644Z-5dab34f7 code=f91347d9 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T123644Z-5dab34f7 branch=task/bug-RVP9-BUG-KIL-00081-run-fix-20260822T123644Z-5dab34f7 code=02da2aa93ce5467cf7ab9df464799f4c0acf1dfa gate=manual provenance-only=true reconciled-by=Codex)
+- **State history:** Open (2026-08-22T10:24:23Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-08-22T12:44:28Z, deltic:auto role=fix run=fix-20260822T123644Z-5dab34f7 branch=task/bug-RVP9-BUG-KIL-00081-run-fix-20260822T123644Z-5dab34f7 code=f91347d9 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T123644Z-5dab34f7 branch=task/bug-RVP9-BUG-KIL-00081-run-fix-20260822T123644Z-5dab34f7 code=02da2aa93ce5467cf7ab9df464799f4c0acf1dfa gate=manual provenance-only=true reconciled-by=Codex) -> Closed (2026-10-19T11:03:51Z, deltic:manual role=verify run=verify-20261019T110150Z-0ab7339f verified_fix_run=fix-20260822T123644Z-5dab34f7 verdict=close)
 
 ## Observation
 
@@ -41,6 +41,10 @@ Historical Fixed ledger commit `d957d20cbf1f375654e64ad723cdf3c948bae52e` has th
 TileMiView::new adds nonzero stride, whole-row, ordered and in-grid bounds assertions; new_with_view validates view/dimension/offset equality; mi_at uses checked indices and release bounds checks; write_block rejects out-of-tile starts and checks slice ranges; adds all three named geometry regressions.
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T11:03:51Z, deltic:auto run=verify-20261019T110150Z-0ab7339f verified_fix_run=fix-20260822T123644Z-5dab34f7 verdict=close)
+
+Verifier note: Manual verify: Verified against ancestor fix 02da2aa93ce5467cf7ab9df464799f4c0acf1dfa on origin/main. TileMiView validates stride and backing-grid bounds; new_with_view requires dimensions and offsets to match; mi_at and write_block use checked, in-view ranges before raw-pointer access. The five frame_view_ regressions passed normally and under cargo +nightly miri test on aarch64-apple-darwin. Fails-before: removing the safe new_with_view column-offset assertion made frame_view_rejects_mismatched_safe_context_geometry fail at “mismatched safe geometry was accepted”; that mutant performs no poi...
 
 ## Notes
 
