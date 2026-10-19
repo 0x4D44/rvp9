@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00005 — One-tile multithreaded encodes panic without loop-filter worker
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** encoder/loop-filter overlap
 - **Raised:** 2026-08-07T10:54:24Z
 - **Discovery source:** Automation
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T113534Z-051e1b9f
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00005-run-verify-20261019T113534Z-051e1b9f
-- **Owner base:** e4b20dee20ab787178b65c15290b1826832f49b9
-- **Owner fingerprint:** sha256:d4dc4c46d80ce09f1ae146e5939348667bb9dc8e63d9a35062951cc6abe87b80
-- **Owner since:** 2026-10-19T11:35:34Z
-- **Owner until:** 2026-10-19T15:35:34Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-07T10:54:24Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `92c340999cf6c71a840445d7908edc856dccf40c`, fixed by Codex) -> Fixed (2026-10-19, provenance reconciliation by Codex only; original fixing attribution retained above; code=4acf9399a2cd57c080b7b0fff0e2016660fa596f)
+- **State history:** Open (2026-08-07T10:54:24Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `92c340999cf6c71a840445d7908edc856dccf40c`, fixed by Codex) -> Fixed (2026-10-19, provenance reconciliation by Codex only; original fixing attribution retained above; code=4acf9399a2cd57c080b7b0fff0e2016660fa596f) → Closed (2026-10-19T11:39:27Z, deltic:manual role=verify run=verify-20261019T113534Z-051e1b9f verified_fix_run=manual:4acf9399a2cd57c080b7b0fff0e2016660fa596f verdict=close)
 
 ## Observation
 
@@ -50,5 +50,9 @@ Historical Fixed ledger commit `a7f17f4fde443f124cef41c98956f71e3f412cd5` has th
 Exact original observation: configured max_threads>1 with no LF worker; candidate replaces max_threads predicate with actual worker ownership and adds ownership regression.
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T11:39:27Z, deltic:auto run=verify-20261019T113534Z-051e1b9f verified_fix_run=manual:4acf9399a2cd57c080b7b0fff0e2016660fa596f verdict=close)
+
+Verifier note: Manual verify: Independent verification on macOS: the one-tile CLI regression enc_y4m_input_encodes_successfully and encoder predicate regression overlap_requires_a_constructed_worker both passed. Fails-before: removed the lf_worker_available condition from should_overlap_lf_and_packet; the selected ownership regression failed at assert!(!should_overlap_lf_and_packet(16, false, true)) because overlap was enabled without a worker. Restored the predicate, confirmed frame_loop.rs had no diff, and reran both tests green. The production call now gates overlap on self.lf_worker_pool.is_some(); the r...
 
 ## Notes
