@@ -6,15 +6,15 @@
 - **Area:** tests/encoder GOP topology
 - **Raised:** 2026-08-07T11:00:30Z
 - **Discovery source:** Automation
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T114424Z-42a99472
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00007-run-verify-20261019T114424Z-42a99472
+- **Owner base:** 94c6c5355261c4739401dd428a0b931f05f7f283
+- **Owner fingerprint:** sha256:142738b6aa5a3855fca2ac69d83d911153b3eef4270265fcb0ad378182ebf8f9
+- **Owner since:** 2026-10-19T11:44:24Z
+- **Owner until:** 2026-10-19T15:44:24Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
