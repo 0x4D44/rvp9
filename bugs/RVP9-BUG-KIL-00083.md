@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00083 — Panic-safety inter recovery test accepts decode failure
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** decoder/panic-safety tests
 - **Raised:** 2026-08-22T10:24:37Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T110415Z-0a4d6703
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00083-run-verify-20261019T110415Z-0a4d6703
-- **Owner base:** 206268f1bbb990f59b137d195a0c42429d93568f
-- **Owner fingerprint:** sha256:a5744ec2cfcf197f2e9861fd44feeb1377c70d522f17290a41b03dacfa6adb25
-- **Owner since:** 2026-10-19T11:04:15Z
-- **Owner until:** 2026-10-19T15:04:15Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T10:24:37Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-08-22T13:13:44Z, deltic:auto role=fix run=fix-20260822T131153Z-3ad51f2d branch=task/bug-RVP9-BUG-KIL-00083-run-fix-20260822T131153Z-3ad51f2d code=267e292b gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T131153Z-3ad51f2d branch=task/bug-RVP9-BUG-KIL-00083-run-fix-20260822T131153Z-3ad51f2d code=f274787175bf93421861efe348861a3646659cec gate=manual provenance-only=true reconciled-by=Codex)
+- **State history:** Open (2026-08-22T10:24:37Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-08-22T13:13:44Z, deltic:auto role=fix run=fix-20260822T131153Z-3ad51f2d branch=task/bug-RVP9-BUG-KIL-00083-run-fix-20260822T131153Z-3ad51f2d code=267e292b gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T131153Z-3ad51f2d branch=task/bug-RVP9-BUG-KIL-00083-run-fix-20260822T131153Z-3ad51f2d code=f274787175bf93421861efe348861a3646659cec gate=manual provenance-only=true reconciled-by=Codex) -> Closed (2026-10-19T11:06:06Z, deltic:manual role=verify run=verify-20261019T110415Z-0a4d6703 verified_fix_run=fix-20260822T131153Z-3ad51f2d verdict=close)
 
 ## Observation
 
@@ -41,6 +41,10 @@ Historical Fixed ledger commit `3fc008f7946da9f0dc3335c6d086962fbfbefcd4` has th
 mid_tile_failure_then_valid_inter_decodes replaces permissive Err(_) match arm with decode_frame(...).expect("valid inter after a failed inter decodes") and width/height assertions.
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T11:06:06Z, deltic:auto run=verify-20261019T110415Z-0a4d6703 verified_fix_run=fix-20260822T131153Z-3ad51f2d verdict=close)
+
+Verifier note: Manual verify: Verified against ancestor fix f274787175bf93421861efe348861a3646659cec on origin/main. The recovery test now requires decode_frame to return a frame and checks 64x64 output; the public Decoder documentation promises valid inter recovery after the mid-tile error. Focused panic_safety test passed. Fails-before: temporarily truncating the recovery inter by 16 bytes made the selected test fail at the expect with TruncatedCompressedHeader { declared: 18, available: 6 }, a non-EmptyInterRef error the former catch-all accepted. Restoring the original recovery frame passed again. The te...
 
 ## Notes
 
