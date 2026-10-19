@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00046 — AArch64 convolution stride validation wraps before raw-pointer reads
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/dsp/convolve8-neon
 - **Raised:** 2026-10-17T09:23:28Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261019T052553Z-14eed6f1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00046-run-fix-20261019T052553Z-14eed6f1
-- **Owner base:** 98b114dee4df19833a3d1b1f6915ac3e68ca956d
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-19T05:25:53Z
-- **Owner until:** 2026-10-19T09:25:53Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=1, indeterminate=0
-- **State history:** Open (2026-10-17T09:23:28Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:46:28Z, deltic:auto role=fix run=fix-20261018T193520Z-291db43a branch=task/bug-RVP9-BUG-FLU-00046-run-fix-20261018T193520Z-291db43a code=b91d8917aa172d52a52dd4052ac668761a9f7098 gate=manual) -> Open (2026-10-18T21:50:39Z, deltic:manual role=verify run=verify-20261018T214336Z-b2440949 verified_fix_run=fix-20261018T193520Z-291db43a verdict=doubt reason=independent-review-finds-recorded-residual-remains-notes-explicitly-include-sibl)
+- **State history:** Open (2026-10-17T09:23:28Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:46:28Z, deltic:auto role=fix run=fix-20261018T193520Z-291db43a branch=task/bug-RVP9-BUG-FLU-00046-run-fix-20261018T193520Z-291db43a code=b91d8917aa172d52a52dd4052ac668761a9f7098 gate=manual) -> Open (2026-10-18T21:50:39Z, deltic:manual role=verify run=verify-20261018T214336Z-b2440949 verified_fix_run=fix-20261018T193520Z-291db43a verdict=doubt reason=independent-review-finds-recorded-residual-remains-notes-explicitly-include-sibl) -> Fixed (2026-10-19T05:49:21Z, deltic:auto role=fix run=fix-20261019T052553Z-14eed6f1 branch=task/bug-RVP9-BUG-FLU-00046-run-fix-20261019T052553Z-14eed6f1 code=91c9978150e310dd69ee4a07b8f0ece7e59b4d48 gate=manual)
 
 ## Observation
 
