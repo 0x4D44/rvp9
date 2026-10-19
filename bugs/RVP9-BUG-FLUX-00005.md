@@ -6,15 +6,15 @@
 - **Area:** encoder/loop-filter overlap
 - **Raised:** 2026-08-07T10:54:24Z
 - **Discovery source:** Automation
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T113534Z-051e1b9f
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00005-run-verify-20261019T113534Z-051e1b9f
+- **Owner base:** e4b20dee20ab787178b65c15290b1826832f49b9
+- **Owner fingerprint:** sha256:d4dc4c46d80ce09f1ae146e5939348667bb9dc8e63d9a35062951cc6abe87b80
+- **Owner since:** 2026-10-19T11:35:34Z
+- **Owner until:** 2026-10-19T15:35:34Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
