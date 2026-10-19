@@ -6,15 +6,15 @@
 - **Area:** core/frame decoder tile scratch
 - **Raised:** 2026-08-22T09:00:46Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T105946Z-f3e433d8
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00080-run-verify-20261019T105946Z-f3e433d8
+- **Owner base:** 8ecdcf42e5a1cf0a00bf967f0463576eac7387f6
+- **Owner fingerprint:** sha256:92d92a202a7677ddc5e70384cf5b86a44a91bcfb35e931d025f152f3b32a3523
+- **Owner since:** 2026-10-19T10:59:46Z
+- **Owner until:** 2026-10-19T14:59:46Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
