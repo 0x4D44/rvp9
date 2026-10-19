@@ -6,15 +6,15 @@
 - **Area:** bench/encode-headtohead
 - **Raised:** 2026-08-31T15:05:29Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T113101Z-eaebee0b
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00031-run-verify-20261019T113101Z-eaebee0b
+- **Owner base:** d5240272fb6c9064a833e231fccc4d85c58c2c0f
+- **Owner fingerprint:** sha256:45f3f1415732057899b7b92aec4d37c68f47fd2b243846d7cdb1f7f1e13f57bb
+- **Owner since:** 2026-10-19T11:31:01Z
+- **Owner until:** 2026-10-19T15:31:01Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
