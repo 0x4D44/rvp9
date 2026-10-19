@@ -4,6 +4,8 @@
 //! transverse edge position. The Rust wrapper keeps the scalar slice API and
 //! validates the complete 16-pixel neighbourhood before entering NEON code.
 
+use crate::dsp::bounds::validate_lpf;
+
 use core::arch::aarch64::*;
 
 #[inline(always)]
@@ -967,8 +969,7 @@ pub fn lpf_horizontal_4_neon(
     thresh: u8,
 ) {
     assert!(pitch >= 8);
-    assert!(s_index >= 4 * pitch);
-    assert!(s_index + 3 * pitch + 7 < pixels.len());
+    validate_lpf(pixels.len(), s_index, pitch, 4, false, 8);
     // SAFETY: The assertions prove that all eight tap loads and four output
     // row stores stay inside `pixels`; AArch64 supplies NEON unconditionally.
     unsafe { horizontal_4_inner(pixels.as_mut_ptr(), s_index, pitch, blimit, limit, thresh) }
@@ -988,8 +989,7 @@ pub fn lpf_horizontal_4_dual_neon(
     thresh1: u8,
 ) {
     assert!(pitch >= 16);
-    assert!(s_index >= 4 * pitch);
-    assert!(s_index + 3 * pitch + 15 < pixels.len());
+    validate_lpf(pixels.len(), s_index, pitch, 4, false, 16);
     // SAFETY: The assertions prove that each eight-row load and four 16-byte
     // output row stores stay inside `pixels`; AArch64 supplies NEON.
     unsafe {
@@ -1017,8 +1017,7 @@ pub fn lpf_vertical_4_neon(
     thresh: u8,
 ) {
     assert!(pitch >= 8);
-    assert!(s_index >= 4);
-    assert!(s_index + 7 * pitch + 3 < pixels.len());
+    validate_lpf(pixels.len(), s_index, pitch, 4, true, 8);
     // SAFETY: The assertions prove that all eight 8-byte row loads and stores
     // stay inside `pixels`; AArch64 supplies NEON.
     unsafe { vertical_4_inner(pixels.as_mut_ptr(), s_index, pitch, blimit, limit, thresh) }
@@ -1038,8 +1037,7 @@ pub fn lpf_vertical_4_dual_neon(
     thresh1: u8,
 ) {
     assert!(pitch >= 8);
-    assert!(s_index >= 4);
-    assert!(s_index + 15 * pitch + 3 < pixels.len());
+    validate_lpf(pixels.len(), s_index, pitch, 4, true, 16);
     // SAFETY: The assertions prove that all sixteen 8-byte row loads and
     // stores stay inside `pixels`; AArch64 supplies NEON.
     unsafe {
@@ -1107,8 +1105,7 @@ pub fn lpf_horizontal_8_neon(
     thresh: u8,
 ) {
     assert!(pitch >= 8);
-    assert!(s_index >= 4 * pitch);
-    assert!(s_index + 3 * pitch + 7 < pixels.len());
+    validate_lpf(pixels.len(), s_index, pitch, 4, false, 8);
     // SAFETY: AArch64 always provides NEON. The assertions prove that all
     // eight 8-byte row loads and the six filtered row stores stay in `pixels`.
     unsafe { horizontal_8_inner(pixels.as_mut_ptr(), s_index, pitch, blimit, limit, thresh) }
@@ -1127,8 +1124,9 @@ pub fn lpf_horizontal_8_dual_neon(
     limit1: u8,
     thresh1: u8,
 ) {
+    let second_index = validate_lpf(pixels.len(), s_index, pitch, 4, false, 16);
     lpf_horizontal_8_neon(pixels, s_index, pitch, blimit0, limit0, thresh0);
-    lpf_horizontal_8_neon(pixels, s_index + 8, pitch, blimit1, limit1, thresh1);
+    lpf_horizontal_8_neon(pixels, second_index, pitch, blimit1, limit1, thresh1);
 }
 
 /// Apply the 8-tap loop filter down eight vertical edge rows.
@@ -1141,8 +1139,7 @@ pub fn lpf_vertical_8_neon(
     thresh: u8,
 ) {
     assert!(pitch >= 8);
-    assert!(s_index >= 4);
-    assert!(s_index + 7 * pitch + 3 < pixels.len());
+    validate_lpf(pixels.len(), s_index, pitch, 4, true, 8);
     // SAFETY: AArch64 always provides NEON. The assertions prove that all
     // eight row loads and stores stay in `pixels`.
     unsafe { vertical_8_inner(pixels.as_mut_ptr(), s_index, pitch, blimit, limit, thresh) }
@@ -1161,8 +1158,9 @@ pub fn lpf_vertical_8_dual_neon(
     limit1: u8,
     thresh1: u8,
 ) {
+    let second_index = validate_lpf(pixels.len(), s_index, pitch, 4, true, 16);
     lpf_vertical_8_neon(pixels, s_index, pitch, blimit0, limit0, thresh0);
-    lpf_vertical_8_neon(pixels, s_index + 8 * pitch, pitch, blimit1, limit1, thresh1);
+    lpf_vertical_8_neon(pixels, second_index, pitch, blimit1, limit1, thresh1);
 }
 
 #[target_feature(enable = "neon")]
@@ -1235,8 +1233,7 @@ pub fn lpf_horizontal_16_neon(
     thresh: u8,
 ) {
     assert!(pitch >= 8);
-    assert!(s_index >= 8 * pitch);
-    assert!(s_index + 7 * pitch + 7 < pixels.len());
+    validate_lpf(pixels.len(), s_index, pitch, 8, false, 8);
     // SAFETY: AArch64 always provides NEON. The assertions prove that all
     // sixteen 8-byte row loads and the fourteen row stores stay in `pixels`.
     unsafe { horizontal_inner(pixels.as_mut_ptr(), s_index, pitch, blimit, limit, thresh) }
@@ -1252,8 +1249,7 @@ pub fn lpf_horizontal_16_dual_neon(
     thresh: u8,
 ) {
     assert!(pitch >= 16);
-    assert!(s_index >= 8 * pitch);
-    assert!(s_index + 7 * pitch + 15 < pixels.len());
+    validate_lpf(pixels.len(), s_index, pitch, 8, false, 16);
     // SAFETY: AArch64 always provides NEON. The assertions prove that all
     // sixteen 16-byte row loads and the fourteen row stores stay in `pixels`.
     unsafe { horizontal_dual_inner(pixels.as_mut_ptr(), s_index, pitch, blimit, limit, thresh) }
@@ -1269,8 +1265,7 @@ pub fn lpf_vertical_16_neon(
     thresh: u8,
 ) {
     assert!(pitch >= 16);
-    assert!(s_index >= 8);
-    assert!(s_index + 7 * pitch + 7 < pixels.len());
+    validate_lpf(pixels.len(), s_index, pitch, 8, true, 8);
     // SAFETY: AArch64 always provides NEON. The assertions prove that all
     // eight 16-byte row loads and filtered-pixel stores stay in `pixels`.
     unsafe { vertical_inner(pixels.as_mut_ptr(), s_index, pitch, blimit, limit, thresh) }
@@ -1285,8 +1280,9 @@ pub fn lpf_vertical_16_dual_neon(
     limit: u8,
     thresh: u8,
 ) {
+    let second_index = validate_lpf(pixels.len(), s_index, pitch, 8, true, 16);
     lpf_vertical_16_neon(pixels, s_index, pitch, blimit, limit, thresh);
-    lpf_vertical_16_neon(pixels, s_index + 8 * pitch, pitch, blimit, limit, thresh);
+    lpf_vertical_16_neon(pixels, second_index, pitch, blimit, limit, thresh);
 }
 
 #[cfg(all(test, not(miri)))]

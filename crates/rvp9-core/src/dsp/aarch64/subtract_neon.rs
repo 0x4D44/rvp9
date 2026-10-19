@@ -3,6 +3,8 @@
 //! This mirrors libvpx's `vpx_subtract_block_neon` for the square 8/16/32/64
 //! transforms used by rvp9's block-rate/distortion path.
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 
 #[target_feature(enable = "neon")]
@@ -74,8 +76,8 @@ pub fn subtract_square_neon(
     assert!(matches!(side, 8 | 16 | 32 | 64));
     assert!(src_stride >= side);
     assert!(pred_stride >= side);
-    assert!(src.len() >= (side - 1) * src_stride + side);
-    assert!(pred.len() >= (side - 1) * pred_stride + side);
+    assert!(src.len() >= strided_len(side - 1, src_stride, side));
+    assert!(pred.len() >= strided_len(side - 1, pred_stride, side));
     assert!(dst.len() >= side * side);
 
     // SAFETY: AArch64 always provides NEON. The assertions prove that every
@@ -105,8 +107,8 @@ pub fn subtract_square_neon_with_nonzero(
     assert!(matches!(side, 8 | 16 | 32 | 64));
     assert!(src_stride >= side);
     assert!(pred_stride >= side);
-    assert!(src.len() >= (side - 1) * src_stride + side);
-    assert!(pred.len() >= (side - 1) * pred_stride + side);
+    assert!(src.len() >= strided_len(side - 1, src_stride, side));
+    assert!(pred.len() >= strided_len(side - 1, pred_stride, side));
     assert!(dst.len() >= side * side);
 
     // SAFETY: The assertions prove every input load and residual store. The

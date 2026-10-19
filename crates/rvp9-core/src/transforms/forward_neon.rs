@@ -8,6 +8,8 @@
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 
 use crate::transforms::TxType;
@@ -1458,7 +1460,7 @@ unsafe fn fdct16x16_inner(input: *const i16, output: *mut i32, stride: usize) {
 
 pub(super) fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
     assert!(stride >= 16);
-    assert!(input.len() >= 15 * stride + 16);
+    assert!(input.len() >= strided_len(15, stride, 16));
     // SAFETY: The bounds above prove every 4-value input load. `output`
     // provides all 256 destinations, and NEON is mandatory on AArch64.
     unsafe { fdct16x16_inner(input.as_ptr(), output.as_mut_ptr(), stride) };
@@ -1466,7 +1468,7 @@ pub(super) fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
 
 pub(super) fn fdct4x4(input: &[i16], output: &mut [i32; 16], stride: usize) {
     assert!(stride >= 4);
-    assert!(input.len() >= 3 * stride + 4);
+    assert!(input.len() >= strided_len(3, stride, 4));
     // SAFETY: The bounds above prove every four-value input load. `output`
     // provides all 16 destinations, and NEON is mandatory on AArch64.
     unsafe { fdct4x4_inner(input.as_ptr(), output.as_mut_ptr(), stride) };
@@ -1474,7 +1476,7 @@ pub(super) fn fdct4x4(input: &[i16], output: &mut [i32; 16], stride: usize) {
 
 pub(super) fn fht4x4(input: &[i16], output: &mut [i32; 16], stride: usize, tx_type: TxType) {
     assert!(stride >= 4);
-    assert!(input.len() >= 3 * stride + 4);
+    assert!(input.len() >= strided_len(3, stride, 4));
     // SAFETY: The bounds above prove every four-value input load. `output`
     // provides all 16 destinations, and NEON is mandatory on AArch64.
     unsafe { fht4x4_inner(input.as_ptr(), output.as_mut_ptr(), stride, tx_type) };
@@ -1482,7 +1484,7 @@ pub(super) fn fht4x4(input: &[i16], output: &mut [i32; 16], stride: usize, tx_ty
 
 pub(super) fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
     assert!(stride >= 8);
-    assert!(input.len() >= 7 * stride + 8);
+    assert!(input.len() >= strided_len(7, stride, 8));
     // SAFETY: The bounds above prove every eight-value input load. `output`
     // provides all 64 destinations, and NEON is mandatory on AArch64.
     if !unsafe { fdct8x8_inner(input.as_ptr(), output.as_mut_ptr(), stride) } {
@@ -1492,7 +1494,7 @@ pub(super) fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
 
 pub(super) fn fdct8x8_libvpx_lowbd(input: &[i16], output: &mut [i32; 64], stride: usize) {
     assert!(stride >= 8);
-    assert!(input.len() >= 7 * stride + 8);
+    assert!(input.len() >= strided_len(7, stride, 8));
     // SAFETY: The bounds above prove every eight-value input load. `output`
     // provides all 64 destinations, and NEON is mandatory on AArch64. This
     // deliberately mirrors libvpx's low-bit-depth first-pass approximation
@@ -1502,7 +1504,7 @@ pub(super) fn fdct8x8_libvpx_lowbd(input: &[i16], output: &mut [i32; 64], stride
 
 pub(super) fn fht8x8(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxType) {
     assert!(stride >= 8);
-    assert!(input.len() >= 7 * stride + 8);
+    assert!(input.len() >= strided_len(7, stride, 8));
     // SAFETY: The bounds above prove every four-value input load. `output`
     // provides all 64 destinations, and NEON is mandatory on AArch64.
     unsafe { fht8x8_inner(input.as_ptr(), output.as_mut_ptr(), stride, tx_type) };
@@ -1510,7 +1512,7 @@ pub(super) fn fht8x8(input: &[i16], output: &mut [i32; 64], stride: usize, tx_ty
 
 pub(super) fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: TxType) {
     assert!(stride >= 16);
-    assert!(input.len() >= 15 * stride + 16);
+    assert!(input.len() >= strided_len(15, stride, 16));
     // SAFETY: The bounds above prove every four-value input load. `output`
     // provides all 256 destinations, and NEON is mandatory on AArch64.
     unsafe { fht16x16_inner(input.as_ptr(), output.as_mut_ptr(), stride, tx_type) };
@@ -1518,7 +1520,7 @@ pub(super) fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx
 
 pub(super) fn fdct32x32(input: &[i16], output: &mut [i32; 1024], stride: usize) {
     assert!(stride >= 32);
-    assert!(input.len() >= 31 * stride + 32);
+    assert!(input.len() >= strided_len(31, stride, 32));
     // SAFETY: The bounds above prove every 4-value input load. `output`
     // provides all 1024 destinations, and NEON is mandatory on AArch64.
     unsafe { fdct32x32_inner(input.as_ptr(), output.as_mut_ptr(), stride) };

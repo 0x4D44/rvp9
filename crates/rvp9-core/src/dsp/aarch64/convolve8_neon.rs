@@ -5,6 +5,8 @@
 //! oracle. The full 2-D kernel composes the exact horizontal and vertical
 //! passes through a reusable per-thread u8 intermediate.
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 use core::arch::asm;
 
@@ -660,8 +662,9 @@ fn has_horiz_wide_load_footprint(
 fn validate_vert(src: &[u8], src_stride: usize, dst: &[u8], dst_stride: usize, w: usize, h: usize) {
     assert!(h > 0);
     assert!(w > 0 && w <= 64);
-    assert!(src.len() >= (h + 6) * src_stride + w);
-    assert!(dst.len() >= (h - 1) * dst_stride + w);
+    let last_source_row = h.checked_add(6).expect("convolution halo height overflow");
+    assert!(src.len() >= strided_len(last_source_row, src_stride, w));
+    assert!(dst.len() >= strided_len(h - 1, dst_stride, w));
 }
 
 /// NEON horizontal unscaled 8-tap convolution.
@@ -866,8 +869,8 @@ pub fn convolve8_neon(
         convolve8(src, src_stride, dst, dst_stride, filter_x, filter_y, w, h);
         return;
     }
-    assert!(src.len() >= (h + 6) * src_stride + w + 7);
-    assert!(dst.len() >= (h - 1) * dst_stride + w);
+    assert!(src.len() >= strided_len(h + 6, src_stride, w + 7));
+    assert!(dst.len() >= strided_len(h - 1, dst_stride, w));
 
     CONV8_INTERMEDIATE.with_borrow_mut(|intermediate| {
         convolve8_horiz_neon(
@@ -928,6 +931,40 @@ mod tests {
         // A width with a scalar tail has enough logical padding for the last
         // wide load and should retain the optimized path.
         assert!(has_horiz_wide_load_footprint(64, 16, 8, 4));
+    }
+
+    #[test]
+    fn vertical_validation_rejects_overflowing_source_extent() {
+        validate_vert(&[0; 80], 8, &[0; 24], 8, 8, 3);
+        assert!(
+            std::panic::catch_unwind(|| {
+                validate_vert(&[0; 64], usize::MAX / 9, &[0; 24], 8, 8, 3);
+            })
+            .is_err(),
+            "validate_vert accepted a wrapped source extent"
+        );
+    }
+
+    #[test]
+    fn vertical_validation_rejects_overflowing_destination_extent() {
+        assert!(
+            std::panic::catch_unwind(|| {
+                validate_vert(&[0; 80], 8, &[0; 64], usize::MAX / 2 + 1, 8, 3);
+            })
+            .is_err(),
+            "validate_vert accepted a wrapped destination extent"
+        );
+    }
+
+    #[test]
+    fn vertical_validation_rejects_overflowing_halo_height() {
+        assert!(
+            std::panic::catch_unwind(|| {
+                validate_vert(&[0; 8], 0, &[0; 8], 0, 8, usize::MAX);
+            })
+            .is_err(),
+            "validate_vert accepted a wrapped halo height"
+        );
     }
 
     #[test]

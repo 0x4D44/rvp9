@@ -3,6 +3,8 @@
 //! This is the low-bitdepth `vpx_minmax_8x8_neon` primitive used by
 //! libvpx's realtime variance-based partition chooser.
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 
 #[target_feature(enable = "neon")]
@@ -61,8 +63,8 @@ pub fn minmax_8x8_neon(
 ) -> (u8, u8) {
     assert!(first_stride >= 8);
     assert!(second_stride >= 8);
-    assert!(first.len() >= 7 * first_stride + 8);
-    assert!(second.len() >= 7 * second_stride + 8);
+    assert!(first.len() >= strided_len(7, first_stride, 8));
+    assert!(second.len() >= strided_len(7, second_stride, 8));
 
     // SAFETY: AArch64 includes NEON. The assertions prove that every exact
     // eight-byte row load remains within its source slice.

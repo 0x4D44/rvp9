@@ -37,6 +37,8 @@
 #[cfg(all(test, target_arch = "aarch64", not(miri)))]
 pub(crate) mod aarch64_force_scalar_tests;
 pub mod accelerated;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+pub(crate) mod bounds;
 pub mod caps;
 pub mod dispatch;
 pub mod distortion;

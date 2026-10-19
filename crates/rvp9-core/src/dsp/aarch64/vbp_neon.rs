@@ -1,5 +1,7 @@
 //! AArch64 reductions for the realtime variance-partition front end.
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 
 #[target_feature(enable = "neon")]
@@ -60,8 +62,8 @@ pub fn avg_diff_8x8_grid_64x64_neon(
 ) -> [i16; 64] {
     assert!(source_stride >= 64);
     assert!(predictor_stride >= 64);
-    assert!(source.len() >= 63 * source_stride + 64);
-    assert!(predictor.len() >= 63 * predictor_stride + 64);
+    assert!(source.len() >= strided_len(63, source_stride, 64));
+    assert!(predictor.len() >= strided_len(63, predictor_stride, 64));
 
     // SAFETY: AArch64 guarantees NEON. The assertions prove every 8-byte
     // load in the 64x64 footprints, and the immutable input slices remain

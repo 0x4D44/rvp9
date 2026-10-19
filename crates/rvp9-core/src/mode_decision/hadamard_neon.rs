@@ -3,6 +3,8 @@
 //! Integer-exact port of libvpx v1.14.1
 //! `vpx_dsp/arm/hadamard_neon.c`.
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 
 #[inline]
@@ -320,7 +322,7 @@ unsafe fn hadamard_32x32_subtract_inner(
 #[inline]
 fn validate(src: &[i16], src_stride: usize, coeff: &[i16], size: usize) {
     assert!(src_stride >= size);
-    assert!(src.len() >= (size - 1) * src_stride + size);
+    assert!(src.len() >= strided_len(size - 1, src_stride, size));
     assert!(coeff.len() >= size * size);
 }
 
@@ -412,7 +414,7 @@ fn validate_subtract(
 ) {
     assert!(src_stride >= size);
     assert!(pred_stride >= size);
-    assert!(src.len() >= (size - 1) * src_stride + size);
-    assert!(pred.len() >= (size - 1) * pred_stride + size);
+    assert!(src.len() >= strided_len(size - 1, src_stride, size));
+    assert!(pred.len() >= strided_len(size - 1, pred_stride, size));
     assert!(coeff.len() >= size * size);
 }

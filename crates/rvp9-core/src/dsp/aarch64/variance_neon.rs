@@ -5,6 +5,8 @@
 //! libvpx's NEON variance reduction while preserving rvp9's existing
 //! `(i64, u64)` interface.
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 use core::arch::asm;
 
@@ -182,8 +184,8 @@ fn var_sum_sse_4_dotprod(
     assert!(matches!(height, 4 | 8));
     assert!(src_stride >= 4);
     assert!(pred_stride >= 4);
-    assert!(src.len() >= (height - 1) * src_stride + 4);
-    assert!(pred.len() >= (height - 1) * pred_stride + 4);
+    assert!(src.len() >= strided_len(height - 1, src_stride, 4));
+    assert!(pred.len() >= strided_len(height - 1, pred_stride, 4));
 
     // SAFETY: Dispatch installs these wrappers only when dotprod is present.
     // Exact-width unaligned 32-bit loads consume four live bytes per row;
@@ -226,8 +228,8 @@ pub fn var_sum_sse_neon(
     assert!(height > 0);
     assert!(src_stride >= width);
     assert!(pred_stride >= width);
-    assert!(src.len() >= (height - 1) * src_stride + width);
-    assert!(pred.len() >= (height - 1) * pred_stride + width);
+    assert!(src.len() >= strided_len(height - 1, src_stride, width));
+    assert!(pred.len() >= strided_len(height - 1, pred_stride, width));
 
     // SAFETY: AArch64 dispatch installs these wrappers only when NEON is
     // detected. The assertions prove that each 8-byte load stays within its
@@ -258,8 +260,8 @@ pub fn var_sum_sse_dotprod(
     assert!(height > 0 && (width != 8 || height.is_multiple_of(2)));
     assert!(src_stride >= width);
     assert!(pred_stride >= width);
-    assert!(src.len() >= (height - 1) * src_stride + width);
-    assert!(pred.len() >= (height - 1) * pred_stride + width);
+    assert!(src.len() >= strided_len(height - 1, src_stride, width));
+    assert!(pred.len() >= strided_len(height - 1, pred_stride, width));
 
     // SAFETY: Dispatch installs these wrappers only when dotprod is present.
     // The assertions prove every 8- or 16-byte load. VP9's largest block has
@@ -493,8 +495,8 @@ pub fn var_sum_sse_8x8_grid_neon(
     ));
     assert!(src_stride >= width);
     assert!(pred_stride >= width);
-    assert!(src.len() >= (height - 1) * src_stride + width);
-    assert!(pred.len() >= (height - 1) * pred_stride + width);
+    assert!(src.len() >= strided_len(height - 1, src_stride, width));
+    assert!(pred.len() >= strided_len(height - 1, pred_stride, width));
 
     // SAFETY: AArch64 dispatch installs this wrapper only when NEON is
     // available. The assertions prove every 8-byte load in both footprints;
@@ -658,8 +660,8 @@ pub fn var_sum_sse_8x8_grid_dotprod(
     ));
     assert!(src_stride >= width);
     assert!(pred_stride >= width);
-    assert!(src.len() >= (height - 1) * src_stride + width);
-    assert!(pred.len() >= (height - 1) * pred_stride + width);
+    assert!(src.len() >= strided_len(height - 1, src_stride, width));
+    assert!(pred.len() >= strided_len(height - 1, pred_stride, width));
 
     // SAFETY: AArch64 dispatch installs this wrapper only when dotprod is
     // available. The assertions prove every 8-byte load in both footprints;

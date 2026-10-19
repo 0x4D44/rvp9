@@ -4,6 +4,8 @@
 //! 64 transform coefficients, run two transpose-plus-1D passes, then round,
 //! add, clamp, and store eight destination rows.
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 
 use crate::transforms::TxType;
@@ -314,7 +316,10 @@ unsafe fn idct8x8_12_add_neon_inner(input: &[i32; 64], dst: &mut [u8], stride: u
 /// target-feature implementation.
 pub fn idct8x8_add_neon(input: &[i32; 64], dst: &mut [u8], stride: usize) {
     assert!(stride >= 8, "stride too small for 8x8 add");
-    assert!(dst.len() >= 7 * stride + 8, "dst too small for 8x8 add");
+    assert!(
+        dst.len() >= strided_len(7, stride, 8),
+        "dst too small for 8x8 add"
+    );
 
     // SAFETY: `SimdDispatch::build` installs this wrapper only when runtime
     // capability detection reports NEON. AArch64 mandates NEON in practice;
@@ -328,7 +333,10 @@ pub fn idct8x8_add_neon(input: &[i32; 64], dst: &mut [u8], stride: usize) {
 /// [`crate::transforms::inverse::idct8x8_12_add`] and libvpx's sparse kernel.
 pub fn idct8x8_12_add_neon(input: &[i32; 64], dst: &mut [u8], stride: usize) {
     assert!(stride >= 8, "stride too small for 8x8 add");
-    assert!(dst.len() >= 7 * stride + 8, "dst too small for 8x8 add");
+    assert!(
+        dst.len() >= strided_len(7, stride, 8),
+        "dst too small for 8x8 add"
+    );
 
     // SAFETY: dispatch installs this wrapper only on AArch64 NEON targets.
     unsafe { idct8x8_12_add_neon_inner(input, dst, stride) }
@@ -341,7 +349,10 @@ pub fn idct8x8_12_add_neon(input: &[i32; 64], dst: &mut [u8], stride: usize) {
 /// for the two transform passes.
 pub fn iht8x8_add_neon(input: &[i32; 64], dst: &mut [u8], stride: usize, tx_type: TxType) {
     assert!(stride >= 8, "stride too small for 8x8 add");
-    assert!(dst.len() >= 7 * stride + 8, "dst too small for 8x8 add");
+    assert!(
+        dst.len() >= strided_len(7, stride, 8),
+        "dst too small for 8x8 add"
+    );
 
     // SAFETY: `SimdDispatch::build` installs this wrapper only when runtime
     // capability detection reports NEON. AArch64 mandates NEON in practice;

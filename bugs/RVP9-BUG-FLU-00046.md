@@ -27,7 +27,18 @@ On 64-bit AArch64 release builds, the public safe `convolve8_horiz_neon` wrapper
 
 ## Fix
 
-<unfixed — raised only>
+The previously recorded sibling span guards now use checked multiplication and
+addition before entering SIMD kernels. A common element-count helper covers copy,
+IDCT8, integer projection, minmax, SAD/SAD4D, subpixel variance, subtraction,
+variance, VBP, forward transforms and Hadamard. All AArch64 loop-filter wrappers
+share the existing checked x86 footprint validator, including dual-strip offsets.
+Vertical convolution also checks halo-height addition. Existing inverse16,
+horizontal-convolution and scaled-convolution validation remains checked.
+
+Five new validation regressions were observed failing without the corresponding
+checks and passing with them, without executing invalid pointer operations.
+Native arm64 differential coverage and the complete recorded-family audit are in
+[the fixing journal](../wrk_journals/2026.10.19%20-%20JRN%20-%20complete%20AArch64%20checked%20span%20validation.md).
 
 ### Verification summary (2026-10-18T21:50:39Z, deltic:auto run=verify-20261018T214336Z-b2440949 verified_fix_run=fix-20261018T193520Z-291db43a verdict=doubt)
 

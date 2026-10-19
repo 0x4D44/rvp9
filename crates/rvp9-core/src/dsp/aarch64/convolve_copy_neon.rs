@@ -4,6 +4,8 @@
 //! libvpx's `vpx_convolve_copy_neon`: copy each active prediction row with
 //! fixed-width loads and stores instead of calling `memmove` once per row.
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 
 #[target_feature(enable = "neon")]
@@ -116,8 +118,8 @@ pub fn convolve_copy_neon(
     }
     assert!(src_stride >= w);
     assert!(dst_stride >= w);
-    assert!(src.len() >= h.saturating_sub(1) * src_stride + w);
-    assert!(dst.len() >= h.saturating_sub(1) * dst_stride + w);
+    assert!(src.len() >= strided_len(h.saturating_sub(1), src_stride, w));
+    assert!(dst.len() >= strided_len(h.saturating_sub(1), dst_stride, w));
 
     // SAFETY: AArch64 dispatch installs this wrapper only when NEON is
     // available. The width match and slice-footprint assertions prove every

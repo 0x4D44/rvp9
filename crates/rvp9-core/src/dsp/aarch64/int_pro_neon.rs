@@ -3,6 +3,8 @@
 //! This mirrors libvpx `vpx_int_pro_row_neon` for the 16/32/64-high
 //! projection blocks used by VP9's superblock motion seed.
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 
 #[target_feature(enable = "neon")]
@@ -228,7 +230,7 @@ pub fn vpx_int_pro_row_neon(
     assert_eq!(output.len(), 16);
     assert!(matches!(height, 16 | 32 | 64));
     assert!(reference_stride >= 16);
-    assert!(reference.len() >= (height - 1) * reference_stride + 16);
+    assert!(reference.len() >= strided_len(height - 1, reference_stride, 16));
 
     // SAFETY: AArch64 always provides NEON. The assertions prove that every
     // 16-byte row load and both 8-lane output stores stay inside their slices.
@@ -289,7 +291,7 @@ pub fn vpx_int_pro_row_clamped_neon(
     assert!(matches!(height, 16 | 32 | 64));
     assert!(frame_height > 0);
     assert!(reference_stride >= 16);
-    assert!(reference.len() >= (frame_height - 1) * reference_stride + 16);
+    assert!(reference.len() >= strided_len(frame_height - 1, reference_stride, 16));
     // SAFETY: the assertions prove every clamped 16-byte row load and both
     // output stores. Lane sums remain below 64 * 255.
     unsafe {

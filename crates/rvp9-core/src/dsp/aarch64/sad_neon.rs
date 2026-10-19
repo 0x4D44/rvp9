@@ -3,6 +3,8 @@
 //! Source-faithful port of libvpx v1.14.1 `vpx_dsp/arm/sad_neon.c` for
 //! VP9's 13 block shapes.
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 
 #[target_feature(enable = "neon")]
@@ -98,8 +100,8 @@ fn validate(
 ) {
     assert!(matches!(w, 4 | 8 | 16 | 32 | 64));
     assert!(h > 0 && h.is_multiple_of(2));
-    assert!(src.len() >= (h - 1) * src_stride + w);
-    assert!(reference.len() >= (h - 1) * ref_stride + w);
+    assert!(src.len() >= strided_len(h - 1, src_stride, w));
+    assert!(reference.len() >= strided_len(h - 1, ref_stride, w));
 }
 
 #[inline]

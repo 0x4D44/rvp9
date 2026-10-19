@@ -5,6 +5,8 @@
 //! reduction directly. Two rolling 64-byte rows replace libvpx's full
 //! intermediate blocks, avoiding heap allocation and an extra pixel walk.
 
+use crate::dsp::bounds::strided_len;
+
 use core::arch::aarch64::*;
 
 use super::variance_neon::unsigned_dot;
@@ -475,8 +477,8 @@ pub fn sub_pixel_variance_neon(
     assert!(matches!(height, 8 | 16 | 32 | 64));
     assert!(src_stride >= width + usize::from(xoffset != 0));
     assert!(ref_stride >= width);
-    assert!(src.len() >= height * src_stride + width + usize::from(xoffset != 0));
-    assert!(reference.len() >= (height - 1) * ref_stride + width);
+    assert!(src.len() >= strided_len(height, src_stride, width + usize::from(xoffset != 0),));
+    assert!(reference.len() >= strided_len(height - 1, ref_stride, width));
 
     // SAFETY: AArch64 dispatch installs this wrapper only when NEON is
     // detected. The assertions above prove every vector load stays within
@@ -514,8 +516,8 @@ pub fn sub_pixel_variance_dotprod(
     assert!(matches!(height, 8 | 16 | 32 | 64));
     assert!(src_stride >= width + usize::from(xoffset != 0));
     assert!(ref_stride >= width);
-    assert!(src.len() >= height * src_stride + width + usize::from(xoffset != 0));
-    assert!(reference.len() >= (height - 1) * ref_stride + width);
+    assert!(src.len() >= strided_len(height, src_stride, width + usize::from(xoffset != 0),));
+    assert!(reference.len() >= strided_len(height - 1, ref_stride, width));
 
     // SAFETY: Dispatch selects this wrapper only when dotprod is present.
     // The slice bounds are identical to the NEON entry point above.
@@ -583,8 +585,8 @@ macro_rules! subpel_var_16_dotprod_fn {
             assert!(xoffset < 8 && yoffset < 8);
             assert!(src_stride >= 16 + usize::from(xoffset != 0));
             assert!(ref_stride >= 16);
-            assert!(src.len() >= $h * src_stride + 16 + usize::from(xoffset != 0));
-            assert!(reference.len() >= ($h - 1) * ref_stride + 16);
+            assert!(src.len() >= strided_len($h, src_stride, 16 + usize::from(xoffset != 0),));
+            assert!(reference.len() >= strided_len($h - 1, ref_stride, 16));
 
             // SAFETY: Dispatch selects this wrapper only when dotprod is
             // present. The assertions prove every 16-wide source and
@@ -616,8 +618,8 @@ pub fn vpx_sub_pixel_variance8x8_neon(
     assert!(xoffset < 8 && yoffset < 8);
     assert!(src_stride >= 8 + usize::from(xoffset != 0));
     assert!(ref_stride >= 8);
-    assert!(src.len() >= 8 * src_stride + 8 + usize::from(xoffset != 0));
-    assert!(reference.len() >= 7 * ref_stride + 8);
+    assert!(src.len() >= strided_len(8, src_stride, 8 + usize::from(xoffset != 0)));
+    assert!(reference.len() >= strided_len(7, ref_stride, 8));
 
     // SAFETY: AArch64 dispatch selects this wrapper only when NEON is
     // present. The assertions prove every exact-width load, the optional
@@ -647,8 +649,8 @@ pub fn vpx_sub_pixel_variance8x16_neon(
     assert!(xoffset < 8 && yoffset < 8);
     assert!(src_stride >= 8 + usize::from(xoffset != 0));
     assert!(ref_stride >= 8);
-    assert!(src.len() >= 16 * src_stride + 8 + usize::from(xoffset != 0));
-    assert!(reference.len() >= 15 * ref_stride + 8);
+    assert!(src.len() >= strided_len(16, src_stride, 8 + usize::from(xoffset != 0)));
+    assert!(reference.len() >= strided_len(15, ref_stride, 8));
 
     // SAFETY: AArch64 dispatch selects this wrapper only when NEON is
     // present. The assertions prove every exact-width load, the optional
@@ -686,8 +688,8 @@ pub fn vpx_sub_pixel_variance8x8_dotprod(
     assert!(xoffset < 8 && yoffset < 8);
     assert!(src_stride >= 8 + usize::from(xoffset != 0));
     assert!(ref_stride >= 8);
-    assert!(src.len() >= 8 * src_stride + 8 + usize::from(xoffset != 0));
-    assert!(reference.len() >= 7 * ref_stride + 8);
+    assert!(src.len() >= strided_len(8, src_stride, 8 + usize::from(xoffset != 0)));
+    assert!(reference.len() >= strided_len(7, ref_stride, 8));
 
     // SAFETY: Dispatch selects this wrapper only when dotprod is present.
     // The assertions prove the complete eight-wide source footprint.
@@ -716,8 +718,8 @@ pub fn vpx_sub_pixel_variance8x16_dotprod(
     assert!(xoffset < 8 && yoffset < 8);
     assert!(src_stride >= 8 + usize::from(xoffset != 0));
     assert!(ref_stride >= 8);
-    assert!(src.len() >= 16 * src_stride + 8 + usize::from(xoffset != 0));
-    assert!(reference.len() >= 15 * ref_stride + 8);
+    assert!(src.len() >= strided_len(16, src_stride, 8 + usize::from(xoffset != 0)));
+    assert!(reference.len() >= strided_len(15, ref_stride, 8));
 
     // SAFETY: Dispatch selects this wrapper only when dotprod is present.
     // The assertions prove the complete eight-wide source footprint.
@@ -749,8 +751,8 @@ pub fn vpx_sub_pixel_variance32x32_dotprod(
     assert!(xoffset < 8 && yoffset < 8);
     assert!(src_stride >= 32 + usize::from(xoffset != 0));
     assert!(ref_stride >= 32);
-    assert!(src.len() >= 32 * src_stride + 32 + usize::from(xoffset != 0));
-    assert!(reference.len() >= 31 * ref_stride + 32);
+    assert!(src.len() >= strided_len(32, src_stride, 32 + usize::from(xoffset != 0)));
+    assert!(reference.len() >= strided_len(31, ref_stride, 32));
 
     // SAFETY: Dispatch selects this wrapper only when dotprod is present. The
     // assertions prove the extra horizontal byte and vertical row are live.

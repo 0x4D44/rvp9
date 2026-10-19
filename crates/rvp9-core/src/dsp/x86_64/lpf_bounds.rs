@@ -1,49 +1,6 @@
 //! Checked footprints for the x86 loop-filter wrappers.
 
-/// Validate every byte loaded/stored by one or two adjacent SIMD strips.
-/// Returns the second strip's start (the first start for a single strip).
-#[inline]
-pub(super) fn validate(
-    len: usize,
-    index: usize,
-    pitch: usize,
-    radius: usize,
-    vertical: bool,
-    lanes: usize,
-) -> usize {
-    let (before, after_rows, after_cols) = if vertical {
-        (radius, lanes - 1, radius)
-    } else {
-        (
-            radius
-                .checked_mul(pitch)
-                .expect("loop-filter layout overflow"),
-            radius - 1,
-            lanes,
-        )
-    };
-    assert!(index >= before, "loop-filter prefix too short");
-    let end = after_rows
-        .checked_mul(pitch)
-        .and_then(|offset| index.checked_add(offset))
-        .and_then(|offset| offset.checked_add(after_cols))
-        .expect("loop-filter layout overflow");
-    assert!(end <= len, "loop-filter slice too short");
-    if lanes == 16 {
-        let offset = if vertical {
-            8usize
-                .checked_mul(pitch)
-                .expect("loop-filter layout overflow")
-        } else {
-            8
-        };
-        index
-            .checked_add(offset)
-            .expect("loop-filter layout overflow")
-    } else {
-        index
-    }
-}
+pub(super) use crate::dsp::bounds::validate_lpf as validate;
 
 #[cfg(test)]
 mod tests {
