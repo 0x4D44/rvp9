@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00030 — Timing qualifiers cannot enforce the idle-host gate on Windows
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** benchmark
 - **Raised:** 2026-08-22T18:08:12Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T111120Z-cb2860ec
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00030-run-verify-20261019T111120Z-cb2860ec
-- **Owner base:** e52e70d25cda9218ec8dd0db906e06ad4b444ad1
-- **Owner fingerprint:** sha256:aaa663ba54ac9f64c772ab7ba120dec1149c6343079dcbc927949746d8b6eb1b
-- **Owner since:** 2026-10-19T11:11:20Z
-- **Owner until:** 2026-10-19T15:11:20Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T18:08:12Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-08-22T18:20:49Z, deltic:auto role=fix run=fix-20260822T180840Z-795f80a2 branch=task/bug-RVP9-BUG-FLU-00030-run-fix-20260822T180840Z-795f80a2 code=36eec127 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T180840Z-795f80a2 branch=task/bug-RVP9-BUG-FLU-00030-run-fix-20260822T180840Z-795f80a2 code=1d5a1dfea4f6a52aa755c71774db17ecb3bda03a gate=manual provenance-only=true reconciled-by=Codex)
+- **State history:** Open (2026-08-22T18:08:12Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-08-22T18:20:49Z, deltic:auto role=fix run=fix-20260822T180840Z-795f80a2 branch=task/bug-RVP9-BUG-FLU-00030-run-fix-20260822T180840Z-795f80a2 code=36eec127 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T180840Z-795f80a2 branch=task/bug-RVP9-BUG-FLU-00030-run-fix-20260822T180840Z-795f80a2 code=1d5a1dfea4f6a52aa755c71774db17ecb3bda03a gate=manual provenance-only=true reconciled-by=Codex) -> Closed (2026-10-19T11:30:17Z, deltic:manual role=verify run=verify-20261019T111120Z-cb2860ec verified_fix_run=fix-20260822T180840Z-795f80a2 verdict=close)
 
 ## Observation
 
@@ -38,5 +38,9 @@ All three named affected files gain native Windows host-load sampling: PowerShel
 Contemporary corroboration: wrk_docs/2026.08.23 - DAILY - KILN-Windows - Repo state report.md:99,123 (bug30 old36eec127 pairing and Windows timing idle-host guard description).
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T11:30:17Z, deltic:auto run=verify-20261019T111120Z-cb2860ec verified_fix_run=fix-20260822T180840Z-795f80a2 verdict=close)
+
+Verifier note: Manual verify: Manual verify on origin fix 1d5a1dfea4f6a52aa755c71774db17ecb3bda03a (2026-10-19). Windows 11 x64 / PowerShell 5.1: cargo test -p rvp9-bench --bin encode-headtohead --locked tests::windows_idle_guard_produces_a_normalized_load_measurement -- --exact selected 1 and passed. Fails-before: replaced only the Windows current_load1 body in registered remote scratch with the pre-fix /proc/loadavg + sysctl probe; the same selected test failed at “Windows host load should be measurable”. Re-extracted tracked HEAD (SHA-256 restored to 62076be9c6bc65d552d896163cd687db48a8c0dc65f3716526415db...
 
 ## Notes
