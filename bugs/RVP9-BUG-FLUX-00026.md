@@ -19,7 +19,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-14T23:02:42Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-14T23:08:58Z, deltic:auto role=fix run=fix-20260814T230323Z-p28077-n811046000-c1 branch=task/bug-RVP9-BUG-FLUX-00026-run-fix-20260814T230323Z-p28077-n811046000-c1 code=982de73e gate=manual)
+- **State history:** Open (2026-08-14T23:02:42Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-14T23:08:58Z, deltic:auto role=fix run=fix-20260814T230323Z-p28077-n811046000-c1 branch=task/bug-RVP9-BUG-FLUX-00026-run-fix-20260814T230323Z-p28077-n811046000-c1 code=982de73e gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260814T230323Z-p28077-n811046000-c1 branch=task/bug-RVP9-BUG-FLUX-00026-run-fix-20260814T230323Z-p28077-n811046000-c1 code=93653fb2e77c0e207fef344a334bad556efc232f gate=manual provenance-only=true reconciled-by=Codex)
 
 ## Observation
 
@@ -27,6 +27,15 @@ On the integrated release candidate, cargo test -p rvp9-encoder --release --lock
 
 ## Fix
 
-<unfixed — raised only>
+Historical fix provenance is reconciled below. Independent behavioral verification remains pending.
+
+### Provenance reconciliation (2026-10-19)
+
+Authoritative fixing commit: `93653fb2e77c0e207fef344a334bad556efc232f` (test(enc): refresh GOP golden after UMV policy).
+The original reference `982de73e` does not resolve locally and is retained above for audit.
+Historical Fixed ledger commit `a7ace4f85d9fc6ae1a0508c8529bdc37155efe3d` has this fixing commit as its immediate parent.
+All original old/new length and FNV constants match exact candidate patch; commit names bug, same unchanged sibling oracle and UMV first-changer explanation. Release journal also records full missing982de73e630d98f575871b7666eccebdcbd1e4dc.
+The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
+no regression was rerun and no new fix or verification verdict is recorded.
 
 ## Notes

@@ -19,7 +19,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T10:24:37Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-08-22T13:13:44Z, deltic:auto role=fix run=fix-20260822T131153Z-3ad51f2d branch=task/bug-RVP9-BUG-KIL-00083-run-fix-20260822T131153Z-3ad51f2d code=267e292b gate=manual)
+- **State history:** Open (2026-08-22T10:24:37Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-08-22T13:13:44Z, deltic:auto role=fix run=fix-20260822T131153Z-3ad51f2d branch=task/bug-RVP9-BUG-KIL-00083-run-fix-20260822T131153Z-3ad51f2d code=267e292b gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T131153Z-3ad51f2d branch=task/bug-RVP9-BUG-KIL-00083-run-fix-20260822T131153Z-3ad51f2d code=f274787175bf93421861efe348861a3646659cec gate=manual provenance-only=true reconciled-by=Codex)
 
 ## Observation
 
@@ -32,6 +32,15 @@ Expected: the test proves the public recovery statement, or the statement and te
 ## Fix
 
 Choose and pin one contract. If the recovery inter must decode, replace the catch-all error arm with an `Ok` assertion and verify output dimensions or pixels. If entropy-bank poisoning intentionally permits failure, rename the test and narrow the public documentation, then add a separate positive oracle for whatever reuse guarantee remains. Estimated effort: small.
+
+### Provenance reconciliation (2026-10-19)
+
+Authoritative fixing commit: `f274787175bf93421861efe348861a3646659cec` (test(dec): require inter recovery to decode).
+The original reference `267e292b` does not resolve locally and is retained above for audit.
+Historical Fixed ledger commit `3fc008f7946da9f0dc3335c6d086962fbfbefcd4` has this fixing commit as its immediate parent.
+mid_tile_failure_then_valid_inter_decodes replaces permissive Err(_) match arm with decode_frame(...).expect("valid inter after a failed inter decodes") and width/height assertions.
+The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
+no regression was rerun and no new fix or verification verdict is recorded.
 
 ## Notes
 

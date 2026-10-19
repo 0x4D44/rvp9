@@ -18,7 +18,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T171112Z-p5310-n568069000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260730T171112Z-p5310-n568069000-c1 code=ce657a77ef476ba946f167a581c7f111e5bdb97d gate=manual) -> Open (2026-07-31, reopened by independent two-eyes verify pass on `4abe0d8`: the fix regresses the encoder's 64x64 intra fallback) -> Fixed (2026-08-12T14:43:28Z, deltic:auto role=fix run=fix-20260812T143904Z-p46812-n519221000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260812T143904Z-p46812-n519221000-c1 code=5d694b76 gate=manual)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T171112Z-p5310-n568069000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260730T171112Z-p5310-n568069000-c1 code=ce657a77ef476ba946f167a581c7f111e5bdb97d gate=manual) -> Open (2026-07-31, reopened by independent two-eyes verify pass on `4abe0d8`: the fix regresses the encoder's 64x64 intra fallback) -> Fixed (2026-08-12T14:43:28Z, deltic:auto role=fix run=fix-20260812T143904Z-p46812-n519221000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260812T143904Z-p46812-n519221000-c1 code=5d694b76 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260812T143904Z-p46812-n519221000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260812T143904Z-p46812-n519221000-c1 code=5456910982231296dcc6c7d3cf923f377eb130d8 gate=manual provenance-only=true reconciled-by=Codex)
 
 ## Observation
 
@@ -43,6 +43,15 @@ the V_PRED dispatch slot now panics mid-encode.
 Any refix must keep the geometry/CPU validation but accept every `bs` the inner kernel
 supports (route non-`{4,8,16,32}` sizes to the existing scalar arm rather than panicking),
 and add an encoder-level regression covering `BLOCK_64X64` V_PRED intra-in-inter.
+
+### Provenance reconciliation (2026-10-19)
+
+Authoritative fixing commit: `5456910982231296dcc6c7d3cf923f377eb130d8` (fix(core): keep AVX2 V predictor safe at 64x64).
+The original reference `5d694b76` does not resolve locally and is retained above for audit.
+Historical Fixed ledger commit `57e5445aed27a1f9005f9ee6125743892cd3e46a` has this fixing commit as its immediate parent.
+Original reopened defect was strict size validator rejecting64; candidate introduces separately checked storage helper and64 scalar fallback, preserving CPU guard. Same-commit release journal UnitA4 explicitly names bug and change.
+The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
+no regression was rerun and no new fix or verification verdict is recorded.
 
 ## Notes
 

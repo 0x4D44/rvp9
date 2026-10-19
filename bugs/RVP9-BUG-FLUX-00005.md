@@ -19,7 +19,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-07T10:54:24Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `92c340999cf6c71a840445d7908edc856dccf40c`, fixed by Codex)
+- **State history:** Open (2026-08-07T10:54:24Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `92c340999cf6c71a840445d7908edc856dccf40c`, fixed by Codex) -> Fixed (2026-10-19, provenance reconciliation by Codex only; original fixing attribution retained above; code=4acf9399a2cd57c080b7b0fff0e2016660fa596f)
 
 ## Observation
 
@@ -41,5 +41,14 @@ Regression evidence:
   passes and pins the ownership predicate.
 
 Awaiting independent verification before closure.
+
+### Provenance reconciliation (2026-10-19)
+
+Authoritative fixing commit: `4acf9399a2cd57c080b7b0fff0e2016660fa596f` (fix(enc): require worker before LF overlap (RVP9-BUG-FLUX-00005)).
+The original reference `92c340999cf6c71a840445d7908edc856dccf40c` does not resolve locally and is retained above for audit.
+Historical Fixed ledger commit `a7f17f4fde443f124cef41c98956f71e3f412cd5` has this fixing commit as its immediate parent.
+Exact original observation: configured max_threads>1 with no LF worker; candidate replaces max_threads predicate with actual worker ownership and adds ownership regression.
+The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
+no regression was rerun and no new fix or verification verdict is recorded.
 
 ## Notes

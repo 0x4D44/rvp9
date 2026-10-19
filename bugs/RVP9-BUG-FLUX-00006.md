@@ -19,7 +19,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-07T10:58:05Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `f7f5b47e1176aabcdcc336178a150a1d00a7e27e`, fixed by Codex)
+- **State history:** Open (2026-08-07T10:58:05Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `f7f5b47e1176aabcdcc336178a150a1d00a7e27e`, fixed by Codex) -> Fixed (2026-10-19, provenance reconciliation by Codex only; original fixing attribution retained above; code=92a70d745e69cd680040d62a88659f2163ab2777)
 
 ## Observation
 
@@ -40,5 +40,14 @@ Regression evidence:
 - A second exact byte-identity run reproduced the same length and hash.
 
 Awaiting independent verification before closure.
+
+### Provenance reconciliation (2026-10-19)
+
+Authoritative fixing commit: `92a70d745e69cd680040d62a88659f2163ab2777` (test(enc): refresh buffer-pool golden (RVP9-BUG-FLUX-00006)).
+The original reference `f7f5b47e1176aabcdcc336178a150a1d00a7e27e` does not resolve locally and is retained above for audit.
+Historical Fixed ledger commit `5b91a3ab9112b332bc87c34bcbd62b03bd7dcceb` has this fixing commit as its immediate parent.
+All original old/new length and FNV constants match exact candidate patch in w_buffer_pool.rs.
+The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
+no regression was rerun and no new fix or verification verdict is recorded.
 
 ## Notes

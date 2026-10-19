@@ -19,7 +19,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T09:00:46Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:08:16Z, deltic:auto role=fix run=fix-20260822T130204Z-1abda903 branch=task/bug-RVP9-BUG-KIL-00080-run-fix-20260822T130204Z-1abda903 code=706f1637 gate=manual)
+- **State history:** Open (2026-08-22T09:00:46Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:08:16Z, deltic:auto role=fix run=fix-20260822T130204Z-1abda903 branch=task/bug-RVP9-BUG-KIL-00080-run-fix-20260822T130204Z-1abda903 code=706f1637 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T130204Z-1abda903 branch=task/bug-RVP9-BUG-KIL-00080-run-fix-20260822T130204Z-1abda903 code=dc19bcea3f41952f6d0a2a53b027c852a79a5aed gate=manual provenance-only=true reconciled-by=Codex)
 
 ## Observation
 
@@ -39,6 +39,15 @@ Confirmed independently by the security lens, the lead's source trace, and an ad
 
 ## Fix
 
-<unfixed — raised only>
+Historical fix provenance is reconciled below. Independent behavioral verification remains pending.
+
+### Provenance reconciliation (2026-10-19)
+
+Authoritative fixing commit: `dc19bcea3f41952f6d0a2a53b027c852a79a5aed` (fix(dec): bound tile scratch by worker count).
+The original reference `706f1637` does not resolve locally and is retained above for audit.
+Historical Fixed ledger commit `4640da6d67a4c6b027ae275e01403079a805e5e9` has this fixing commit as its immediate parent.
+Replaces both parallel tile gates with parallel_tile_decode_enabled requiring num_tiles <= num_threads; converts both scratch-pool allocation expects to DecodeError::FrameAlloc propagation; adds parallel_tile_scratch_is_bounded_by_worker_count with 64 tiles/two workers case.
+The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
+no regression was rerun and no new fix or verification verdict is recorded.
 
 ## Notes

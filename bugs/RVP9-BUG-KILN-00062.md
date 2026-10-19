@@ -18,7 +18,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:21:41Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-08-12T14:53:12Z, deltic:auto role=fix run=fix-20260812T144948Z-p77389-n527102000-c1 branch=task/bug-RVP9-BUG-KILN-00062-run-fix-20260812T144948Z-p77389-n527102000-c1 code=77bcde95 gate=manual)
+- **State history:** Open (2026-07-31T10:21:41Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-08-12T14:53:12Z, deltic:auto role=fix run=fix-20260812T144948Z-p77389-n527102000-c1 branch=task/bug-RVP9-BUG-KILN-00062-run-fix-20260812T144948Z-p77389-n527102000-c1 code=77bcde95 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260812T144948Z-p77389-n527102000-c1 branch=task/bug-RVP9-BUG-KILN-00062-run-fix-20260812T144948Z-p77389-n527102000-c1 code=664d27379d2a2febbba9590e6f029db9b42b5662 gate=manual provenance-only=true reconciled-by=Codex)
 
 ## Observation
 
@@ -40,6 +40,16 @@ Actual: a global counter sampled across a concurrent window, so the assertion me
 
 ## Fix
 
-<unfixed — raised only>
+Historical fix provenance is reconciled below. Independent behavioral verification remains pending.
+
+### Provenance reconciliation (2026-10-19)
+
+Authoritative fixing commit: `664d27379d2a2febbba9590e6f029db9b42b5662` (test(dec): isolate tile scratch allocation counts).
+The original reference `77bcde95` does not resolve locally and is retained above for audit.
+Historical Fixed ledger commit `68fc924b2bf92ed3ac95dbe3fd349b69596f50e8` has this fixing commit as its immediate parent.
+Yv12ScratchPool gains instance-local allocations count incremented beside fresh allocation; Decoder exposes tile_scratch_pool_allocation_count. The recorded scratch reuse test is renamed multi_tile_parallel_decode_reuses_isolated_scratch_buffers and switches both before/after reads from process-global RVP9_G5_2_SCRATCH_ALLOCS to its own decoder counter. This directly isolates the original sibling-test measurement race.
+Contemporary corroboration: wrk_journals/2026.08.12 - JRN - v0.2.0-alpha.1 release qualification.md:154 (Unit A6 explicitly names KILN-00062 and per-decoder counter repair; added by this commit); wrk_docs/2026.08.23 - DAILY - KILN-Windows - Repo state report.md:91 (old77bcde95 bug pairing).
+The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
+no regression was rerun and no new fix or verification verdict is recorded.
 
 ## Notes

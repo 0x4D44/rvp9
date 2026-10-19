@@ -18,7 +18,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:21:56Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-08-12T14:48:53Z, deltic:auto role=fix run=fix-20260812T144418Z-p60165-n787396000-c1 branch=task/bug-RVP9-BUG-KILN-00063-run-fix-20260812T144418Z-p60165-n787396000-c1 code=cb9b5f64 gate=manual)
+- **State history:** Open (2026-07-31T10:21:56Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-08-12T14:48:53Z, deltic:auto role=fix run=fix-20260812T144418Z-p60165-n787396000-c1 branch=task/bug-RVP9-BUG-KILN-00063-run-fix-20260812T144418Z-p60165-n787396000-c1 code=cb9b5f64 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260812T144418Z-p60165-n787396000-c1 branch=task/bug-RVP9-BUG-KILN-00063-run-fix-20260812T144418Z-p60165-n787396000-c1 code=b18266bcbb3cec312da313eefb0d9fb286112445 gate=manual provenance-only=true reconciled-by=Codex)
 
 ## Observation
 
@@ -37,6 +37,15 @@ Verified present at trunk 4abe0d8 + 3a7aba2 by reading the current tree.
 
 ## Fix
 
-<unfixed — raised only>
+Historical fix provenance is reconciled below. Independent behavioral verification remains pending.
+
+### Provenance reconciliation (2026-10-19)
+
+Authoritative fixing commit: `b18266bcbb3cec312da313eefb0d9fb286112445` (test: expose missing codec oracle data).
+The original reference `cb9b5f64` does not resolve locally and is retained above for audit.
+Historical Fixed ledger commit `ce87e15a53a39694ebc64cb6873f68a1307f3f68` has this fixing commit as its immediate parent.
+Adds core build.rs fixture detection; replaces silent NotFound returns in captured_header_round_trip and write_compressed_header_captured_frame_round_trip with visible cfg_attr ignores plus hard read failures; conformance_runner_walks_all_vectors receives same visible-ignore contract; real_world_corpus_decodes_bit_exact replaces empty-fixture success with assert.
+The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
+no regression was rerun and no new fix or verification verdict is recorded.
 
 ## Notes
