@@ -6,15 +6,15 @@
 - **Area:** tests/core mv-search
 - **Raised:** 2026-08-07T11:41:04Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T054150Z-b2c37fe1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00008-run-verify-20261019T054150Z-b2c37fe1
+- **Owner base:** abb4ebb97cda585ecd9989dc65bcc3e4ee057b27
+- **Owner fingerprint:** sha256:3608f2a9ed10a261bdfc83704e53cbca69fc46ceb94f8cc4baa1d4b4ee5bd2b8
+- **Owner since:** 2026-10-19T05:41:50Z
+- **Owner until:** 2026-10-19T09:41:50Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
