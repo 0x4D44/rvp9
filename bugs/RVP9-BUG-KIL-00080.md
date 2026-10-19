@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00080 — Parallel decoder retains one full-frame scratch buffer per tile
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/frame decoder tile scratch
 - **Raised:** 2026-08-22T09:00:46Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T105946Z-f3e433d8
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00080-run-verify-20261019T105946Z-f3e433d8
-- **Owner base:** 8ecdcf42e5a1cf0a00bf967f0463576eac7387f6
-- **Owner fingerprint:** sha256:92d92a202a7677ddc5e70384cf5b86a44a91bcfb35e931d025f152f3b32a3523
-- **Owner since:** 2026-10-19T10:59:46Z
-- **Owner until:** 2026-10-19T14:59:46Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T09:00:46Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:08:16Z, deltic:auto role=fix run=fix-20260822T130204Z-1abda903 branch=task/bug-RVP9-BUG-KIL-00080-run-fix-20260822T130204Z-1abda903 code=706f1637 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T130204Z-1abda903 branch=task/bug-RVP9-BUG-KIL-00080-run-fix-20260822T130204Z-1abda903 code=dc19bcea3f41952f6d0a2a53b027c852a79a5aed gate=manual provenance-only=true reconciled-by=Codex)
+- **State history:** Open (2026-08-22T09:00:46Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:08:16Z, deltic:auto role=fix run=fix-20260822T130204Z-1abda903 branch=task/bug-RVP9-BUG-KIL-00080-run-fix-20260822T130204Z-1abda903 code=706f1637 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260822T130204Z-1abda903 branch=task/bug-RVP9-BUG-KIL-00080-run-fix-20260822T130204Z-1abda903 code=dc19bcea3f41952f6d0a2a53b027c852a79a5aed gate=manual provenance-only=true reconciled-by=Codex) -> Closed (2026-10-19T11:01:24Z, deltic:manual role=verify run=verify-20261019T105946Z-f3e433d8 verified_fix_run=fix-20260822T130204Z-1abda903 verdict=close)
 
 ## Observation
 
@@ -49,5 +49,9 @@ Historical Fixed ledger commit `4640da6d67a4c6b027ae275e01403079a805e5e9` has th
 Replaces both parallel tile gates with parallel_tile_decode_enabled requiring num_tiles <= num_threads; converts both scratch-pool allocation expects to DecodeError::FrameAlloc propagation; adds parallel_tile_scratch_is_bounded_by_worker_count with 64 tiles/two workers case.
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T11:01:24Z, deltic:auto run=verify-20261019T105946Z-f3e433d8 verified_fix_run=fix-20260822T130204Z-1abda903 verdict=close)
+
+Verifier note: Manual verify: On origin/main, fix dc19bcea3f41952f6d0a2a53b027c852a79a5aed is an ancestor of trunk. Both intra and inter paths call parallel_tile_decode_enabled, which only admits tile scratch when num_tiles <= num_threads; Yv12ScratchPool::take(num_tiles) remains inside those guarded paths. Allocation errors now map to DecodeError::FrameAlloc. Focused test parallel_tile_scratch_is_bounded_by_worker_count passed with 1 selected. Removing the worker-count cap made its exact 64-tile/two-worker assertion fail; restoring the cap passed. The control-flow proof was exercised without decoding a 64-c...
 
 ## Notes
