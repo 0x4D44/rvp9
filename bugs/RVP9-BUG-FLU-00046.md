@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00046 — AArch64 convolution stride validation wraps before raw-pointer reads
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/dsp/convolve8-neon
 - **Raised:** 2026-10-17T09:23:28Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T070806Z-0ec60150
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00046-run-verify-20261019T070806Z-0ec60150
-- **Owner base:** a51c420a0a83011e3e212b82942b2aad894db182
-- **Owner fingerprint:** sha256:7e17f1992aa832f60ed87126653e16da758411dc464e93211010fed1eb51746e
-- **Owner since:** 2026-10-19T07:08:06Z
-- **Owner until:** 2026-10-19T11:08:06Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
-- **Attempts:** fix=0, doubt=1, indeterminate=0
-- **State history:** Open (2026-10-17T09:23:28Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:46:28Z, deltic:auto role=fix run=fix-20261018T193520Z-291db43a branch=task/bug-RVP9-BUG-FLU-00046-run-fix-20261018T193520Z-291db43a code=b91d8917aa172d52a52dd4052ac668761a9f7098 gate=manual) -> Open (2026-10-18T21:50:39Z, deltic:manual role=verify run=verify-20261018T214336Z-b2440949 verified_fix_run=fix-20261018T193520Z-291db43a verdict=doubt reason=independent-review-finds-recorded-residual-remains-notes-explicitly-include-sibl) -> Fixed (2026-10-19T05:49:21Z, deltic:auto role=fix run=fix-20261019T052553Z-14eed6f1 branch=task/bug-RVP9-BUG-FLU-00046-run-fix-20261019T052553Z-14eed6f1 code=91c9978150e310dd69ee4a07b8f0ece7e59b4d48 gate=manual)
+- **Attempts:** fix=0, doubt=0, indeterminate=0
+- **State history:** Open (2026-10-17T09:23:28Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium) -> Fixed (2026-10-18T19:46:28Z, deltic:auto role=fix run=fix-20261018T193520Z-291db43a branch=task/bug-RVP9-BUG-FLU-00046-run-fix-20261018T193520Z-291db43a code=b91d8917aa172d52a52dd4052ac668761a9f7098 gate=manual) -> Open (2026-10-18T21:50:39Z, deltic:manual role=verify run=verify-20261018T214336Z-b2440949 verified_fix_run=fix-20261018T193520Z-291db43a verdict=doubt reason=independent-review-finds-recorded-residual-remains-notes-explicitly-include-sibl) -> Fixed (2026-10-19T05:49:21Z, deltic:auto role=fix run=fix-20261019T052553Z-14eed6f1 branch=task/bug-RVP9-BUG-FLU-00046-run-fix-20261019T052553Z-14eed6f1 code=91c9978150e310dd69ee4a07b8f0ece7e59b4d48 gate=manual) -> Closed (2026-10-19T10:59:15Z, deltic:manual role=verify run=verify-20261019T070806Z-0ec60150 verified_fix_run=fix-20261019T052553Z-14eed6f1 verdict=close)
 
 ## Observation
 
@@ -43,6 +43,10 @@ Native arm64 differential coverage and the complete recorded-family audit are in
 ### Verification summary (2026-10-18T21:50:39Z, deltic:auto run=verify-20261018T214336Z-b2440949 verified_fix_run=fix-20261018T193520Z-291db43a verdict=doubt)
 
 Verifier note: Manual verify: Independent review finds recorded residual remains: Notes explicitly include sibling unchecked span guards, but minmax_8x8_neon still validates with unchecked 7 * stride + 8 before raw-pointer dispatch. Original horizontal convolution repair verified on native arm64 Rust 1.95 release: exactly two safe-validator regressions pass, root-cause span-arithmetic reversal fails both named wrapped-source/destination assertions, restored code passes. No invalid pointer counterexample executed. Reopen same ID because its already-recorded sibling span issue was not fixed; do not treat focus...
+
+### Verification summary (2026-10-19T10:59:15Z, deltic:auto run=verify-20261019T070806Z-0ec60150 verified_fix_run=fix-20261019T052553Z-14eed6f1 verdict=close)
+
+Verifier note: Manual verify: Verified on origin/main fix 91c9978150e310dd69ee4a07b8f0ece7e59b4d48. The original horizontal source-span guard now uses checked multiply/add before the public wrapper can enter its raw-pointer loop. In release mode with overflow checks disabled, all five focused horizontal/vertical wrapped-extent tests and the shared strided-span test passed; the latter includes the recorded minmax wrap shape. Native arm64 minmax differential test also passed. Fails-before: restoring unchecked horizontal arithmetic made horizontal_validation_rejects_overflowing_source_extent fail on “accepted a...
 
 ## Notes
 
