@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00031 — Windows load sampling discards benchmarks on transient PDH failures
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** Medium
 - **Area:** bench/encode-headtohead
 - **Raised:** 2026-08-31T15:05:29Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T113101Z-eaebee0b
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00031-run-verify-20261019T113101Z-eaebee0b
-- **Owner base:** d5240272fb6c9064a833e231fccc4d85c58c2c0f
-- **Owner fingerprint:** sha256:45f3f1415732057899b7b92aec4d37c68f47fd2b243846d7cdb1f7f1e13f57bb
-- **Owner since:** 2026-10-19T11:31:01Z
-- **Owner until:** 2026-10-19T15:31:01Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-31T15:05:29Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-31T15:12:46Z, deltic:auto role=fix run=fix-20260831T150649Z-e1f6214c branch=task/bug-RVP9-BUG-FLU-00031-run-fix-20260831T150649Z-e1f6214c code=b437da2e gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260831T150649Z-e1f6214c branch=task/bug-RVP9-BUG-FLU-00031-run-fix-20260831T150649Z-e1f6214c code=ba67e87bc0bb316390cf4e1b07cd6ad78bd829cc gate=manual provenance-only=true reconciled-by=Codex)
+- **State history:** Open (2026-08-31T15:05:29Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-31T15:12:46Z, deltic:auto role=fix run=fix-20260831T150649Z-e1f6214c branch=task/bug-RVP9-BUG-FLU-00031-run-fix-20260831T150649Z-e1f6214c code=b437da2e gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260831T150649Z-e1f6214c branch=task/bug-RVP9-BUG-FLU-00031-run-fix-20260831T150649Z-e1f6214c code=ba67e87bc0bb316390cf4e1b07cd6ad78bd829cc gate=manual provenance-only=true reconciled-by=Codex) -> Closed (2026-10-19T11:34:29Z, deltic:manual role=verify run=verify-20261019T113101Z-eaebee0b verified_fix_run=fix-20260831T150649Z-e1f6214c verdict=close)
 
 ## Observation
 
@@ -38,5 +38,9 @@ Commit message explicitly names RVP9-BUG-FLU-00031. Adds load_with_retry using r
 Contemporary corroboration: wrk_journals/2026.07.30 - JRN - production parity drive.md:36888 (explicit bug31 and old b437da2e bounded-retry landed reference).
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T11:34:29Z, deltic:auto run=verify-20261019T113101Z-eaebee0b verified_fix_run=fix-20260831T150649Z-e1f6214c verdict=close)
+
+Verifier note: Manual verify: Independent verification on macOS at the probe boundary: cargo test -p rvp9-bench --bin encode-headtohead load_ --locked passed 6/6; guarded enforcement retries once and then fails closed after two failures. Fails-before: changed load_with_retry to a single read; recovery failed with None instead of Some(0.5), the two-failure call count was 1 instead of 2, and guarded_failures was 1 instead of 2. Restored read().or_else(read), confirmed the source diff was empty, and reran 6/6 green. This verifies the transient probe-failure behavior; native Windows Get-Counter/PDH was not exerc...
 
 ## Notes
