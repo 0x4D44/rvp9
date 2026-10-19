@@ -6,15 +6,15 @@
 - **Area:** encoder/rate-control integration
 - **Raised:** 2026-08-22T18:32:48Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T052709Z-e6646641
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00101-run-verify-20261019T052709Z-e6646641
+- **Owner base:** 6f220754d6f82a104ba3822fb01319b7295ad505
+- **Owner fingerprint:** sha256:e65c31a088297c212ab25ef070edfc3a7e6333bcf76c50dfdfa60335058bc775
+- **Owner since:** 2026-10-19T05:27:09Z
+- **Owner until:** 2026-10-19T09:27:09Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
