@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00006 — Buffer-pool byte golden lags accepted encoder output
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** Low
 - **Area:** tests/encoder buffer pool
 - **Raised:** 2026-08-07T10:58:05Z
 - **Discovery source:** Automation
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T114003Z-82cc144e
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00006-run-verify-20261019T114003Z-82cc144e
-- **Owner base:** 2998d0ee67df604d8d0091693e10d2a797a83ad6
-- **Owner fingerprint:** sha256:c8d443c21bd2a9f353e161dadbfc94051671f0a6d3d72a0677ed9e6bba177995
-- **Owner since:** 2026-10-19T11:40:03Z
-- **Owner until:** 2026-10-19T15:40:03Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-07T10:58:05Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `f7f5b47e1176aabcdcc336178a150a1d00a7e27e`, fixed by Codex) -> Fixed (2026-10-19, provenance reconciliation by Codex only; original fixing attribution retained above; code=92a70d745e69cd680040d62a88659f2163ab2777)
+- **State history:** Open (2026-08-07T10:58:05Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `f7f5b47e1176aabcdcc336178a150a1d00a7e27e`, fixed by Codex) -> Fixed (2026-10-19, provenance reconciliation by Codex only; original fixing attribution retained above; code=92a70d745e69cd680040d62a88659f2163ab2777) → Closed (2026-10-19T11:43:45Z, deltic:manual role=verify run=verify-20261019T114003Z-82cc144e verified_fix_run=manual:92a70d745e69cd680040d62a88659f2163ab2777 verdict=close)
 
 ## Observation
 
@@ -49,5 +49,9 @@ Historical Fixed ledger commit `5b91a3ab9112b332bc87c34bcbd62b03bd7dcceb` has th
 All original old/new length and FNV constants match exact candidate patch in w_buffer_pool.rs.
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T11:43:45Z, deltic:auto run=verify-20261019T114003Z-82cc144e verified_fix_run=manual:92a70d745e69cd680040d62a88659f2163ab2777 verdict=close)
+
+Verifier note: Manual verify: Independent verification: current tree w_buffer_pool suite passes 2/2 and reports its later accepted golden 6446 bytes / FNV-1a 0x20793807d02f6e58; the sibling decoder accepts all 12 frames. To verify FLUX-00006 at accepted fix 92a70d745e69cd680040d62a88659f2163ab2777 before later stream changes, a clean Deltic-managed tree reported 7053 bytes / 0x0d37a3ba82589d9a and both tests passed. Fails-before: changed only the golden constants back to pre-fix 7057 / 0xac2b85e46b0c37fc; the selected byte test emitted actual 7053 / 0x0d37a3ba82589d9a and failed the length assertion (7053 vs...
 
 ## Notes
