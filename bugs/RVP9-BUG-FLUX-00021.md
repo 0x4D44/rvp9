@@ -6,15 +6,15 @@
 - **Area:** decoder/inter prediction
 - **Raised:** 2026-08-12T14:08:04Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T065214Z-42e66faf
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00021-run-verify-20261019T065214Z-42e66faf
+- **Owner base:** a989c5c80d2197b1787d55f24ad5a9cfbe5357b8
+- **Owner fingerprint:** sha256:cfe3dff760db9da2f0564e2a97c2a64d15af68495462226cccada3b32158bd80
+- **Owner since:** 2026-10-19T06:52:14Z
+- **Owner until:** 2026-10-19T10:52:14Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
