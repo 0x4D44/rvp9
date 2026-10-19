@@ -6,15 +6,15 @@
 - **Area:** core/tile threading
 - **Raised:** 2026-08-20T21:14:56Z
 - **Discovery source:** Automation
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T160628Z-25f78d5a
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00028-run-verify-20261019T160628Z-25f78d5a
+- **Owner base:** 051fb6dfa4b330acb5a9509b8b8ac2e3dfadbd7b
+- **Owner fingerprint:** sha256:d7c5c85268095acf9a416d37d42f571277e9177c2d2e8984263414f9e8b40756
+- **Owner since:** 2026-10-19T16:06:28Z
+- **Owner until:** 2026-10-19T20:06:28Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
