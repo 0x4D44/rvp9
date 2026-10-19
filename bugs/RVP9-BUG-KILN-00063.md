@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** tests/false-green
 - **Raised:** 2026-07-31T10:21:56Z
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T162645Z-76d5d0c7
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00063-run-verify-20261019T162645Z-76d5d0c7
+- **Owner base:** 8a6160ab2ab62ba9759a8a5bdf45a8e6062960f3
+- **Owner fingerprint:** sha256:911624f852e880f7bbde528886672d2de7580617a5456d6afe145c805484bd37
+- **Owner since:** 2026-10-19T16:26:45Z
+- **Owner until:** 2026-10-19T20:26:45Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
