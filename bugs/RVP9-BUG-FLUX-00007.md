@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00007 — GOP byte golden lags accepted encoder output
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** Low
 - **Area:** tests/encoder GOP topology
 - **Raised:** 2026-08-07T11:00:30Z
 - **Discovery source:** Automation
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T114424Z-42a99472
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00007-run-verify-20261019T114424Z-42a99472
-- **Owner base:** 94c6c5355261c4739401dd428a0b931f05f7f283
-- **Owner fingerprint:** sha256:142738b6aa5a3855fca2ac69d83d911153b3eef4270265fcb0ad378182ebf8f9
-- **Owner since:** 2026-10-19T11:44:24Z
-- **Owner until:** 2026-10-19T15:44:24Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-07T11:00:30Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `bb188d336838e30fd600795e318397c99c340780`, fixed by Codex) -> Fixed (2026-10-19, provenance reconciliation by Codex only; original fixing attribution retained above; code=f613c0fbe60bae8160bdd86b5796354810882023)
+- **State history:** Open (2026-08-07T11:00:30Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `bb188d336838e30fd600795e318397c99c340780`, fixed by Codex) -> Fixed (2026-10-19, provenance reconciliation by Codex only; original fixing attribution retained above; code=f613c0fbe60bae8160bdd86b5796354810882023) → Closed (2026-10-19T11:47:36Z, deltic:manual role=verify run=verify-20261019T114424Z-42a99472 verified_fix_run=manual:f613c0fbe60bae8160bdd86b5796354810882023 verdict=close)
 
 ## Observation
 
@@ -49,5 +49,9 @@ Historical Fixed ledger commit `b7a35b7edef16fb6f95cba88e9eccc4788077d81` has th
 All original old/new length and FNV constants match exact candidate patch in w_gop_topology.rs.
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T11:47:36Z, deltic:auto run=verify-20261019T114424Z-42a99472 verified_fix_run=manual:f613c0fbe60bae8160bdd86b5796354810882023 verdict=close)
+
+Verifier note: Manual verify: At accepted fix commit f613c0f, restored only the pre-fix golden length/hash (23293 / 0xa34dc1d6f4307467); the selected gop_topology_byte_identity test ran and failed its length assertion with actual 23186 (0xc5a9eaff599669d2). Restored the accepted constants; both w_gop_topology tests passed. On current origin/main 8a967120, both tests also pass at the later accepted stream 22914 / 0xea3e42753795d112. The schedule oracle remains green.
 
 ## Notes
