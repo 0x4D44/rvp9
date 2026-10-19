@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00062 — tile_threading scratch-allocation test races its sibling tests and reds the workspace gate
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** harness/tile threading tests
 - **Raised:** 2026-07-31T10:21:41Z
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T161809Z-6155fdf7
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00062-run-verify-20261019T161809Z-6155fdf7
-- **Owner base:** 8976e007e5177cd852e6169098d5e07c4ab8025c
-- **Owner fingerprint:** sha256:634f053247958e81c0bd23fabfd15fa4c83c9efc1c531c6aaa169f02b6a3e782
-- **Owner since:** 2026-10-19T16:18:09Z
-- **Owner until:** 2026-10-19T20:18:09Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:21:41Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-08-12T14:53:12Z, deltic:auto role=fix run=fix-20260812T144948Z-p77389-n527102000-c1 branch=task/bug-RVP9-BUG-KILN-00062-run-fix-20260812T144948Z-p77389-n527102000-c1 code=77bcde95 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260812T144948Z-p77389-n527102000-c1 branch=task/bug-RVP9-BUG-KILN-00062-run-fix-20260812T144948Z-p77389-n527102000-c1 code=664d27379d2a2febbba9590e6f029db9b42b5662 gate=manual provenance-only=true reconciled-by=Codex)
+- **State history:** Open (2026-07-31T10:21:41Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-08-12T14:53:12Z, deltic:auto role=fix run=fix-20260812T144948Z-p77389-n527102000-c1 branch=task/bug-RVP9-BUG-KILN-00062-run-fix-20260812T144948Z-p77389-n527102000-c1 code=77bcde95 gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260812T144948Z-p77389-n527102000-c1 branch=task/bug-RVP9-BUG-KILN-00062-run-fix-20260812T144948Z-p77389-n527102000-c1 code=664d27379d2a2febbba9590e6f029db9b42b5662 gate=manual provenance-only=true reconciled-by=Codex) -> Closed (2026-10-19T16:35:50Z, deltic:manual role=verify run=verify-20261019T161809Z-6155fdf7 verified_fix_run=fix-20260812T144948Z-p77389-n527102000-c1 verdict=close)
 
 ## Observation
 
@@ -51,5 +51,9 @@ Yv12ScratchPool gains instance-local allocations count incremented beside fresh 
 Contemporary corroboration: wrk_journals/2026.08.12 - JRN - v0.2.0-alpha.1 release qualification.md:154 (Unit A6 explicitly names KILN-00062 and per-decoder counter repair; added by this commit); wrk_docs/2026.08.23 - DAILY - KILN-Windows - Repo state report.md:91 (old77bcde95 bug pairing).
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T16:35:50Z, deltic:auto run=verify-20261019T161809Z-6155fdf7 verified_fix_run=fix-20260812T144948Z-p77389-n527102000-c1 verdict=close)
+
+Verifier note: Manual verify: Independent manual verification at origin/main: cargo test -p rvp9-harness --test tile_threading passed 7/7 with 0 ignored; the focused multi_tile_parallel_decode_reuses_isolated_scratch_buffers test passed 1/1. Fails-before at fix 664d2737: reverted only the two test counter reads from decoder-local to process-global RVP9_G5_2_SCRATCH_ALLOCS; all seven tests were selected and the target assertion failed with left 12, right 8. Restored source diff is empty. Two unrelated historical skip-02 tests also failed in the pre-fix tree; the target regression assertion matched the recorde...
 
 ## Notes
