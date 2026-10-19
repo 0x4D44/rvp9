@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00101 — Q-mode lossless request is silently encoded at qindex 1
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/rate-control integration
 - **Raised:** 2026-08-22T18:32:48Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T052709Z-e6646641
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00101-run-verify-20261019T052709Z-e6646641
-- **Owner base:** 6f220754d6f82a104ba3822fb01319b7295ad505
-- **Owner fingerprint:** sha256:e65c31a088297c212ab25ef070edfc3a7e6333bcf76c50dfdfa60335058bc775
-- **Owner since:** 2026-10-19T05:27:09Z
-- **Owner until:** 2026-10-19T09:27:09Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T18:32:48Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:49:43Z, deltic:auto role=fix run=fix-20261015T233958Z-f4ab4ecc branch=task/bug-RVP9-BUG-KIL-00101-run-fix-20261015T233958Z-f4ab4ecc code=b6d3afc00423438c5026cdd0cb812acf5e4f8a97 gate=manual)
+- **State history:** Open (2026-08-22T18:32:48Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:49:43Z, deltic:auto role=fix run=fix-20261015T233958Z-f4ab4ecc branch=task/bug-RVP9-BUG-KIL-00101-run-fix-20261015T233958Z-f4ab4ecc code=b6d3afc00423438c5026cdd0cb812acf5e4f8a97 gate=manual) -> Closed (2026-10-19T05:39:41Z, deltic:manual role=verify run=verify-20261019T052709Z-e6646641 verified_fix_run=fix-20261015T233958Z-f4ab4ecc verdict=close)
 
 ## Observation
 
@@ -30,6 +30,10 @@ A caller can therefore construct the documented Q-mode configuration with `cq_le
 ## Fix
 
 Until the full qindex-0 transform, quantizer, and loop-filter path exists, reject configurations that can require qindex 0 instead of clamping after rate control. If lossless support is implemented, carry the lossless flag through reconstruction and packet writing and remove the clamp. Add end-to-end Q-mode qindex-0 coverage that checks either construction rejection or the emitted frame's reported and wire quantizer. Estimated effort: small for explicit rejection; large for lossless support.
+
+### Verification summary (2026-10-19T05:39:41Z, deltic:auto run=verify-20261019T052709Z-e6646641 verified_fix_run=fix-20261015T233958Z-f4ab4ecc verdict=close)
+
+Verifier note: Manual verify: Independent manual verification by Codex. Fix commit b6d3afc00423438c5026cdd0cb812acf5e4f8a97 is on origin/main. Original Q-mode cq_level=0 observation now rejects construction; regulated modes with min_qindex=0 reject likewise. cargo test -p rvp9-encoder --test w_lossless_config passed 3/3. Fails-before: in this isolated worktree reversed the constructor guard and restored q_index.max(1); the selected target ran 3 tests, and q_mode_rejects_lossless_inter_and_boosted_keyframe_requests plus regulated_modes_reject_bounds_that_allow_lossless failed on their named assertions; lossy ...
 
 ## Notes
 
