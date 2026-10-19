@@ -6,15 +6,15 @@
 - **Area:** core/mode-decision transforms
 - **Raised:** 2026-08-22T08:56:35Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T070249Z-6db58ac6
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00077-run-verify-20261019T070249Z-6db58ac6
+- **Owner base:** 754088c5a2d900770552051fbbbf4ee3b09e1d18
+- **Owner fingerprint:** sha256:bfdf8b144151c188723b8714a1e40133e099f72a2b71e5acddb8ac5ebf2a63ff
+- **Owner since:** 2026-10-19T07:02:49Z
+- **Owner until:** 2026-10-19T11:02:49Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
