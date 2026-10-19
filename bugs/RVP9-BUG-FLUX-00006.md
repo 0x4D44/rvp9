@@ -6,15 +6,15 @@
 - **Area:** tests/encoder buffer pool
 - **Raised:** 2026-08-07T10:58:05Z
 - **Discovery source:** Automation
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20261019T114003Z-82cc144e
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00006-run-verify-20261019T114003Z-82cc144e
+- **Owner base:** 2998d0ee67df604d8d0091693e10d2a797a83ad6
+- **Owner fingerprint:** sha256:c8d443c21bd2a9f353e161dadbfc94051671f0a6d3d72a0677ed9e6bba177995
+- **Owner since:** 2026-10-19T11:40:03Z
+- **Owner until:** 2026-10-19T15:40:03Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
