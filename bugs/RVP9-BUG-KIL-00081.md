@@ -6,15 +6,15 @@
 - **Area:** decoder/tile context API
 - **Raised:** 2026-08-22T10:24:23Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T070616Z-5f97e55c
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00081-run-verify-20261019T070616Z-5f97e55c
-- **Owner base:** 833caa2908f2f5224fb47657c5a9c46f8c8a289e
-- **Owner fingerprint:** sha256:55d9a3ef3db613d4ce2b262ac4132c83893c389d92af4d272c1fbd124221e880
-- **Owner since:** 2026-10-19T07:06:16Z
-- **Owner until:** 2026-10-19T11:06:16Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
