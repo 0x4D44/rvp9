@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00026 — GOP topology golden rejects accepted unrestricted-MV output
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** Low
 - **Area:** encoder/test infrastructure
 - **Raised:** 2026-08-14T23:02:42Z
 - **Discovery source:** Automation
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261019T160745Z-f45c75cd
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00026-run-verify-20261019T160745Z-f45c75cd
-- **Owner base:** 8f2be41198d0d6df7c8ebfb39839b89bfca40e9f
-- **Owner fingerprint:** sha256:2c9778c877ff7d0ce502edf81a508d8c4183935002a9ef62f7065cb2f2c693b3
-- **Owner since:** 2026-10-19T16:07:45Z
-- **Owner until:** 2026-10-19T20:07:45Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-14T23:02:42Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-14T23:08:58Z, deltic:auto role=fix run=fix-20260814T230323Z-p28077-n811046000-c1 branch=task/bug-RVP9-BUG-FLUX-00026-run-fix-20260814T230323Z-p28077-n811046000-c1 code=982de73e gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260814T230323Z-p28077-n811046000-c1 branch=task/bug-RVP9-BUG-FLUX-00026-run-fix-20260814T230323Z-p28077-n811046000-c1 code=93653fb2e77c0e207fef344a334bad556efc232f gate=manual provenance-only=true reconciled-by=Codex)
+- **State history:** Open (2026-08-14T23:02:42Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-14T23:08:58Z, deltic:auto role=fix run=fix-20260814T230323Z-p28077-n811046000-c1 branch=task/bug-RVP9-BUG-FLUX-00026-run-fix-20260814T230323Z-p28077-n811046000-c1 code=982de73e gate=manual) -> Fixed (2026-10-19T10:53:08Z, deltic:auto role=fix run=fix-20260814T230323Z-p28077-n811046000-c1 branch=task/bug-RVP9-BUG-FLUX-00026-run-fix-20260814T230323Z-p28077-n811046000-c1 code=93653fb2e77c0e207fef344a334bad556efc232f gate=manual provenance-only=true reconciled-by=Codex) -> Closed (2026-10-19T16:13:05Z, deltic:manual role=verify run=verify-20261019T160745Z-f45c75cd verified_fix_run=fix-20260814T230323Z-p28077-n811046000-c1 verdict=close)
 
 ## Observation
 
@@ -37,5 +37,9 @@ Historical Fixed ledger commit `a7ace4f85d9fc6ae1a0508c8529bdc37155efe3d` has th
 All original old/new length and FNV constants match exact candidate patch; commit names bug, same unchanged sibling oracle and UMV first-changer explanation. Release journal also records full missing982de73e630d98f575871b7666eccebdcbd1e4dc.
 The recovered commit is an ancestor of `origin/main`. This is a metadata correction only;
 no regression was rerun and no new fix or verification verdict is recorded.
+
+### Verification summary (2026-10-19T16:13:05Z, deltic:auto run=verify-20261019T160745Z-f45c75cd verified_fix_run=fix-20260814T230323Z-p28077-n811046000-c1 verdict=close)
+
+Verifier note: Manual verify: Current origin/main release run passed both GOP tests at 22914 bytes / 0xea3e42753795d112. On fix commit 93653fb2, restored only the pre-fix golden (24229 / 0x124b0ed76b9e627d); the selected gop_topology_byte_identity test failed its length assertion with 22914 vs 24229. Restored the accepted constants, confirmed an empty scratch diff, and reran both release tests: 2 passed. The schedule-and-decode oracle remains green.
 
 ## Notes
