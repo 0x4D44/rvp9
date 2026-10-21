@@ -1,0 +1,27 @@
+{
+  "observed_utc": "2026-10-21T07:58:04.233863+00:00",
+  "quiet": {
+    "live": true,
+    "holder": {
+      "reason": "RVP9 beta actual portable artifact speed and latency qualification",
+      "granted_at": 1792569463,
+      "expires_at": 1792570663
+    },
+    "open_after": 1792543506,
+    "queue": [],
+    "heavy_processes": 1,
+    "heavy_process_names": [
+      "rustc (pid 65822)"
+    ],
+    "heavy_processes_low_priority": 20,
+    "own_measurements": 0
+  },
+  "load_metric": "unix_one_minute_load_average",
+  "sysctl_raw": "{ 60.26 72.77 69.21 }\n",
+  "load": 60.26,
+  "maximum": 0.75,
+  "eligible": false,
+  "speed_groups_started": 0,
+  "latency_groups_started": 0,
+  "own_quality_and_tests_terminal": true
+}

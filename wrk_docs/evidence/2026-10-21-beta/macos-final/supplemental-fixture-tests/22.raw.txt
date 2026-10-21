@@ -1,0 +1,6 @@
+
+running 1 test
+test scratch_tile_decode_and_lf_match_serial ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.44s
+

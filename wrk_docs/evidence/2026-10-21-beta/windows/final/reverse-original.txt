@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+# Qualify the decoder in the reverse direction: pinned libvpx vpxenc emits
+# each stream, then rvp9dec and the same pinned vpxdec must produce identical
+# decoded I420 bytes.
+#
+# The gate intentionally uses a small, locally generated clip. It is a fast
+# correctness tripwire for decoder changes, not a substitute for the full
+# official conformance matrix or the encoder quality gates.
+
+set -euo pipefail
+
+readonly PINNED_LIBVPX_REVISION="12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+readonly WIDTH=128
+readonly HEIGHT=64
+readonly FPS="30/1"
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+source "$repo_root/scripts/qualification-file-size.sh"
+
+frames="${RVP9_REFERENCE_DECODER_FRAMES:-12}"
+target_bitrate="${RVP9_REFERENCE_DECODER_TARGET_BITRATE:-512}"
+kf_max_dist="${RVP9_REFERENCE_DECODER_KF_MAX_DIST:-12}"
+vpxenc="${RVP9_REFERENCE_DECODER_VPXENC:-$repo_root/build/libvpx/vpxenc}"
+vpxdec="${RVP9_REFERENCE_DECODER_VPXDEC:-$repo_root/build/libvpx/vpxdec}"
+rvp9dec="${RVP9_REFERENCE_DECODER_RVP9DEC:-}"
+libvpx_source="${RVP9_REFERENCE_DECODER_LIBVPX_SOURCE:-$repo_root/third_party/libvpx}"
+ffmpeg_bin="${RVP9_REFERENCE_DECODER_FFMPEG:-ffmpeg}"
+configured_work_dir="${RVP9_REFERENCE_DECODER_WORK_DIR:-}"
+
+case "$frames" in
+    ''|*[!0-9]*)
+        echo "RVP9_REFERENCE_DECODER_FRAMES must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+if [ "$frames" -lt 1 ]; then
+    echo "RVP9_REFERENCE_DECODER_FRAMES must be a positive integer" >&2
+    exit 2
+fi
+case "$target_bitrate" in
+    ''|*[!0-9]*)
+        echo "RVP9_REFERENCE_DECODER_TARGET_BITRATE must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+if [ "$target_bitrate" -lt 1 ]; then
+    echo "RVP9_REFERENCE_DECODER_TARGET_BITRATE must be a positive integer" >&2
+    exit 2
+fi
+case "$kf_max_dist" in
+    ''|*[!0-9]*)
+        echo "RVP9_REFERENCE_DECODER_KF_MAX_DIST must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+if [ "$kf_max_dist" -lt 1 ]; then
+    echo "RVP9_REFERENCE_DECODER_KF_MAX_DIST must be a positive integer" >&2
+    exit 2
+fi
+
+for tool in cargo cmp git rustc shasum stat; do
+    command -v "$tool" >/dev/null 2>&1 || {
+        echo "missing required tool: $tool" >&2
+        exit 1
+    }
+done
+command -v "$ffmpeg_bin" >/dev/null 2>&1 || {
+    echo "missing ffmpeg; install it or set RVP9_REFERENCE_DECODER_FFMPEG" >&2
+    exit 1
+}
+
+for binary in "$vpxenc" "$vpxdec"; do
+    if [ ! -x "$binary" ]; then
+        echo "missing executable: $binary" >&2
+        echo "build pinned libvpx with scripts/build-libvpx.sh or set the matching RVP9_REFERENCE_DECODER_* override" >&2
+        exit 1
+    fi
+done
+
+libvpx_root="$(git -C "$libvpx_source" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$libvpx_root" ] || [ "$(cd "$libvpx_root" && pwd -P)" != "$(cd "$libvpx_source" && pwd -P)" ]; then
+    echo "libvpx source is not an initialized standalone checkout: $libvpx_source" >&2
+    echo "initialize third_party/libvpx or set RVP9_REFERENCE_DECODER_LIBVPX_SOURCE" >&2
+    exit 1
+fi
+libvpx_revision="$(git -C "$libvpx_source" rev-parse HEAD)"
+if [ "$libvpx_revision" != "$PINNED_LIBVPX_REVISION" ]; then
+    echo "wrong libvpx revision: $libvpx_revision" >&2
+    echo "expected: $PINNED_LIBVPX_REVISION" >&2
+    exit 1
+fi
+if ! git -C "$libvpx_source" diff --quiet || ! git -C "$libvpx_source" diff --cached --quiet; then
+    echo "libvpx source checkout is dirty: $libvpx_source" >&2
+    exit 1
+fi
+
+host_triple="$(rustc -vV | sed -n 's/^host: //p')"
+exe_suffix=""
+case "$host_triple" in
+    *-windows-*) exe_suffix=".exe" ;;
+esac
+if [ -z "$rvp9dec" ]; then
+    rvp9dec="$repo_root/target/release/rvp9dec$exe_suffix"
+fi
+
+if [ -n "$configured_work_dir" ]; then
+    mkdir -p "$configured_work_dir"
+    work_dir="$(cd "$configured_work_dir" && pwd -P)"
+    cleanup_rows=0
+else
+    work_dir="$(mktemp -d "${TMPDIR:-/tmp}/rvp9-reference-decoder.XXXXXX")"
+    cleanup_rows=1
+fi
+manifest="$work_dir/qualification.txt"
+source_y4m="$work_dir/source-128x64-${frames}f.y4m"
+
+sha256_file() {
+    shasum -a 256 "$1" | awk '{print $1}'
+}
+
+file_size() {
+    qualification_file_size "$1"
+}
+
+version_line() {
+    "$1" --version 2>&1 | head -n 1 || true
+}
+
+echo "Preparing deterministic ${WIDTH}x${HEIGHT}, ${frames}-frame Y4M source in $work_dir"
+"$ffmpeg_bin" -hide_banner -loglevel error \
+    -f lavfi -i "testsrc2=size=${WIDTH}x${HEIGHT}:rate=${FPS}" \
+    -frames:v "$frames" -pix_fmt yuv420p -f yuv4mpegpipe "$source_y4m"
+
+if [ ! -s "$source_y4m" ]; then
+    echo "ffmpeg produced no source: $source_y4m" >&2
+    exit 1
+fi
+
+cargo build --release --locked -p rvp9-cli --bin rvp9dec
+if [ ! -x "$rvp9dec" ]; then
+    echo "expected release decoder binary: $rvp9dec" >&2
+    exit 1
+fi
+
+expected_bytes=$((WIDTH * HEIGHT * 3 / 2 * frames))
+source_sha256="$(sha256_file "$source_y4m")"
+
+rows=()
+for cpu in 6 7 8; do
+    for mode in cbr vbr; do
+        rows+=("cpu${cpu}-${mode}-baseline|$cpu|$mode|0|0")
+        rows+=("cpu${cpu}-${mode}-aq3|$cpu|$mode|3|0")
+        rows+=("cpu${cpu}-${mode}-denoiser|$cpu|$mode|0|1")
+        rows+=("cpu${cpu}-${mode}-combined|$cpu|$mode|3|1")
+    done
+done
+
+if [ "${#rows[@]}" -ne 24 ]; then
+    echo "internal error: reference decoder matrix must contain 24 rows" >&2
+    exit 1
+fi
+
+{
+    echo "rvp9 reverse reference-decoder qualification"
+    echo "git_commit=$(git rev-parse HEAD)"
+    echo "host=$(uname -a)"
+    echo "host_triple=$host_triple"
+    echo "rustc=$(rustc --version)"
+    echo "cargo=$(cargo --version)"
+    echo "ffmpeg_path=$ffmpeg_bin"
+    echo "ffmpeg_version=$(version_line "$ffmpeg_bin")"
+    echo "libvpx_source=$libvpx_source"
+    echo "libvpx_revision=$libvpx_revision"
+    echo "vpxenc_path=$vpxenc"
+    echo "vpxenc_sha256=$(sha256_file "$vpxenc")"
+    echo "vpxdec_path=$vpxdec"
+    echo "vpxdec_sha256=$(sha256_file "$vpxdec")"
+    echo "rvp9dec_path=$rvp9dec"
+    echo "rvp9dec_sha256=$(sha256_file "$rvp9dec")"
+    echo "width=$WIDTH"
+    echo "height=$HEIGHT"
+    echo "fps=$FPS"
+    echo "frames=$frames"
+    echo "target_bitrate_kbps=$target_bitrate"
+    echo "kf_max_dist=$kf_max_dist"
+    echo "expected_decoded_i420_bytes=$expected_bytes"
+    echo "source_path=$source_y4m"
+    echo "source_sha256=$source_sha256"
+    echo "matrix_rows=${#rows[@]}"
+    echo "encode_flags=--codec=vp9 --rt --passes=1 --lag-in-frames=0 --tune-content=default --target-bitrate=$target_bitrate --kf-max-dist=$kf_max_dist --ivf"
+    echo "results_begin"
+} > "$manifest"
+
+run_row() {
+    row_number="$1"
+    row="$2"
+    IFS='|' read -r label cpu mode aq noise <<< "$row"
+    ivf="$work_dir/$label.ivf"
+    rvp_yuv="$work_dir/$label.rvp9.i420"
+    vpx_yuv="$work_dir/$label.vpx.i420"
+
+    printf '[%02d/%02d] %s\n' "$row_number" "${#rows[@]}" "$label"
+    "$vpxenc" --codec=vp9 --rt --passes=1 \
+        --lag-in-frames=0 --tune-content=default \
+        --cpu-used="$cpu" --end-usage="$mode" \
+        --target-bitrate="$target_bitrate" --kf-max-dist="$kf_max_dist" \
+        --aq-mode="$aq" --noise-sensitivity="$noise" \
+        --limit="$frames" --ivf --quiet -o "$ivf" "$source_y4m"
+
+    "$rvp9dec" --codec=vp9 --i420 -o "$rvp_yuv" "$ivf"
+    "$vpxdec" --codec=vp9 --i420 -o "$vpx_yuv" "$ivf"
+
+    for decoded in "$rvp_yuv" "$vpx_yuv"; do
+        if [ ! -f "$decoded" ]; then
+            echo "$label: decoder produced no output: $decoded" >&2
+            return 1
+        fi
+        actual_bytes="$(file_size "$decoded")" || return 1
+        if [ "$actual_bytes" != "$expected_bytes" ]; then
+            echo "$label: decoded byte count $actual_bytes, expected $expected_bytes: $decoded" >&2
+            return 1
+        fi
+    done
+
+    if ! cmp -s "$rvp_yuv" "$vpx_yuv"; then
+        echo "$label: rvp9dec and pinned vpxdec outputs differ" >&2
+        return 1
+    fi
+
+    stream_sha256="$(sha256_file "$ivf")"
+    rvp9_sha256="$(sha256_file "$rvp_yuv")"
+    vpx_sha256="$(sha256_file "$vpx_yuv")"
+    echo "$label|PASS|cpu=$cpu|mode=$mode|aq=$aq|noise=$noise|ivf_sha256=$stream_sha256|rvp9dec_sha256=$rvp9_sha256|vpxdec_sha256=$vpx_sha256|bytes=$expected_bytes" \
+        >> "$manifest"
+
+    if [ "$cleanup_rows" -eq 1 ]; then
+        rm -f -- "$ivf" "$rvp_yuv" "$vpx_yuv"
+    fi
+}
+
+row_number=0
+for row in "${rows[@]}"; do
+    row_number=$((row_number + 1))
+    run_row "$row_number" "$row"
+done
+
+echo "results_end" >> "$manifest"
+echo "Reverse reference-decoder qualification passed: ${#rows[@]}/${#rows[@]} streams."
+echo "Evidence: $manifest"

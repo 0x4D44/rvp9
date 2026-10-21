@@ -1,0 +1,25 @@
+{
+  "index": 23,
+  "target": "tests/lossless.rs",
+  "test": "lossless_quantizer_00_decodes_bit_exact",
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/deps/lossless-b9949ea7544f6b06",
+    "--ignored",
+    "--exact",
+    "lossless_quantizer_00_decodes_bit_exact",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/md/language/rvp9/crates/rvp9-harness",
+  "binary_sha256": "5a7b0c407aa556f774aaf0ec30c8dc739c96eabd63da5adcbc7e44173420efbe",
+  "original_status": "ignored",
+  "original_ignore_reason": ", requires tests/conformance/vectors; run scripts/fetch-vectors.sh",
+  "started_utc": "2026-10-21T07:53:37.657701+00:00",
+  "exit_code": 0,
+  "exact_one_test_passed": true,
+  "raw_file": "23.raw.txt",
+  "raw_sha256": "fc51861ccb6d8faed322e2a930dddc4a472d759cbf1f7349d3e30ce0cbc81b7b",
+  "ended_utc": "2026-10-21T07:53:38.001287+00:00"
+}

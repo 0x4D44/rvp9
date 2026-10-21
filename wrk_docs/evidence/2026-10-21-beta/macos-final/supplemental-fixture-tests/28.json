@@ -1,0 +1,25 @@
+{
+  "index": 28,
+  "target": "tests/tile_threading.rs",
+  "test": "determinism_n1_eq_n2",
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/deps/tile_threading-0f1fb89a0514c8b3",
+    "--ignored",
+    "--exact",
+    "determinism_n1_eq_n2",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/md/language/rvp9/crates/rvp9-harness",
+  "binary_sha256": "15da100dab2b7f2a051c310489ce9973c159efe938d6d2598d7261c59d0960d9",
+  "original_status": "ignored",
+  "original_ignore_reason": ", requires tests/conformance/vectors; run scripts/fetch-vectors.sh",
+  "started_utc": "2026-10-21T07:55:03.786410+00:00",
+  "exit_code": 0,
+  "exact_one_test_passed": true,
+  "raw_file": "28.raw.txt",
+  "raw_sha256": "42790cbaa49701531b4d2e679b11f1e9ea744a0f6e57ae3923b83e7a9b8a441b",
+  "ended_utc": "2026-10-21T07:56:53.968302+00:00"
+}

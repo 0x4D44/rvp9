@@ -1,0 +1,25 @@
+{
+  "index": 5,
+  "target": "tests/conformance_coverage.rs",
+  "test": "vec_quantizer_00",
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/deps/conformance_coverage-20f8fd4a4bef227a",
+    "--ignored",
+    "--exact",
+    "vec_quantizer_00",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/md/language/rvp9/crates/rvp9-decoder",
+  "binary_sha256": "c41cc6a48dc8982c60d7fae5b8f8777978da24b9cba419861459889c90306830",
+  "original_status": "ignored",
+  "original_ignore_reason": ", requires tests/conformance/vectors; run scripts/fetch-vectors.sh",
+  "started_utc": "2026-10-21T07:51:33.677086+00:00",
+  "exit_code": 0,
+  "exact_one_test_passed": true,
+  "raw_file": "05.raw.txt",
+  "raw_sha256": "99a4eb8547feed28d424a62b2486f284032339509703a25b58cd5db98dfdb5d0",
+  "ended_utc": "2026-10-21T07:51:34.068049+00:00"
+}

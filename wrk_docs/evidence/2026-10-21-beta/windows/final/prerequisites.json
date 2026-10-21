@@ -1,0 +1,8 @@
+﻿{
+    "core_autocrlf":  "false",
+    "cargo_fuzz":  "cargo-fuzz 0.13.1",
+    "git_commit":  "feeb4cf87c65e4be5402b5661f6c8e3103bd304e",
+    "core_longpaths":  "true",
+    "public_origin":  "git@github.com:0x4D44/rvp9.git",
+    "encoded_exists":  false
+}

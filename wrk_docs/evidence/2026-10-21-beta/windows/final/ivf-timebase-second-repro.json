@@ -1,0 +1,15 @@
+﻿{
+    "pts":  [
+                0,
+                33,
+                66,
+                100
+            ],
+    "file":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\beta-final-win-914ede5e\\quality\\quality\\rows\\aq3-cbr-720p30-ducks_take_off-cpu6\\streams\\anchor_420k.ivf",
+    "num":  1000,
+    "second_reproduction":  "ducks_take_off independent row",
+    "bytes":  372809,
+    "true_60f_30fps_kbps":  1491.236,
+    "den":  1,
+    "sha256":  "AF74F38F78188768B03D278FD93B817F453CA3AE7800F1395BD7DCD4904799EB"
+}

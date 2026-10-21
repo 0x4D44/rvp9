@@ -1,0 +1,25 @@
+{
+  "index": 1,
+  "target": "unittests src/lib.rs",
+  "test": "bitstream::compressed_header::tests::write_compressed_header_captured_frame_round_trip",
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/deps/rvp9_core-dd4c362a92a12af2",
+    "--ignored",
+    "--exact",
+    "bitstream::compressed_header::tests::write_compressed_header_captured_frame_round_trip",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/md/language/rvp9/crates/rvp9-core",
+  "binary_sha256": "01360ea9fff969f0270011189ca454f843c9c8c9d026efe0cc4a021fe0f6b886",
+  "original_status": "ignored",
+  "original_ignore_reason": ", requires scripts/fetch-vectors.sh",
+  "started_utc": "2026-10-21T07:50:39.895690+00:00",
+  "exit_code": 0,
+  "exact_one_test_passed": true,
+  "raw_file": "01.raw.txt",
+  "raw_sha256": "0c7617ac0e9773d3eb437ea161d7cfbe284ed2e42ba3a55baff5e30f50a88289",
+  "ended_utc": "2026-10-21T07:50:40.772990+00:00"
+}

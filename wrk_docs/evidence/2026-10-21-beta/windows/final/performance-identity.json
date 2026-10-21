@@ -1,0 +1,22 @@
+﻿{
+    "runner_sha256":  "79EE179D1ACC8600FA5861AB6CB3D23B0C163FCB2308774D1D8D71C36E5D7CBA",
+    "files":  [
+                  {
+                      "sha256":  "79EE179D1ACC8600FA5861AB6CB3D23B0C163FCB2308774D1D8D71C36E5D7CBA",
+                      "path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\beta-public-win-e81bd1f0\\public-rvp9\\.worktrees\\public-rvp9\\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\\scripts\\qualify-production-encoder.sh"
+                  },
+                  {
+                      "sha256":  "A4B487066F13C468C0C8FCF3653B5CAC568428F65F5B1BD35B0879BB5F714A52",
+                      "path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\beta-final-win-914ede5e\\target\\x86_64-pc-windows-msvc\\release\\encode-headtohead.exe"
+                  },
+                  {
+                      "sha256":  "592929EBBA6F01D57DB45764428270D1BD8B417295EB6F97F540FBED51A92CE7",
+                      "path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\beta-final-win-914ede5e\\target\\x86_64-pc-windows-msvc\\release\\realtime.exe"
+                  },
+                  {
+                      "sha256":  "084DF45E21AF614854C8BA80BF7E3C6F6C0679BEA4661C31146BAFCF70AF375D",
+                      "path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\beta-final-win-914ede5e\\dist\\rvp9-0.2.0-beta.1-x86_64-pc-windows-msvc\\rvp9enc.exe"
+                  }
+              ],
+    "source":  "15bf7162c9fb92a5165fab652460bd42da03a6e6"
+}

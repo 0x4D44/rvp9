@@ -1,0 +1,99 @@
+bash.exe :    Compiling crossbeam-utils v0.8.21
+At line:22 char:1
++ & 'C:\Program Files\Git\bin\bash.exe' -lc 'bash /c/Users/marti/AppDat ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling crossbeam-utils v0.8.21:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling rvp9-core v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-
+rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-core)
+   Compiling serde_core v1.0.228
+   Compiling typenum v1.20.1
+   Compiling zmij v1.0.21
+   Compiling rvp9-decoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-decoder)
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling static_assertions v1.1.0
+   Compiling itoa v1.0.18
+   Compiling rvp9-harness v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-harness)
+   Compiling memchr v2.8.0
+   Compiling cfg-if v1.0.4
+   Compiling cpufeatures v0.2.17
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-encoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-encoder)
+   Compiling rvp9-io v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-rv
+p9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-io)
+    Finished `release` profile [optimized + debuginfo] target(s) in 53.09s
+     Running tests\quality_gate.rs (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-final-win-914ede5e\portable-o
+racle-target\x86_64-pc-windows-msvc\release\deps\quality_gate-d76217a85c6cc290.exe)
+
+running 1 test
+Stage 4b Exit Gate ÔÇö AQ.5 Measurement Report
+=============================================
+Source: foreman_cif y4m centre-crop from 
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\tests\corpus\foreman_cif.y4m ÔåÆ 256x256 
+@ 29.97002997002997 fps
+Frames: 64    Target bitrates: [25000, 50000, 100000, 250000] bps
+
+Curve 1: rvp9 AqMode::Off
+  rvp9-off   target=   25 kbps  ÔåÆ  actual=   43.3 kbps,  PSNR= 28.28 dB
+  rvp9-off   target=   50 kbps  ÔåÆ  actual=   68.6 kbps,  PSNR= 29.88 dB
+  rvp9-off   target=  100 kbps  ÔåÆ  actual=  126.2 kbps,  PSNR= 32.94 dB
+  rvp9-off   target=  250 kbps  ÔåÆ  actual=  249.8 kbps,  PSNR= 36.47 dB
+Curve 2: rvp9 AqMode::CyclicRefresh
+  rvp9-aq    target=   25 kbps  ÔåÆ  actual=   45.3 kbps,  PSNR= 28.36 dB
+  rvp9-aq    target=   50 kbps  ÔåÆ  actual=   70.5 kbps,  PSNR= 29.80 dB
+  rvp9-aq    target=  100 kbps  ÔåÆ  actual=  125.6 kbps,  PSNR= 32.64 dB
+  rvp9-aq    target=  250 kbps  ÔåÆ  actual=  246.7 kbps,  PSNR= 36.08 dB
+AQ activation: boosted_mi_cells=9536 active_frames=83
+
+libvpx-stock available at: 
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\vpxenc.exe
+Curve 3: libvpx --aq-mode=0
+  libvpx-off  target=   25 kbps  ÔåÆ  actual=   45.8 kbps,  PSNR= 28.10 dB
+  libvpx-off  target=   50 kbps  ÔåÆ  actual=   72.1 kbps,  PSNR= 29.87 dB
+  libvpx-off  target=  100 kbps  ÔåÆ  actual=  137.5 kbps,  PSNR= 33.13 dB
+  libvpx-off  target=  250 kbps  ÔåÆ  actual=  288.1 kbps,  PSNR= 36.75 dB
+Curve 4: libvpx --aq-mode=3
+  libvpx-aq   target=   25 kbps  ÔåÆ  actual=   48.5 kbps,  PSNR= 28.09 dB
+  libvpx-aq   target=   50 kbps  ÔåÆ  actual=   74.2 kbps,  PSNR= 30.03 dB
+  libvpx-aq   target=  100 kbps  ÔåÆ  actual=  138.3 kbps,  PSNR= 32.78 dB
+  libvpx-aq   target=  250 kbps  ÔåÆ  actual=  283.3 kbps,  PSNR= 36.76 dB
+
+Curve summaries:
+  rvp9_off  = [(43.340409590409585, 28.284049521179373), (68.60514485514486, 29.875161854409143), (126.20754245754246, 
+32.94076095279053), (249.8301698301698, 36.46821574885209)]
+  rvp9_aq   = [(45.307192807192806, 28.35828229825213), (70.48201798201798, 29.795490523736277), (125.55944055944056, 
+32.64013194043842), (246.67582417582418, 36.079395282911136)]
+  libvpx_off= [(45.83916083916084, 28.10258418859916), (72.0516983016983, 29.874306678573394), (137.48751248751248, 
+33.12688068457516), (288.0981518481518, 36.75233949964348)]
+  libvpx_aq = [(48.52147852147852, 28.09394807643367), (74.2395104895105, 30.031661260490353), (138.32667332667333, 
+32.7754615627247), (283.30294705294705, 36.76416886383504)]
+
+AQ gain (negative = AQ saves bits at matched PSNR):
+  rvp9   AQ gain : +4.977 %
+  libvpx AQ gain : +4.714 %
+
+Delta (gain_rvp9 - gain_libvpx) : +0.263 %
+Stage 4b literal gate (|delta| <= 0.3 %): PASS
+Stage 4b literal gate (|delta| <= 2.0 %, informational): PASS
+
+Coherence report ÔÇö max non-monotonic PSNR drop across the two rvp9 curves: 0.00 dB
+test bdrate_gate_stage4b_aq_realcontent ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 1.64s
+

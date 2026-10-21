@@ -1,0 +1,26 @@
+﻿[
+    {
+        "fps_num":  1000,
+        "pts":  [
+                    0,
+                    33,
+                    66,
+                    100
+                ],
+        "file":  "anchor_420k.ivf",
+        "fps_den":  1,
+        "bytes":  198914
+    },
+    {
+        "fps_num":  30,
+        "pts":  [
+                    0,
+                    1,
+                    2,
+                    3
+                ],
+        "file":  "test_420k.ivf",
+        "fps_den":  1,
+        "bytes":  122523
+    }
+]

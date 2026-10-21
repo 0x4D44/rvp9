@@ -1,0 +1,29 @@
+cmd :    Compiling crossbeam-utils v0.8.21
+At line:17 char:1
++ cmd /c 'deltic timeout 1200 cargo +nightly test --locked -p rvp9-deco ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling crossbeam-utils v0.8.21:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   Compiling rvp9-core v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-
+rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-core)
+   Compiling rvp9-decoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-encoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-encoder)
+   Compiling rvp9-io v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-rv
+p9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 24.80s
+     Running tests\panic_safety.rs (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-win-qualification-d0ad2683\as
+an-target\x86_64-pc-windows-msvc\debug\deps\panic_safety-8d5295270e4eac42.exe)
+
+running 4 tests
+test fresh_decoder_baseline ... ok
+test early_error_then_valid_keyframe_decodes ... ok
+test mid_tile_failure_then_valid_keyframe_decodes ... ok
+test mid_tile_failure_then_valid_inter_decodes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

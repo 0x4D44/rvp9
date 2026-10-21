@@ -1,0 +1,25 @@
+{
+  "index": 22,
+  "target": "tests/lf_overlap_pool_diff.rs",
+  "test": "scratch_tile_decode_and_lf_match_serial",
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/deps/lf_overlap_pool_diff-d212999ef29d4c6a",
+    "--ignored",
+    "--exact",
+    "scratch_tile_decode_and_lf_match_serial",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/md/language/rvp9/crates/rvp9-harness",
+  "binary_sha256": "a99047fa1d2c493185f13bb7ada624445d84a83acb237726ddb8f47e0df08fc3",
+  "original_status": "ignored",
+  "original_ignore_reason": ", requires tests/conformance/vectors; run scripts/fetch-vectors.sh",
+  "started_utc": "2026-10-21T07:53:33.661143+00:00",
+  "exit_code": 0,
+  "exact_one_test_passed": true,
+  "raw_file": "22.raw.txt",
+  "raw_sha256": "7addf5a7ac8e69dc9b0c6fdedc699d7db9e58a8fc4375d06655b7eeace733c43",
+  "ended_utc": "2026-10-21T07:53:37.655652+00:00"
+}

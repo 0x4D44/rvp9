@@ -1,0 +1,25 @@
+{
+  "index": 19,
+  "target": "tests/column_wavefront_lf_diff.rs",
+  "test": "column_wavefront_lf_matches_serial_on_multi_tile_vectors",
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/deps/column_wavefront_lf_diff-0d2b586dcc26304d",
+    "--ignored",
+    "--exact",
+    "column_wavefront_lf_matches_serial_on_multi_tile_vectors",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/md/language/rvp9/crates/rvp9-harness",
+  "binary_sha256": "86b0eaf8f6d1aa92c9604e20e140640b42975c1ee01ff7ca19e7d8685965e7f0",
+  "original_status": "ignored",
+  "original_ignore_reason": ", requires tests/conformance/vectors; run scripts/fetch-vectors.sh",
+  "started_utc": "2026-10-21T07:51:42.442079+00:00",
+  "exit_code": 0,
+  "exact_one_test_passed": true,
+  "raw_file": "19.raw.txt",
+  "raw_sha256": "8ced95d542aa74df4ca47f7fc6b839b2697921205ebf6f296a69bad3075975b2",
+  "ended_utc": "2026-10-21T07:51:46.685284+00:00"
+}

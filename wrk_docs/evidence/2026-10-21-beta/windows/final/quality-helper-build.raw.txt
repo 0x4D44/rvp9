@@ -1,0 +1,10 @@
+cmd :     Blocking waiting for file lock on artifact directory
+At line:17 char:1
++ cmd /c 'deltic timeout 2400 cargo test --release --locked --target x8 ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Blocking wa...ifact directory:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `release` profile [optimized + debuginfo] target(s) in 3m 12s
+  Executable tests\quality_gate.rs (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-final-win-914ede5e\target\x86
+_64-pc-windows-msvc\release\deps\quality_gate-4730bcb01969f69e.exe)

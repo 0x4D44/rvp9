@@ -1,0 +1,34 @@
+Preparing acceptance inputs in /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/in_to_tree_720p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/in_to_tree_720p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/ducks_take_off_720p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/ducks_take_off_720p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/old_town_cross_720p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/old_town_cross_720p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/in_to_tree_1080p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/in_to_tree_1080p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/ducks_take_off_1080p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/ducks_take_off_1080p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/old_town_cross_1080p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/old_town_cross_1080p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/in_to_tree_1080p60_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/in_to_tree_1080p60_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/ducks_take_off_1080p60_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/ducks_take_off_1080p60_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/old_town_cross_1080p60_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/old_town_cross_1080p60_noisy.y4m
+[quality   1/27] aq3-cbr-720p30-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   2/27] aq3-cbr-720p30-ducks_take_off-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   3/27] aq3-cbr-720p30-old_town_cross-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   4/27] aq3-cbr-1080p30-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   5/27] aq3-cbr-1080p30-ducks_take_off-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   6/27] aq3-cbr-1080p30-old_town_cross-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   7/27] aq3-cbr-1080p60-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   8/27] aq3-cbr-1080p60-ducks_take_off-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   9/27] aq3-cbr-1080p60-old_town_cross-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality  10/27] aq3-cbr-720p30-in_to_tree-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  11/27] aq3-cbr-720p30-ducks_take_off-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  12/27] aq3-cbr-720p30-old_town_cross-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  13/27] aq3-cbr-1080p30-in_to_tree-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  14/27] aq3-cbr-1080p30-ducks_take_off-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  15/27] aq3-cbr-1080p30-old_town_cross-cpu7 (bdrate, vpxenc anchor, clean input)

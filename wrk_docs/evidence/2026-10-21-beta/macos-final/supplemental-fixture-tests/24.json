@@ -1,0 +1,25 @@
+{
+  "index": 24,
+  "target": "tests/multi_tile.rs",
+  "test": "vp90_2_08_tile_1x2_decodes_after_e2",
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/deps/multi_tile-e945fb84403004b0",
+    "--ignored",
+    "--exact",
+    "vp90_2_08_tile_1x2_decodes_after_e2",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/md/language/rvp9/crates/rvp9-harness",
+  "binary_sha256": "d4d192ca1474fe577efd4cf608260bcb3ea6beb99823d5b77519caa379f07ff5",
+  "original_status": "ignored",
+  "original_ignore_reason": ", requires tests/conformance/vectors; run scripts/fetch-vectors.sh",
+  "started_utc": "2026-10-21T07:53:38.003132+00:00",
+  "exit_code": 0,
+  "exact_one_test_passed": true,
+  "raw_file": "24.raw.txt",
+  "raw_sha256": "8ba566efea450ee0118c506fe0286c55c6555282ffae7667bfff89a55cc36f24",
+  "ended_utc": "2026-10-21T07:53:38.272721+00:00"
+}

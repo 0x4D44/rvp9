@@ -1,0 +1,23 @@
+bash.exe :    Compiling crossbeam-utils v0.8.21
+At line:15 char:1
++ & 'C:\Program Files\Git\bin\bash.exe' -lc 'bash scripts/package-beta. ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling crossbeam-utils v0.8.21:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   Compiling rvp9-core v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-
+rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-core)
+   Compiling rvp9-decoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-encoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-encoder)
+   Compiling rvp9-io v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-rv
+p9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-io)
+   Compiling rvp9-cli v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-r
+vp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-beta-candidate-windows-qualification\crates\rvp9-cli)
+    Finished `release` profile [optimized + debuginfo] target(s) in 31.11s
+Created /tmp/deltic-scratch/beta-final-win-914ede5e/dist/rvp9-0.2.0-beta.1-x86_64-pc-windows-msvc.tar.gz
+Artifact manifest: /tmp/deltic-scratch/beta-final-win-914ede5e/dist/rvp9-0.2.0-beta.1-x86_64-pc-windows-msvc/BUILD-METADATA.txt
+f4abf8f0c889ef6275c1e2313ee18cbe9e3689eddaf30aae4382a2029a8db8de  rvp9-0.2.0-beta.1-x86_64-pc-windows-msvc.tar.gz

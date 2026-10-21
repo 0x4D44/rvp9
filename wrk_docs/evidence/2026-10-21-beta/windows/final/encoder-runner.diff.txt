@@ -1,0 +1,14 @@
+--- encoder-original
++++ encoder-adapted
+@@ -85,9 +85,8 @@
+ fi
+ manifest="$work_dir/qualification.txt"
+ 
+-cargo build --release --locked -p rvp9-cli --bins
+-rvp9enc="$repo_root/target/release/rvp9enc$exe_suffix"
+-rvp9dec="$repo_root/target/release/rvp9dec$exe_suffix"
++rvp9enc="$RVP9_TEST_ENCODER"
++rvp9dec="$RVP9_TEST_DECODER"
+ for binary in "$rvp9enc" "$rvp9dec"; do
+     if [ ! -x "$binary" ]; then
+         echo "expected release binary: $binary" >&2

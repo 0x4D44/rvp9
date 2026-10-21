@@ -1,0 +1,16 @@
+rvp9_version=0.2.0-beta.1
+source_commit=15bf7162c9fb92a5165fab652460bd42da03a6e6
+git_commit=15bf7162c9fb92a5165fab652460bd42da03a6e6
+libvpx_revision=12f3a2ac603e8f10742105519e0cd03c3b8f71dd
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+cargo=cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+target=x86_64-pc-windows-msvc
+build_kind=portable-release
+rustflags=<empty; target baseline>
+cargo_encoded_rustflags=<empty>
+cargo_profile=release
+cargo_command=cargo build --target x86_64-pc-windows-msvc --release --locked -p rvp9-cli --bins
+rvp9enc_path=rvp9enc.exe
+rvp9enc_sha256=084df45e21af614854c8ba80bf7e3c6f6c0679bea4661c31146bafcf70af375d
+rvp9dec_path=rvp9dec.exe
+rvp9dec_sha256=4c54613cf35db61e6e37e6ccbb656a02aa6cfdefbed2b93f6cc52ee36f2d0c56

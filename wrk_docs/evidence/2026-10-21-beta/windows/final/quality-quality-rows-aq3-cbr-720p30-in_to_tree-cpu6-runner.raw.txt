@@ -1,0 +1,20 @@
+=== BD-rate sweep ===
+anchor: D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/build/libvpx/vpxenc.exe
+test:   C:/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/dist/rvp9-0.2.0-beta.1-x86_64-pc-windows-msvc/rvp9enc.exe
+input:  C:/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/in_to_tree_720p30_clean.y4m
+reference input: C:/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/inputs/in_to_tree_720p30_clean.y4m
+artifacts: C:/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/quality/rows/.aq3-cbr-720p30-in_to_tree-cpu6.attempt.20261021T065217Z-2713/streams
+config: --rt --cpu-used=6 --end-usage=cbr --fps=30/1 --threads=1 --tile-columns=0 --lag-in-frames=0 --tune-content=default --aq-mode=3 --noise-sensitivity=0 --limit=60
+anchor args: --kf-max-dist=60
+test args:   --kf-max-dist=60
+
+target   420k | anchor  26522k psnr 32.98 | test    490k psnr 31.91
+target   630k | anchor  42693k psnr 33.65 | test    750k psnr 32.95
+target   840k | anchor  56399k psnr 34.08 | test   1022k psnr 33.62
+target  1260k | anchor  80656k psnr 34.68 | test   1582k psnr 34.59
+target  2100k | anchor 119088k psnr 35.42 | test   2406k psnr 35.60
+target  3360k | anchor 150126k psnr 36.12 | test   3451k psnr 36.36
+
+BD-rate: -97.844%  (anchor → test)
+
+csv: C:/Users/marti/AppData/Local/Temp/deltic-scratch/beta-final-win-914ede5e/quality/quality/rows/.aq3-cbr-720p30-in_to_tree-cpu6.attempt.20261021T065217Z-2713/bdrate.csv

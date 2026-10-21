@@ -1,0 +1,25 @@
+{
+  "index": 18,
+  "target": "tests/buffer_pool_recycle.rs",
+  "test": "decode_target_buffer_is_pooled_after_warmup",
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/deps/buffer_pool_recycle-f02ff8cfb7bd91f6",
+    "--ignored",
+    "--exact",
+    "decode_target_buffer_is_pooled_after_warmup",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/md/language/rvp9/crates/rvp9-harness",
+  "binary_sha256": "21b48f0e24c60db53c295efd6ae541b2f0e522426b27dfa87111a41a3df73320",
+  "original_status": "ignored",
+  "original_ignore_reason": ", requires tests/conformance/vectors; run scripts/fetch-vectors.sh",
+  "started_utc": "2026-10-21T07:51:42.189515+00:00",
+  "exit_code": 0,
+  "exact_one_test_passed": true,
+  "raw_file": "18.raw.txt",
+  "raw_sha256": "f7d3770b155b296f1bddb210b36bd3bdc1a5b812d88928efa7514ad403d2d6e1",
+  "ended_utc": "2026-10-21T07:51:42.433303+00:00"
+}
