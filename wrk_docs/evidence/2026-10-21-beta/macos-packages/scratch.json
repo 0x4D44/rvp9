@@ -1,0 +1,8 @@
+{
+  "id": "rvp9-beta-packages-a073aeeb",
+  "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb",
+  "task": null,
+  "cleanup": "deltic scratch rm rvp9-beta-packages-a073aeeb",
+  "cleanup_exit_code": 0,
+  "path_absent_after_cleanup": true
+}

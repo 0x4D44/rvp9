@@ -1,0 +1,17 @@
+{
+  "source_commit_at_start": "7fba7529f868f3afd0464083f9e1b3ddf52d5ac2",
+  "product_source_baseline": "feeb4cf87c65e4be5402b5661f6c8e3103bd304e",
+  "status": "baseline only; version alpha.4; exact beta replay separately tracked",
+  "command": "CARGO_ENCODED_RUSTFLAGS= RUSTFLAGS= CARGO_BUILD_JOBS=4 deltic timeout 7200 cargo test --workspace --release --locked --offline --no-fail-fast -- --test-threads=1 </dev/null",
+  "exit_code": 0,
+  "test_summaries": 124,
+  "passed": 3600,
+  "failed": 0,
+  "ignored": 64,
+  "raw_sha256": "f1e1cc876f084a0cd391f254c9f6fe7b54e078d32c09f448d9b55251e3e833a1",
+  "asan_instrumented_core": 1745,
+  "asan_instrumented_decoder": 4,
+  "miri_decoder": 4,
+  "instrumentation_verified_by": "native-asan-core-imports.raw.txt; ___asan_init/report/load/store imports",
+  "initial_sanitizer_attempts": "native-asan-core.json explicitly disqualified; initial native-asan-decoder.raw.txt also uninstrumented because encoded flags were empty"
+}

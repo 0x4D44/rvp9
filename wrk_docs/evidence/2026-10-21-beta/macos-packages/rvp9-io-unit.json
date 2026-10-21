@@ -1,0 +1,25 @@
+{
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--config",
+    "source.crates-io.replace-with=\"beta-staging\"",
+    "--config",
+    "source.beta-staging.local-registry=\"/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/target/package/tmp-registry\"",
+    "--lib"
+  ],
+  "cwd": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/consumers/rvp9-io-0.2.0-beta.1",
+  "env": {
+    "RUSTFLAGS": "",
+    "CARGO_ENCODED_RUSTFLAGS": "",
+    "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/target"
+  },
+  "started_utc": "2026-10-21T06:55:29.183006+00:00",
+  "elapsed_seconds": 7.554836667,
+  "exit_code": 0
+}

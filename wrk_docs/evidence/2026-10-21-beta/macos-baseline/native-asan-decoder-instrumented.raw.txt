@@ -1,0 +1,16 @@
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261021-DEV-CDX-qualify-and-release-rvp9-beta/crates/rvp9-decoder)
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261021-DEV-CDX-qualify-and-release-rvp9-beta/crates/rvp9-core)
+   Compiling static_assertions v1.1.0
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261021-DEV-CDX-qualify-and-release-rvp9-beta/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261021-DEV-CDX-qualify-and-release-rvp9-beta/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 07s
+     Running tests/panic_safety.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-macos-3f5e8bc4/asan-target/aarch64-apple-darwin/debug/deps/panic_safety-0d814259d4a2dce2)
+
+running 4 tests
+test early_error_then_valid_keyframe_decodes ... ok
+test fresh_decoder_baseline ... ok
+test mid_tile_failure_then_valid_inter_decodes ... ok
+test mid_tile_failure_then_valid_keyframe_decodes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,86 @@
+[
+  {
+    "crate": "rvp9-cli",
+    "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+    "source_files_equal": 5,
+    "original_manifest_equal": true,
+    "locked_siblings": [
+      {
+        "name": "rvp9-core",
+        "version": "0.2.0-beta.1",
+        "checksum": "0bf582cf4162392e0018271172447cdcc3721662aa2efaa1e5fe6788d631f8f9"
+      },
+      {
+        "name": "rvp9-decoder",
+        "version": "0.2.0-beta.1",
+        "checksum": "31262bb7881cfac3172aebb34478b9ccc61493a3bfb7b44ca45b635eb5c35fbd"
+      },
+      {
+        "name": "rvp9-encoder",
+        "version": "0.2.0-beta.1",
+        "checksum": "b0354b1a92f736c38deb2e46027ed07bec0ab6fa3d410d8e02c9c1e428bdc71b"
+      },
+      {
+        "name": "rvp9-io",
+        "version": "0.2.0-beta.1",
+        "checksum": "19eb7128ba5d16db780e4eea3989f06e89826fd4bcbe0ea61c8f717b9a69a294"
+      }
+    ],
+    "integration_test_dir_present": true
+  },
+  {
+    "crate": "rvp9-core",
+    "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+    "source_files_equal": 180,
+    "original_manifest_equal": true,
+    "locked_siblings": [],
+    "integration_test_dir_present": true
+  },
+  {
+    "crate": "rvp9-decoder",
+    "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+    "source_files_equal": 8,
+    "original_manifest_equal": true,
+    "locked_siblings": [
+      {
+        "name": "rvp9-core",
+        "version": "0.2.0-beta.1",
+        "checksum": "0bf582cf4162392e0018271172447cdcc3721662aa2efaa1e5fe6788d631f8f9"
+      }
+    ],
+    "integration_test_dir_present": false
+  },
+  {
+    "crate": "rvp9-encoder",
+    "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+    "source_files_equal": 55,
+    "original_manifest_equal": true,
+    "locked_siblings": [
+      {
+        "name": "rvp9-core",
+        "version": "0.2.0-beta.1",
+        "checksum": "0bf582cf4162392e0018271172447cdcc3721662aa2efaa1e5fe6788d631f8f9"
+      },
+      {
+        "name": "rvp9-decoder",
+        "version": "0.2.0-beta.1",
+        "checksum": "31262bb7881cfac3172aebb34478b9ccc61493a3bfb7b44ca45b635eb5c35fbd"
+      }
+    ],
+    "integration_test_dir_present": false
+  },
+  {
+    "crate": "rvp9-io",
+    "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+    "source_files_equal": 4,
+    "original_manifest_equal": true,
+    "locked_siblings": [
+      {
+        "name": "rvp9-core",
+        "version": "0.2.0-beta.1",
+        "checksum": "0bf582cf4162392e0018271172447cdcc3721662aa2efaa1e5fe6788d631f8f9"
+      }
+    ],
+    "integration_test_dir_present": true
+  }
+]

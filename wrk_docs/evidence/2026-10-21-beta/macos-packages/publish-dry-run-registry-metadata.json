@@ -1,0 +1,30 @@
+{
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "cargo",
+    "publish",
+    "--dry-run",
+    "--locked",
+    "-p",
+    "rvp9-core",
+    "-p",
+    "rvp9-io",
+    "-p",
+    "rvp9-decoder",
+    "-p",
+    "rvp9-encoder",
+    "-p",
+    "rvp9-cli"
+  ],
+  "cwd": "/Users/md/language/rvp9",
+  "env": {
+    "RUSTFLAGS": "",
+    "CARGO_ENCODED_RUSTFLAGS": "",
+    "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/target"
+  },
+  "started_utc": "2026-10-21T06:57:20.554775+00:00",
+  "elapsed_seconds": 13.0196485,
+  "exit_code": 0
+}

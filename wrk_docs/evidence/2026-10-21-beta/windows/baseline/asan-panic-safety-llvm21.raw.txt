@@ -1,0 +1,9 @@
+
+running 4 tests
+test fresh_decoder_baseline ... ok
+test early_error_then_valid_keyframe_decodes ... ok
+test mid_tile_failure_then_valid_keyframe_decodes ... ok
+test mid_tile_failure_then_valid_inter_decodes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,33 @@
+{
+  "source_commit": "7fba7529f868f3afd0464083f9e1b3ddf52d5ac2",
+  "command": [
+    "deltic",
+    "timeout",
+    "3600",
+    "cargo",
+    "+nightly",
+    "test",
+    "-Zbuild-std",
+    "--target",
+    "aarch64-apple-darwin",
+    "--locked",
+    "--offline",
+    "-p",
+    "rvp9-core",
+    "--lib",
+    "--",
+    "--test-threads=1"
+  ],
+  "env_overrides": {
+    "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-macos-3f5e8bc4/asan-target",
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_ENCODED_RUSTFLAGS": "",
+    "RUSTFLAGS": "-Zsanitizer=address -Ctarget-cpu=native",
+    "RUSTDOCFLAGS": "-Zsanitizer=address"
+  },
+  "started_epoch": 1792564595.5106502,
+  "exit_code": 0,
+  "ended_epoch": 1792564735.11793,
+  "raw_sha256": "14cb375fdbbb1ed1a6121bb77160e99801903adf0882284d9488ad32068a12c7",
+  "classification": "NOT ASAN QUALIFICATION: empty CARGO_ENCODED_RUSTFLAGS overrides RUSTFLAGS; native nightly core tests only. Replayed with encoded flags absent."
+}

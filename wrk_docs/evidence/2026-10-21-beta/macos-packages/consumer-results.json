@@ -1,0 +1,22 @@
+[
+  {
+    "crate": "rvp9-core",
+    "exit_code": 0
+  },
+  {
+    "crate": "rvp9-io",
+    "exit_code": 0
+  },
+  {
+    "crate": "rvp9-decoder",
+    "exit_code": 0
+  },
+  {
+    "crate": "rvp9-encoder",
+    "exit_code": 0
+  },
+  {
+    "crate": "rvp9-cli",
+    "exit_code": 0
+  }
+]

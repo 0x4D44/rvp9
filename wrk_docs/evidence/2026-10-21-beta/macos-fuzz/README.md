@@ -1,0 +1,5 @@
+# Bounded Mac parser and frame campaigns
+
+Source35aa78fc contains unchanged production Rust source fromfeeb4cf8. A separate exact beta artifact campaign follows; these are bounded memory-safety probes, not compression or timing evidence. Existing documented cargo-fuzz0.13.2 was installed into owned registered scratch, with no repository dependency change. Both ambient Rust flag variables were absent so cargo-fuzz supplied ASan/coverage flags.
+
+Parser completed961656 executions in301seconds, exit0. Its307 official vector seeds are interpreted by the structured Arbitrary target rather than as direct VP9 packets. Frame decoder completed16789 executions in322seconds, exit0, seeded by a3964-byte raw keyframe extracted from official vp90-2-05-resize.ivf. No crash or sanitizer report was emitted. One slow-unit artifact was emitted; this is a timing diagnostic, not a crash or a real-time benchmark. Both targets reached terminal completion; commands, seeds, source and raw hashes are retained. Billion-iteration fuzz and72-hour soak remain deferred.

@@ -1,0 +1,75 @@
+{
+  "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+  "version": "0.2.0-beta.1",
+  "platform": "aarch64-apple-darwin",
+  "package_combined5_exit": 0,
+  "unit_results": [
+    {
+      "crate": "rvp9-cli",
+      "results": [
+        {
+          "passed": 5,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 19,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "crate": "rvp9-core",
+      "results": [
+        {
+          "passed": 1743,
+          "failed": 0,
+          "ignored": 2
+        }
+      ]
+    },
+    {
+      "crate": "rvp9-decoder",
+      "results": [
+        {
+          "passed": 224,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "crate": "rvp9-encoder",
+      "results": [
+        {
+          "passed": 824,
+          "failed": 0,
+          "ignored": 1
+        }
+      ]
+    },
+    {
+      "crate": "rvp9-io",
+      "results": [
+        {
+          "passed": 61,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    }
+  ],
+  "unit_tests_passed": 2876,
+  "unit_tests_ignored": 3,
+  "publish_dry_run_offline_exit": 101,
+  "publish_dry_run_offline_prerequisite": "Cargo requests registry HTTP metadata; offline refuses before verification",
+  "publish_dry_run_with_registry_metadata_exit": 0,
+  "all_uploads_aborted_due_to_dry_run": true,
+  "main_clean_unchanged": true,
+  "archive_manifests_and_lockfiles_unchanged": true,
+  "source_replacement": "Cargo-created staging local registry, augmented only with 80 cached third-party archives checked against packaged lock/index SHA-256; no dependency or manifest overrides",
+  "integration_tests": "Excluded from shipped library/CLI archives by package policy; not run",
+  "initial_setup_probe": "System python3 lacks tomllib; first staging probe had absent extraction and is not a product result. Corrected using Python3.12 before valid extraction and tests.",
+  "registered_scratch_removed_after_evidence_capture": true
+}

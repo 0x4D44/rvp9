@@ -1,0 +1,27 @@
+[
+  {
+    "archive": "rvp9-cli-0.2.0-beta.1.crate",
+    "archive_sha256_unchanged_after_publish_dry_run": true,
+    "all_extracted_archive_files_unchanged_after_tests": 18
+  },
+  {
+    "archive": "rvp9-core-0.2.0-beta.1.crate",
+    "archive_sha256_unchanged_after_publish_dry_run": true,
+    "all_extracted_archive_files_unchanged_after_tests": 193
+  },
+  {
+    "archive": "rvp9-decoder-0.2.0-beta.1.crate",
+    "archive_sha256_unchanged_after_publish_dry_run": true,
+    "all_extracted_archive_files_unchanged_after_tests": 17
+  },
+  {
+    "archive": "rvp9-encoder-0.2.0-beta.1.crate",
+    "archive_sha256_unchanged_after_publish_dry_run": true,
+    "all_extracted_archive_files_unchanged_after_tests": 63
+  },
+  {
+    "archive": "rvp9-io-0.2.0-beta.1.crate",
+    "archive_sha256_unchanged_after_publish_dry_run": true,
+    "all_extracted_archive_files_unchanged_after_tests": 14
+  }
+]

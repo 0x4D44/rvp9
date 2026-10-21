@@ -1,0 +1,1 @@
+error: attempting to make an HTTP request, but --offline was specified

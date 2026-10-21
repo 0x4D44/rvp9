@@ -1,0 +1,27 @@
+{
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "cargo",
+    "+nightly",
+    "fuzz",
+    "run",
+    "--fuzz-dir",
+    "crates/rvp9-fuzz",
+    "fuzz_decode_frame",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-macos-3f5e8bc4/fuzz/frame-corpus",
+    "--",
+    "-max_total_time=300",
+    "-seed=48917",
+    "-dict=crates/rvp9-fuzz/fuzz.dict",
+    "-artifact_prefix=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-macos-3f5e8bc4/fuzz/artifacts-frame/"
+  ],
+  "source_commit": "35aa78fc8925af8c7819f39392a150b322ec73b0",
+  "started_epoch": 1792565514.043515,
+  "encoded_flags": "absent",
+  "rustflags": "absent; cargo-fuzz supplies ASan and coverage flags",
+  "exit_code": 0,
+  "ended_epoch": 1792565839.3603368,
+  "raw_sha256": "a4df1437c9e2f5618c202d5a3e6324ac4d8aa3fbe1b7262a7d4e2ea75fd1bc20"
+}

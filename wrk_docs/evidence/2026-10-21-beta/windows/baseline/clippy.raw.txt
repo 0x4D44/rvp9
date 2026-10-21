@@ -1,0 +1,143 @@
+cmd :     Blocking waiting for file lock on build directory
+At line:9 char:1
++ cmd /c 'deltic timeout 3600 cargo clippy --workspace --all-targets -- ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Blocking wa...build directory:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   Compiling rvp9-core v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-decoder)
+    Checking static_assertions v1.1.0
+    Checking itoa v1.0.18
+    Checking memchr v2.8.0
+   Compiling rvp9-harness v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-harness)
+    Checking cfg-if v1.0.4
+    Checking typenum v1.20.1
+    Checking cpufeatures v0.2.17
+    Checking windows-link v0.2.1
+    Checking fastrand v2.4.1
+    Checking once_cell v1.21.4
+    Checking bit-vec v0.8.0
+    Checking quick-error v1.2.3
+    Checking wait-timeout v0.2.1
+    Checking fnv v1.0.7
+    Checking bitflags v2.11.1
+    Checking regex-syntax v0.8.10
+    Checking unarray v0.1.4
+    Checking crossbeam-utils v0.8.21
+    Checking rvp9 v0.0.0 (D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9)
+    Checking serde_core v1.0.228
+    Checking zmij v1.0.21
+    Checking zerocopy v0.8.48
+    Checking num-traits v0.2.19
+    Checking getrandom v0.3.4
+    Checking windows-sys v0.61.2
+    Checking getrandom v0.4.2
+    Checking rand_core v0.9.5
+    Checking bit-set v0.8.0
+    Checking rand_xorshift v0.4.0
+    Checking rand v0.9.4
+    Checking crossbeam-channel v0.5.15
+    Checking generic-array v0.14.7
+    Checking tempfile v3.27.0
+    Checking rusty-fork v0.3.1
+    Checking crypto-common v0.1.7
+    Checking block-buffer v0.10.4
+    Checking digest v0.10.7
+    Checking sha2 v0.10.9
+    Checking serde v1.0.228
+    Checking serde_json v1.0.149
+    Checking ppv-lite86 v0.2.21
+    Checking rand_chacha v0.9.0
+    Checking proptest v1.11.0
+    Checking rvp9-io v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-io)
+    Checking rvp9-encoder v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-encoder)
+    Checking rvp9-cli v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-cli)
+    Checking rvp9-bench v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-bench)
+warning: items after a test module
+   --> crates\rvp9-harness\src\bin\dump_frame_diff.rs:387:1
+    |
+387 | mod tests {
+    | ^^^^^^^^^
+...
+620 | fn dump_patch(name: &str, got: &[u8], exp: &[u8], w: usize, h: usize, cx: usize, cy: usize) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#items_after_test_module
+    = note: `#[warn(clippy::items_after_test_module)]` on by default
+    = help: move the items to before the test module was defined
+
+warning: `rvp9-harness` (bin "dump_frame_diff" test) generated 1 warning (run `cargo clippy --fix --bin 
+"dump_frame_diff" -p rvp9-harness --tests -- ` to apply 1 suggestion)
+warning: using `clone` on type `EncoderConfig` which implements the `Copy` trait
+     --> crates\rvp9-encoder\src\frame_loop.rs:14265:42
+      |
+14265 |         let mut one = StreamEncoder::new(cfg.clone()).unwrap();
+      |                                          ^^^^^^^^^^^ help: try removing the `clone` call: `cfg`
+      |
+      = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#clone_on_copy
+      = note: `-W clippy::clone-on-copy` implied by `-W clippy::all`
+      = help: to override `-W clippy::all` add `#[allow(clippy::clone_on_copy)]`
+
+warning: match expression looks like `matches!` macro
+    --> crates\rvp9-encoder\src\spatial_encoder.rs:1082:41
+     |
+1082 |                   let component_matches = match (
+     |  _________________________________________^
+1083 | |                     component_index,
+1084 | |                     &component.header.kind,
+1085 | |                     expect_key_access_unit,
+...    |
+1115 | |                     _ => false,
+1116 | |                 };
+     | |_________________^
+     |
+     = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#match_like_matches_macro
+     = note: `-W clippy::match-like-matches-macro` implied by `-W clippy::all`
+     = help: to override `-W clippy::all` add `#[allow(clippy::match_like_matches_macro)]`
+help: use `matches!` directly
+     |
+1082 ~                 let component_matches = matches!((
+1083 +                     component_index,
+1084 +                     &component.header.kind,
+1085 +                     expect_key_access_unit,
+1086 +                 ), (0, WireFrameKind::KeyFrame, true) | (
+1087 +                         0,
+1088 +                         WireFrameKind::InterFrame {
+1089 +                             refresh_frame_flags: 0x01,
+1090 +                             ref_frame_indices: [0, 0, 0],
+1091 +                             ..
+1092 +                         },
+1093 +                         false,
+1094 +                     ) | (
+1095 +                         1,
+1096 +                         WireFrameKind::InterFrame {
+1097 +                             refresh_frame_flags: 0x02,
+1098 +                             ref_frame_indices: [0, 1, 0],
+1099 +                             ..
+1100 +                         },
+1101 +                         true,
+1102 +                     ) | (
+1103 +                         1,
+1104 +                         WireFrameKind::InterFrame {
+1105 +                             refresh_frame_flags: 0x02,
+1106 +                             ref_frame_indices: [1, 0, 1],
+1107 +                             ..
+1108 +                         },
+1109 +                         false,
+1110 ~                     ));
+     |
+
+warning: `rvp9-encoder` (lib test) generated 2 warnings (run `cargo clippy --fix --lib -p rvp9-encoder --tests -- ` to 
+apply 1 suggestion)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 17.61s

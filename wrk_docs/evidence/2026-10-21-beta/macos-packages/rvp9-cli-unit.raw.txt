@@ -1,0 +1,40 @@
+   Compiling rvp9-encoder v0.2.0-beta.1
+   Compiling rvp9-io v0.2.0-beta.1
+   Compiling rvp9-cli v0.2.0-beta.1 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/consumers/rvp9-cli-0.2.0-beta.1)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.43s
+     Running unittests src/bin/rvp9dec.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/target/debug/deps/rvp9dec-30a6177bc665b237)
+
+running 5 tests
+test tests::y4m_rejects_height_change_before_writing_frame ... ok
+test tests::y4m_rejects_chroma_changes_before_writing_frame ... ok
+test tests::y4m_format_state_is_unset_when_header_write_fails ... ok
+test tests::y4m_rejects_width_change_before_writing_frame ... ok
+test tests::y4m_writes_multiple_frames_with_the_same_format ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/rvp9enc.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/target/debug/deps/rvp9enc-c32f1aed9943738f)
+
+running 19 tests
+test tests::two_pass_lookahead_controls_accept_defaults_zero_and_one_pass_values ... ok
+test tests::two_pass_rejects_positive_lookahead ... ok
+test tests::two_pass_rejects_positive_auto_alt_ref ... ok
+test tests::non_default_content_tuning_remains_unsupported ... ok
+test tests::matched_default_content_and_quiet_are_supported ... ok
+test tests::w7_8_auto_alt_ref_range_enforced ... ok
+test tests::w0_1_cpu_used_range_enforced ... ok
+test tests::w7_8_arnr_type_remains_out_of_scope ... ok
+test tests::threads_and_tile_columns_reach_encoder_parallelism ... ok
+test tests::w0_1_deadline_good_and_best_distinct_from_rt ... ok
+test tests::spatial_svc_flags_select_supported_topology_and_prediction ... ok
+test tests::noise_sensitivity_rejects_out_of_range_values_in_both_cli_forms ... ok
+test tests::frame_time_csv_parses_and_requires_synchronous_one_pass ... ok
+test tests::reaudit3_auto_alt_ref_plumbs_into_encoder_config ... ok
+test tests::w0_2_cpu_used_and_deadline_plumb_into_encoder_config ... ok
+test tests::w7_8_q_range_plumbs_into_encoder_config ... ok
+test tests::reaudit3_end_usage_plumbs_into_rate_control ... ok
+test tests::w5_1_noise_sensitivity_plumbs_into_encoder_config ... ok
+test tests::raw_reader_checks_encoder_geometry_before_file_io ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

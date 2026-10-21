@@ -1,0 +1,29 @@
+cmd :        Fresh static_assertions v1.1.0
+At line:11 char:1
++ cmd /c 'deltic timeout 120 cargo +nightly test --locked -p rvp9-decod ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (       Fresh static_assertions v1.1.0:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+       Fresh crossbeam-utils v0.8.21
+       Fresh crossbeam-channel v0.5.15
+       Fresh rvp9-core v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-core)
+       Fresh rvp9-encoder v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-encoder)
+       Fresh rvp9-io v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-io)
+       Fresh rvp9-decoder v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-decoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.04s
+     Running `C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-win-qualification-d0ad2683\asan-target\x86_64-pc-wi
+ndows-msvc\debug\deps\panic_safety-14f0af0767e91471.exe`
+
+running 4 tests
+test early_error_then_valid_keyframe_decodes ... ok
+test mid_tile_failure_then_valid_inter_decodes ... ok
+test fresh_decoder_baseline ... ok
+test mid_tile_failure_then_valid_keyframe_decodes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,32 @@
+[
+  {
+    "archive": "rvp9-cli-0.2.0-beta.1.crate",
+    "sha256": "84de8601d3e22d4c4ae86d72996f2a748cd894fcb41ebda796542ca4cde7bdbd",
+    "bytes": 69013,
+    "staged_identical": true
+  },
+  {
+    "archive": "rvp9-core-0.2.0-beta.1.crate",
+    "sha256": "0bf582cf4162392e0018271172447cdcc3721662aa2efaa1e5fe6788d631f8f9",
+    "bytes": 1377240,
+    "staged_identical": true
+  },
+  {
+    "archive": "rvp9-decoder-0.2.0-beta.1.crate",
+    "sha256": "31262bb7881cfac3172aebb34478b9ccc61493a3bfb7b44ca45b635eb5c35fbd",
+    "bytes": 215406,
+    "staged_identical": true
+  },
+  {
+    "archive": "rvp9-encoder-0.2.0-beta.1.crate",
+    "sha256": "b0354b1a92f736c38deb2e46027ed07bec0ab6fa3d410d8e02c9c1e428bdc71b",
+    "bytes": 803417,
+    "staged_identical": true
+  },
+  {
+    "archive": "rvp9-io-0.2.0-beta.1.crate",
+    "sha256": "19eb7128ba5d16db780e4eea3989f06e89826fd4bcbe0ea61c8f717b9a69a294",
+    "bytes": 50102,
+    "staged_identical": true
+  }
+]

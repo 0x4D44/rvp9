@@ -1,0 +1,27 @@
+cmd :    Compiling crossbeam-utils v0.8.21
+At line:9 char:1
++ cmd /c 'deltic timeout 1800 cargo +nightly test --locked -p rvp9-deco ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling crossbeam-utils v0.8.21:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   Compiling rvp9-core v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-encoder v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 
+(D:\worktrees\rvp9-2\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\crates\rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 19.76s
+     Running tests\panic_safety.rs (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-win-qualification-d0ad2683\as
+an-target\x86_64-pc-windows-msvc\debug\deps\panic_safety-14f0af0767e91471.exe)
+error: test failed, to rerun pass `-p rvp9-decoder --test panic_safety`
+
+Caused by:
+  process didn't exit successfully: `C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-win-qualification-d0ad2683\a
+san-target\x86_64-pc-windows-msvc\debug\deps\panic_safety-14f0af0767e91471.exe` (exit code: 0xc0000139, 
+STATUS_ENTRYPOINT_NOT_FOUND)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.

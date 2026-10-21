@@ -1,0 +1,9 @@
+{
+  "source_commit": "35aa78fc8925af8c7819f39392a150b322ec73b0",
+  "parser_vector_count": 307,
+  "parser_note": "structured Arbitrary target; vector bytes are interpreted as Arbitrary input, not raw VP9 decoding",
+  "frame_vector": "/Users/md/worktrees/rvp9/20261021-DEV-CDX-qualify-and-release-rvp9-beta/tests/conformance/vectors/vp90-2-05-resize.ivf",
+  "frame_vector_sha256": "84a345546e47e37de87d2959347bf731f9f440f9f2ab32bede3f0e416100c585",
+  "frame_packet_bytes": 3964,
+  "frame_packet_sha256": "bbefb3d4fd14137cff82cb1d47e1985064f1ace86a1e67d27be75cad77e46293"
+}

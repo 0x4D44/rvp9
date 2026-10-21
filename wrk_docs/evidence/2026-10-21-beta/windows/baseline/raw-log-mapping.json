@@ -1,0 +1,66 @@
+{
+  "asan-confirm.log": {
+    "durable_copy": "asan-confirm.raw.txt",
+    "sha256": "b52247dd6e937b295c7581c6153757cd3ec2dc9ea00f49ce9042ca487168a21b"
+  },
+  "asan-core.log": {
+    "durable_copy": "asan-core.raw.txt",
+    "sha256": "a3b143844e8474eca5fd83071f0b956d188cd2159d2473ced595aed4b81a0800"
+  },
+  "asan-panic-safety-llvm21.log": {
+    "durable_copy": "asan-panic-safety-llvm21.raw.txt",
+    "sha256": "e00a22b7b9f12f48a6593e1e7ff137c7a236fbfcc6d446e3235d2ebd83ce9cf9"
+  },
+  "asan-panic-safety.log": {
+    "durable_copy": "asan-panic-safety.raw.txt",
+    "sha256": "0579125266946b08e65718a16bd89a54a2279d3d96d01632d098ca4ec08de487"
+  },
+  "asan-probe-runtime.log": {
+    "durable_copy": "asan-probe-runtime.raw.txt",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "asan-probe.log": {
+    "durable_copy": "asan-probe.raw.txt",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "clippy.log": {
+    "durable_copy": "clippy.raw.txt",
+    "sha256": "96135c013b9e5a7dcede5e496d2c642e684e46bda8c1f7ea465cd081b4dcb58e"
+  },
+  "conformance-s0-t1.log": {
+    "durable_copy": "conformance-s0-t1.raw.txt",
+    "sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+  },
+  "conformance-s0-t2.log": {
+    "durable_copy": "conformance-s0-t2.raw.txt",
+    "sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+  },
+  "conformance-s1-t1.log": {
+    "durable_copy": "conformance-s1-t1.raw.txt",
+    "sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+  },
+  "conformance-s1-t2.log": {
+    "durable_copy": "conformance-s1-t2.raw.txt",
+    "sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+  },
+  "encoder32.log": {
+    "durable_copy": "encoder32.raw.txt",
+    "sha256": "33c6e7d60cd455b1145ca615406c4734202814889c0045f038bfac24836b6e12"
+  },
+  "fmt.log": {
+    "durable_copy": "fmt.raw.txt",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "reverse24.log": {
+    "durable_copy": "reverse24.raw.txt",
+    "sha256": "e0a18c02f0b63ebc93aca57bdce885716f88bbc3723a8cb5c9961e413c559a7e"
+  },
+  "workspace-build.log": {
+    "durable_copy": "workspace-build.raw.txt",
+    "sha256": "1bdc4f9d3ae599f90b5beee9f311ebf31748f891be90e389f107b9ec9985a92b"
+  },
+  "workspace-test.log": {
+    "durable_copy": "workspace-test.raw.txt",
+    "sha256": "f0473ecddc4599cac3b55d0441ae087452a024a919623690b05127e0cd823c8e"
+  }
+}

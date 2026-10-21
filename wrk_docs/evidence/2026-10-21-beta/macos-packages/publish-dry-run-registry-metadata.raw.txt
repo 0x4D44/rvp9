@@ -1,0 +1,99 @@
+    Updating crates.io index
+   Packaging rvp9-core v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-core)
+    Updating crates.io index
+    Packaged 193 files, 6.2MiB (1.3MiB compressed)
+   Packaging rvp9-decoder v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-decoder)
+warning: ignoring test `conformance_coverage` as `tests/conformance_coverage.rs` is not included in the published package
+warning: ignoring test `lf_after_tile_decode` as `tests/lf_after_tile_decode.rs` is not included in the published package
+warning: ignoring test `panic_safety` as `tests/panic_safety.rs` is not included in the published package
+    Updating crates.io index
+    Packaged 17 files, 919.3KiB (210.4KiB compressed)
+   Packaging rvp9-encoder v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-encoder)
+warning: ignoring example `sad_simd_oracle` as `examples/sad_simd_oracle.rs` is not included in the published package
+warning: ignoring test `a18_picker_reads_prev_grid` as `tests/a18_picker_reads_prev_grid.rs` is not included in the published package
+warning: ignoring test `a18_prev_frame_mvs_fires` as `tests/a18_prev_frame_mvs_fires.rs` is not included in the published package
+warning: ignoring test `budget_gate_validation` as `tests/budget_gate_validation.rs` is not included in the published package
+warning: ignoring test `cross_decoder_gate` as `tests/cross_decoder_gate.rs` is not included in the published package
+warning: ignoring test `diag_foreman_kf` as `tests/diag_foreman_kf.rs` is not included in the published package
+warning: ignoring test `diag_foreman_kf_partitions` as `tests/diag_foreman_kf_partitions.rs` is not included in the published package
+warning: ignoring test `diag_foreman_per_frame` as `tests/diag_foreman_per_frame.rs` is not included in the published package
+warning: ignoring test `diag_frame4_dump` as `tests/diag_frame4_dump.rs` is not included in the published package
+warning: ignoring test `diag_kfcap_measure` as `tests/diag_kfcap_measure.rs` is not included in the published package
+warning: ignoring test `diag_per_frame` as `tests/diag_per_frame.rs` is not included in the published package
+warning: ignoring test `diag_per_sb_motion` as `tests/diag_per_sb_motion.rs` is not included in the published package
+warning: ignoring test `diag_picker_direct` as `tests/diag_picker_direct.rs` is not included in the published package
+warning: ignoring test `diag_ref_divergence` as `tests/diag_ref_divergence.rs` is not included in the published package
+warning: ignoring test `diag_sb03_motion` as `tests/diag_sb03_motion.rs` is not included in the published package
+warning: ignoring test `diag_source_frame0` as `tests/diag_source_frame0.rs` is not included in the published package
+warning: ignoring test `diag_source_static` as `tests/diag_source_static.rs` is not included in the published package
+warning: ignoring test `drift_diag` as `tests/drift_diag.rs` is not included in the published package
+warning: ignoring test `e12_oracle` as `tests/e12_oracle.rs` is not included in the published package
+warning: ignoring test `e13_diamond` as `tests/e13_diamond.rs` is not included in the published package
+warning: ignoring test `e3_mvdiag` as `tests/e3_mvdiag.rs` is not included in the published package
+warning: ignoring test `e4_overshoot_accounting` as `tests/e4_overshoot_accounting.rs` is not included in the published package
+warning: ignoring test `e9_quality_gap` as `tests/e9_quality_gap.rs` is not included in the published package
+warning: ignoring test `f1_block_yrd_newmv_winner` as `tests/f1_block_yrd_newmv_winner.rs` is not included in the published package
+warning: ignoring test `f2_find_mv_refs_temporal_visible` as `tests/f2_find_mv_refs_temporal_visible.rs` is not included in the published package
+warning: ignoring test `phase2_reuse_positive_control` as `tests/phase2_reuse_positive_control.rs` is not included in the published package
+warning: ignoring test `quality_gate` as `tests/quality_gate.rs` is not included in the published package
+warning: ignoring test `rdo_dispatch_proof` as `tests/rdo_dispatch_proof.rs` is not included in the published package
+warning: ignoring test `realtime_gate` as `tests/realtime_gate.rs` is not included in the published package
+warning: ignoring test `stage4a_source_drift` as `tests/stage4a_source_drift.rs` is not included in the published package
+warning: ignoring test `stage_sse_diag` as `tests/stage_sse_diag.rs` is not included in the published package
+warning: ignoring test `w8_altref_emit` as `tests/w8_altref_emit.rs` is not included in the published package
+warning: ignoring test `w_2pass_vbr` as `tests/w_2pass_vbr.rs` is not included in the published package
+warning: ignoring test `w_altref_partial_height` as `tests/w_altref_partial_height.rs` is not included in the published package
+warning: ignoring test `w_altref_picker` as `tests/w_altref_picker.rs` is not included in the published package
+warning: ignoring test `w_altref_real_coding` as `tests/w_altref_real_coding.rs` is not included in the published package
+warning: ignoring test `w_buffer_pool` as `tests/w_buffer_pool.rs` is not included in the published package
+warning: ignoring test `w_coef_prob_parity` as `tests/w_coef_prob_parity.rs` is not included in the published package
+warning: ignoring test `w_coef_prob_twoloop` as `tests/w_coef_prob_twoloop.rs` is not included in the published package
+warning: ignoring test `w_compound_proof` as `tests/w_compound_proof.rs` is not included in the published package
+warning: ignoring test `w_feature_interaction_matrix` as `tests/w_feature_interaction_matrix.rs` is not included in the published package
+warning: ignoring test `w_gop_topology` as `tests/w_gop_topology.rs` is not included in the published package
+warning: ignoring test `w_lossless_config` as `tests/w_lossless_config.rs` is not included in the published package
+warning: ignoring test `w_ml_partition` as `tests/w_ml_partition.rs` is not included in the published package
+warning: ignoring test `w_ml_rect_prune` as `tests/w_ml_rect_prune.rs` is not included in the published package
+warning: ignoring test `w_rd_partition` as `tests/w_rd_partition.rs` is not included in the published package
+warning: ignoring test `w_rd_partition_rect` as `tests/w_rd_partition_rect.rs` is not included in the published package
+warning: ignoring test `w_svc_spatial_keyframe` as `tests/w_svc_spatial_keyframe.rs` is not included in the published package
+warning: ignoring test `w_svc_temporal` as `tests/w_svc_temporal.rs` is not included in the published package
+warning: ignoring test `w_tpl` as `tests/w_tpl.rs` is not included in the published package
+warning: ignoring test `w_vbr_rc_proof` as `tests/w_vbr_rc_proof.rs` is not included in the published package
+    Updating crates.io index
+    Packaged 63 files, 3.3MiB (784.6KiB compressed)
+   Packaging rvp9-io v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-io)
+    Updating crates.io index
+    Packaged 14 files, 205.5KiB (48.9KiB compressed)
+   Packaging rvp9-cli v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-cli)
+    Updating crates.io index
+    Packaged 18 files, 307.9KiB (67.4KiB compressed)
+   Verifying rvp9-core v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-core)
+   Compiling rvp9-core v0.2.0-beta.1 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/target/package/rvp9-core-0.2.0-beta.1)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.57s
+   Verifying rvp9-decoder v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-decoder)
+    Updating crates.io index
+   Compiling rvp9-decoder v0.2.0-beta.1 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/target/package/rvp9-decoder-0.2.0-beta.1)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.79s
+   Verifying rvp9-encoder v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-encoder)
+    Updating crates.io index
+   Compiling rvp9-encoder v0.2.0-beta.1 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/target/package/rvp9-encoder-0.2.0-beta.1)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.65s
+   Verifying rvp9-io v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-io)
+    Updating crates.io index
+   Compiling rvp9-io v0.2.0-beta.1 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/target/package/rvp9-io-0.2.0-beta.1)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.06s
+   Verifying rvp9-cli v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-cli)
+    Updating crates.io index
+   Compiling rvp9-cli v0.2.0-beta.1 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-packages-a073aeeb/target/package/rvp9-cli-0.2.0-beta.1)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.83s
+   Uploading rvp9-core v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-core)
+warning: aborting upload due to dry run
+   Uploading rvp9-decoder v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-decoder)
+warning: aborting upload due to dry run
+   Uploading rvp9-io v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-io)
+warning: aborting upload due to dry run
+   Uploading rvp9-encoder v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-encoder)
+warning: aborting upload due to dry run
+   Uploading rvp9-cli v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-cli)
+warning: aborting upload due to dry run

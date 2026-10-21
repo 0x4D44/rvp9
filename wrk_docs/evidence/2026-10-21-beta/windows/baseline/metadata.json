@@ -1,0 +1,72 @@
+{
+  "git_commit": "feeb4cf87c65e4be5402b5661f6c8e3103bd304e",
+  "source_ref": "beta-public/main",
+  "remote_public": "https://github.com/0x4D44/rvp9.git",
+  "worktree": "D:\\worktrees\\rvp9-2\\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification",
+  "scratch": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\beta-win-qualification-d0ad2683",
+  "rustc": [
+    "rustc 1.95.0 (59807616e 2026-04-14)",
+    "binary: rustc",
+    "commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860",
+    "commit-date: 2026-04-14",
+    "host: x86_64-pc-windows-msvc",
+    "release: 1.95.0",
+    "LLVM version: 22.1.2"
+  ],
+  "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "nightly": [
+    "rustc 1.97.0-nightly (67bcaa9c4 2026-05-01)",
+    "binary: rustc",
+    "commit-hash: 67bcaa9c4b1b1015efae3d591155c79760b1e0a5",
+    "commit-date: 2026-05-01",
+    "host: x86_64-pc-windows-msvc",
+    "release: 1.97.0-nightly",
+    "LLVM version: 22.1.4"
+  ],
+  "rustflags": "-C target-cpu=x86-64",
+  "target": "x86_64-pc-windows-msvc",
+  "build_exit": 0,
+  "fmt_exit": 0,
+  "clippy_exit": 0,
+  "workspace_test_exit": 0,
+  "encoder_rows": 32,
+  "encoder_frames": 60,
+  "reverse_rows": 24,
+  "reverse_frames": 12,
+  "conformance_modes": 4,
+  "vectors_per_mode": 307,
+  "frames_per_mode": 4816,
+  "asan_runtime": "C:\\Program Files\\LLVM\\lib\\clang\\21\\lib\\windows\\clang_rt.asan_dynamic-x86_64.dll",
+  "asan_decoder_tests": 4,
+  "binary_hashes": [
+    {
+      "sha256": "2031D0BCD4C58D2F54E56E6C9BE3F3521A99ABE6454F5462D2B72F25D1BF15C3",
+      "path": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\beta-win-qualification-d0ad2683\\target\\release\\conformance.exe"
+    },
+    {
+      "sha256": "758D63A5D35D7FE4306F1ADDED4EAD2A4A3E7994F7C506B36F8A3D4A167C1142",
+      "path": "D:\\worktrees\\rvp9-2\\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\\target\\release\\rvp9enc.exe"
+    },
+    {
+      "sha256": "D414DEB6BF88147E57A820A10DFEB64C0F6CAD54D780B8C43532F41CF4339649",
+      "path": "D:\\worktrees\\rvp9-2\\20261021-VER-CDX@CRUCIBLE-beta-windows-qualification\\target\\release\\rvp9dec.exe"
+    },
+    {
+      "sha256": "88BA702DE16AF47327490A7D016002FD05169E074C6C6657B9E9FF7A8D4A135D",
+      "path": "D:\\worktrees\\rvp9-2\\20261015-TSK-HUM-final-release-native-correctness-qualifi\\build\\libvpx\\vpxenc.exe"
+    },
+    {
+      "sha256": "91EB8AB65F62F1D63D750878B20B6B75A2882F75814E623AB54ACF22B9AD02B6",
+      "path": "D:\\worktrees\\rvp9-2\\20261015-TSK-HUM-final-release-native-correctness-qualifi\\build\\libvpx\\vpxdec.exe"
+    },
+    {
+      "sha256": "11B9B419BABEB03E0B8A13DEC6983146F032C7D5048B8D1459E041366E64777D",
+      "path": "C:\\Program Files\\LLVM\\lib\\clang\\21\\lib\\windows\\clang_rt.asan_dynamic-x86_64.dll"
+    }
+  ],
+  "asan_core_tests": 2133,
+  "asan_core_exit": 0,
+  "workspace_passed": 3944,
+  "workspace_ignored": 72,
+  "evidence_encoding": "UTF-8 normalized from remote PowerShell UTF-16; remote originals retained"
+}
