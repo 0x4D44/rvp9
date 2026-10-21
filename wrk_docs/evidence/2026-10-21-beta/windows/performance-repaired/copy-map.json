@@ -82,5 +82,11 @@
     "local_file": "performance-evening-load.json",
     "local_sha256": "8ea10629986a5d57dc65aeea3100e57044be1233a0e8435031e43aa5c64062f7",
     "transform": "none"
+  },
+  "performance-evening-terminal.json": {
+    "remote_original_sha256": "ed8a9aec9cbcb043db7de280dcce2bf265764a8057ef746dab782e8d9852b7e9",
+    "local_file": "performance-evening-terminal.json",
+    "local_sha256": "ed8a9aec9cbcb043db7de280dcce2bf265764a8057ef746dab782e8d9852b7e9",
+    "transform": "none"
   }
 }

@@ -1,0 +1,33 @@
+2026-10-21T21:03:54.2293323+01:00
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1790624290,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_process_names": [],
+  "heavy_processes_low_priority": 0,
+  "own_measurements": 0
+}
+{
+    "timing_evidence":  false,
+    "host":  "KILN-evening",
+    "pass":  false,
+    "samples":  [
+                    36.343681121597669,
+                    29.926694413644572,
+                    30.751719182031223,
+                    32.774603214905362,
+                    34.969484430724727,
+                    42.873136737741092,
+                    32.289419320250765,
+                    36.852609166117908,
+                    33.018124723035861,
+                    32.115297834431075,
+                    34.12266244882597,
+                    28.615663015981173
+                ],
+    "limit":  0.75,
+    "busy_logical_cores":  8.0930619121857479
+}
+probe_exit=0

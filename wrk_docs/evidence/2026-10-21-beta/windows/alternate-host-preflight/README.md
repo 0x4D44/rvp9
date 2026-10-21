@@ -29,3 +29,5 @@ ANNEAL repeated eligibility refused 3.72270 busy logical cores / 24. It has no i
 The stale NOMAD host card could not be resolved by DNS; SSH exited 255 before any remote command. The exact bounded probe error is retained. No staging occurred.
 
 ANNEAL quiet-window attempt also refused 6.96045 busy logical cores after a bounded three-minute drain. Counted heavy work stayed zero, while low-priority work rose from two to four during the existing workload interval. The exact 60-second guard and all 12 samples are retained; the lease was released immediately. No staging or builds occurred there.
+
+Evening authoritative refresh (21:03–21:05 local) resampled all six alternate hosts rather than assuming morning jobs remained live. All refused: ANNEAL 1.78781; ANVIL 2.48152; QUENCH 5.18011; KILN 8.09306; TEMPER 8.61446; NMI 27.60781 busy logical cores. ANNEAL/KILN had zero counted heavy and low-priority work; NMI showed two cargo processes and 52 low-priority heavy processes. See evening-census.json and unchanged raw samples. No staging or builds occurred.

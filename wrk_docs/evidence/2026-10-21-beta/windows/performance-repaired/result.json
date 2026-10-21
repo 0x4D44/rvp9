@@ -9,5 +9,18 @@
   "retry2_quiet_released": true,
   "retry3_busy_logical_cores": 1.54752187523718,
   "retry3_quiet_released": true,
-  "retry3_bounded_drain_minutes": 3
+  "retry3_bounded_drain_minutes": 3,
+  "retry4_busy_logical_cores": 1.665375233875354,
+  "evening_busy_logical_cores": 1.0979225020443,
+  "evening_heavy_processes": 0,
+  "evening_lowpriority_processes": 0,
+  "evening_quiet_released": true,
+  "all_frozen_identities_match": true,
+  "terminal_snapshot_local": "2026-10-21 21:06:44 +01:00",
+  "next_quiet_local": "2026-10-21 21:11:51 +01:00",
+  "terminal_quiet_live": false,
+  "terminal_quiet_queue_empty": true,
+  "terminal_own_timing_processes": 0,
+  "terminal_source_clean": true,
+  "goal_status": "active; externally blocked; not complete or paused"
 }

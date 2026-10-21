@@ -1,0 +1,33 @@
+2026-10-21T21:03:52.8817204+01:00
+{
+  "live": false,
+  "holder": null,
+  "open_after": 0,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_process_names": [],
+  "heavy_processes_low_priority": 2,
+  "own_measurements": 0
+}
+{
+    "timing_evidence":  false,
+    "host":  "QUENCH-evening",
+    "pass":  false,
+    "samples":  [
+                    52.436517703880156,
+                    43.477953279714285,
+                    43.50232554585736,
+                    23.701469596841395,
+                    18.017020328276722,
+                    12.140896808136215,
+                    10.373737151295403,
+                    12.318361508131703,
+                    11.208335642852896,
+                    10.624762254600629,
+                    10.400137198737358,
+                    10.804124041933139
+                ],
+    "limit":  0.75,
+    "busy_logical_cores":  5.1801128212051459
+}
+probe_exit=0

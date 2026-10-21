@@ -1,0 +1,33 @@
+2026-10-21T21:03:51.4612978+01:00
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1790629398,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_process_names": [],
+  "heavy_processes_low_priority": 8,
+  "own_measurements": 0
+}
+{
+    "timing_evidence":  false,
+    "host":  "TEMPER-evening",
+    "pass":  false,
+    "samples":  [
+                    11.675505890743143,
+                    20.891773137110704,
+                    2.7969372032005779,
+                    24.591422928355321,
+                    9.5105486598518585,
+                    58.186212040469719,
+                    89.423764215659119,
+                    25.667452558175651,
+                    18.95165961763897,
+                    53.904254510862728,
+                    60.954812939712319,
+                    54.168515382618153
+                ],
+    "limit":  0.75,
+    "busy_logical_cores":  8.6144571816879676
+}
+probe_exit=0

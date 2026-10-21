@@ -1,0 +1,36 @@
+2026-10-21T21:03:55.9106512+01:00
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1792584476,
+  "queue": [],
+  "heavy_processes": 2,
+  "heavy_process_names": [
+    "cargo.exe (pid 24232)",
+    "cargo.exe (pid 45752)"
+  ],
+  "heavy_processes_low_priority": 52,
+  "own_measurements": 0
+}
+{
+    "timing_evidence":  false,
+    "host":  "NMI-evening",
+    "pass":  false,
+    "samples":  [
+                    98.439899310053079,
+                    99.45372012306855,
+                    98.887606551646485,
+                    99.866265489764089,
+                    96.9158622798815,
+                    99.56564815229126,
+                    96.599045405285864,
+                    97.81428498602331,
+                    99.832689265458811,
+                    99.5989579490462,
+                    99.3863373234267,
+                    96.831751106717661
+                ],
+    "limit":  0.75,
+    "busy_logical_cores":  27.607814918662147
+}
+probe_exit=0

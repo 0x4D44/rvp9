@@ -1,0 +1,28 @@
+﻿{
+    "source":  "a0b538c709f5466a04dd1687352a6200d110fdd9",
+    "goal_status":  "active; externally blocked; not complete or paused",
+    "latency_groups_started":  0,
+    "quiet_status":  {
+                         "live":  false,
+                         "holder":  null,
+                         "open_after":  1792613511,
+                         "queue":  [
+
+                                   ],
+                         "heavy_processes":  0,
+                         "heavy_process_names":  [
+
+                                                 ],
+                         "heavy_processes_low_priority":  0,
+                         "own_measurements":  0
+                     },
+    "next_quiet_local":  "2026-10-21 21:11:51 +01:00",
+    "time":  "2026-10-21T21:06:44.2624426+01:00",
+    "own_timing_processes":  [
+
+                             ],
+    "source_status":  [
+
+                      ],
+    "speed_groups_started":  0
+}

@@ -1,0 +1,33 @@
+2026-10-21T21:03:52.9322325+01:00
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1792242538,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_process_names": [],
+  "heavy_processes_low_priority": 4,
+  "own_measurements": 0
+}
+{
+    "timing_evidence":  false,
+    "host":  "ANVIL-evening",
+    "pass":  false,
+    "samples":  [
+                    5.7976419989633765,
+                    5.4008220645901712,
+                    6.5915728777301013,
+                    7.5967523517297186,
+                    4.6318942244978238,
+                    7.15306562832253,
+                    5.0217089751320554,
+                    6.6570132072603982,
+                    5.975714931090037,
+                    12.219513032686679,
+                    18.596439770346109,
+                    20.708882073654276
+                ],
+    "limit":  0.75,
+    "busy_logical_cores":  2.4815238265067432
+}
+probe_exit=0

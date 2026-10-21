@@ -1,0 +1,33 @@
+2026-10-21T21:03:54.2107741+01:00
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1792571592,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_process_names": [],
+  "heavy_processes_low_priority": 0,
+  "own_measurements": 0
+}
+{
+    "timing_evidence":  false,
+    "host":  "ANNEAL-evening",
+    "pass":  false,
+    "samples":  [
+                    3.1585881714825903,
+                    11.045313019075543,
+                    13.711402473156708,
+                    7.6196603567546433,
+                    0,
+                    6.49489892574886,
+                    8.27258000242217,
+                    13.665626693920963,
+                    2.7694180853936712,
+                    9.24170787788049,
+                    10.506544872426748,
+                    2.9049538560303678
+                ],
+    "limit":  0.75,
+    "busy_logical_cores":  1.7878138866858553
+}
+probe_exit=0
