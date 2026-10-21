@@ -1,0 +1,75 @@
+cmd :    Compiling crossbeam-utils v0.8.21
+At line:11 char:1
++ cmd /c 'deltic timeout 1800 cargo test --locked -p rvp9-bench --bin b ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling crossbeam-utils v0.8.21:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling rvp9-core v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-
+rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-core)
+   Compiling quote v1.0.45
+   Compiling serde_core v1.0.228
+   Compiling typenum v1.20.1
+   Compiling zmij v1.0.21
+   Compiling serde v1.0.228
+   Compiling rvp9-decoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-decoder)
+   Compiling serde_json v1.0.149
+   Compiling rvp9-harness v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-harness)
+   Compiling itoa v1.0.18
+   Compiling static_assertions v1.1.0
+   Compiling memchr v2.8.0
+   Compiling cpufeatures v0.2.17
+   Compiling cfg-if v1.0.4
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-io v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-rv
+p9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-io)
+   Compiling rvp9-encoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public
+-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 15.13s
+     Running unittests src\bin\bdrate.rs (C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84
+b\target\debug\deps\bdrate-bcfc1ef898707704.exe)
+
+running 19 tests
+test tests::measured_bdrate_keeps_full_rank_fits_with_repeated_observations ... ok
+test tests::measured_bdrate_rejects_repeated_realistic_psnr_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_test_with_overlap ... ok
+test tests::measured_bdrate_rejects_failed_psnr_and_insufficient_points ... ok
+test tests::measured_bdrate_matches_high_precision_narrow_psnr_reference ... ok
+test tests::csv_writer_rejects_missing_bdrate_without_creating_output ... ok
+test tests::effective_fps_tracks_last_override_and_refuses_invalid_rates ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_anchor_with_overlap ... ok
+test tests::encoder_command_keeps_matched_and_role_specific_arguments_separate ... ok
+test tests::parser_accepts_a_separate_quality_reference_input ... ok
+test tests::default_artifacts_stay_in_the_temp_directory_under_a_process_unique_prefix ... ok
+test tests::parser_defaults_the_work_directory_to_none_and_accepts_an_override ... ok
+test tests::parser_accepts_inline_role_specific_arguments ... ok
+test tests::usage_advertises_retained_artifact_inputs ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_both_curves_with_overlap ... ok
+test tests::parser_preserves_repeated_role_specific_arguments ... ok
+test tests::prepare_artifacts_reports_an_unusable_work_directory ... ok
+test tests::work_directory_artifacts_are_created_deterministic_and_collision_free ... ok
+test tests::retained_artifacts_are_never_overwritten ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\bdrate_fps.rs (C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\target
+\debug\deps\bdrate_fps-dedc56ae84e6c326.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

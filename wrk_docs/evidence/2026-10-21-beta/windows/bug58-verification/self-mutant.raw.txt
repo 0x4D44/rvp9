@@ -1,0 +1,16 @@
+=== BD-rate sweep ===
+anchor: D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\vpxenc.exe
+test:   D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\vpxenc.exe
+input:  C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\source-128x64-60f.y4m
+reference input: C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\source-128x64-60f.y4m
+artifacts: C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self-mutant\streams
+config: --rt --cpu-used=6 --end-usage=cbr --fps=30/1 --threads=1 --tile-columns=0 --lag-in-frames=0 --tune-content=default --aq-mode=3 --limit=60
+
+target    25k | anchor   1684k psnr 25.82 | test   1684k psnr 25.82
+target    50k | anchor   3122k psnr 28.30 | test   3122k psnr 28.30
+target   100k | anchor   5651k psnr 36.47 | test   5651k psnr 36.47
+target   250k | anchor  10387k psnr 44.33 | test  10387k psnr 44.33
+
+BD-rate: +0.000%  (anchor ÔåÆ test)
+
+csv: C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self-mutant\bdrate.csv

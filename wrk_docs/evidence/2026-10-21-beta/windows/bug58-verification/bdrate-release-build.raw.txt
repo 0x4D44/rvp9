@@ -1,0 +1,42 @@
+cmd :    Compiling crossbeam-utils v0.8.21
+At line:11 char:1
++ cmd /c 'deltic timeout 1800 cargo build --release --locked --bin bdra ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling crossbeam-utils v0.8.21:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   Compiling proc-macro2 v1.0.106
+   Compiling version_check v0.9.5
+   Compiling quote v1.0.45
+   Compiling rvp9-core v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-
+rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-core)
+   Compiling unicode-ident v1.0.24
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling rvp9-decoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-decoder)
+   Compiling itoa v1.0.18
+   Compiling static_assertions v1.1.0
+   Compiling rvp9-harness v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-harness)
+   Compiling memchr v2.8.0
+   Compiling cfg-if v1.0.4
+   Compiling cpufeatures v0.2.17
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-io v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-rv
+p9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-io)
+   Compiling rvp9-encoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public
+-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-bench)
+    Finished `release` profile [optimized + debuginfo] target(s) in 15.93s

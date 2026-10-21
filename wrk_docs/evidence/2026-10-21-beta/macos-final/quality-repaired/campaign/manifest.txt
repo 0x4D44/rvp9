@@ -1,0 +1,204 @@
+run_begin schema=1
+script=scripts/qualify-production-encoder.sh
+matrix=beta-cbr
+phase=quality
+started_utc=2026-10-21T07:36:49Z
+git_commit=a37aba2b523a12dba8783c0bba16f4b88f68738c
+git_status_clean=yes
+git_status_entries=0
+libvpx_commit=12f3a2ac603e8f10742105519e0cd03c3b8f71dd
+host=Darwin flux.home.arpa 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:19:08 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6050 arm64
+host_triple=aarch64-apple-darwin
+host_load_metric=unix_one_minute_load_average
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+cargo=cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+ffmpeg=ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers
+work_dir=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired
+artifact_manifest_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/extracted/rvp9-0.2.0-beta.1-aarch64-apple-darwin/BUILD-METADATA.txt
+artifact_manifest_sha256=80c48591c63fa56cbb1bef0f462202a2326ee4912678b44629d67de6a0035fac
+artifact_source_commit=15bf7162c9fb92a5165fab652460bd42da03a6e6
+artifact_binary=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/extracted/rvp9-0.2.0-beta.1-aarch64-apple-darwin/rvp9enc
+artifact_binary_sha256=0a354a5ee77f8b849e0e1456356351230e4d8ccdba1487140a65cb866b0e1b7e
+artifact_build_kind=portable-release
+artifact_guarded_paths_unchanged_since_source_commit=yes
+qualification_script_path=/Users/md/language/rvp9/scripts/qualify-production-encoder.sh
+qualification_script_sha256=79ee179d1acc8600fa5861ab6cb3d23b0c163fcb2308774d1d8d71c36e5d7cba
+test_encoder_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/extracted/rvp9-0.2.0-beta.1-aarch64-apple-darwin/rvp9enc
+test_encoder_sha256=0a354a5ee77f8b849e0e1456356351230e4d8ccdba1487140a65cb866b0e1b7e
+vpxenc_path=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxenc
+vpxenc_sha256=de4f634550bc9d5b6f5ebb1aa0d883346bb1afb4bbdec7b15368a50f153e0b7f
+libvpx_config_h_path=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpx_config.h
+libvpx_config_h_sha256=d341e15c723e14daeacbde3cdc51134752ccea9b86d0c52f99c597faf98763eb
+libvpx_config_mk_path=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/config.mk
+libvpx_config_mk_sha256=9c5560062676d1367dd05be368cdd2f1f1d8b1c30d82e7e416cc5cfab01730ed
+bdrate_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/bdrate
+bdrate_sha256=2f6f71b69ae06a4a7b1f45d825221220b7f2db33277edfb2167a4f5c6da14420
+encode_headtohead_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/frozen-tools/encode-headtohead
+encode_headtohead_sha256=63d739d8864a7bcea13ba6dcdb50ebc4d72916c562fe865c8c7c913a78b59fde
+realtime_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/frozen-tools/realtime
+realtime_sha256=1338c9808a6174097e9b8cc2bec167327a874b12d1151176f06b837d4b5f48ec
+rvp9dec_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/extracted/rvp9-0.2.0-beta.1-aarch64-apple-darwin/rvp9dec
+rvp9dec_sha256=9a8e3ffe209c49757600ea932cac777a9511e0d636daed236bcdd0362ef3ec79
+vpxdec_path=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec
+vpxdec_sha256=08d8e3c7390b066bd9c0cceb1b84c9d6c27351ade85c6d0a7c741931d3fb1117
+ffmpeg_binary_path=/opt/homebrew/bin/ffmpeg
+ffmpeg_binary_sha256=2ce81b92499c1b6b96eb060c69723114bd0da13f1bfbd9da26dee24d099e644a
+source_in_to_tree_path=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/in_to_tree_420_720p50.y4m
+source_in_to_tree_sha256=81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74
+source_ducks_take_off_path=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/ducks_take_off_420_720p50.y4m
+source_ducks_take_off_sha256=0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc
+source_old_town_cross_path=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/old_town_cross_420_720p50.y4m
+source_old_town_cross_sha256=0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123
+source_foreman_cif_path=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/foreman_cif.y4m
+source_foreman_cif_sha256=b0e3c35eff9fe1da91521a02eb9f0e3ef4bc5aec341ecef1567cd87f1711267b
+matrix_begin
+plan schema=1 version=1 matrix=beta-cbr
+libvpx_revision=12f3a2ac603e8f10742105519e0cd03c3b8f71dd
+frames=60 keyframe_interval=60 lag_in_frames=0 tune_content=default passes=1 realtime=1
+bitrate_points=6 decoders_per_stream=3
+max_aggregate_bdrate_pct=0.5 max_important_clip_bdrate_pct=2.0 experimental_single_vbr_max_bdrate_pct=15.0 experimental_temporal_cbr_max_bdrate_pct=5.0 experimental_temporal_vbr_max_bdrate_pct=35.0 aggregate_method=arithmetic_mean_clip_bdrate_pct aq_gain_delta_max_pp=0.3 aq_max_frame_ms=66
+max_ratio=1.05 max_load1=0.75 speed_warmups=1 speed_pairs=5 speed_rotations=2
+latency_warmup_runs=1 latency_measured_runs=5
+spatial_layers=excluded spatial_qualifier=scripts/qualify-spatial-svc.sh
+config aq3 cbr cpu6 aq=3 denoiser=0 temporal_layers=1
+config aq3 cbr cpu7 aq=3 denoiser=0 temporal_layers=1
+config aq3 cbr cpu8 aq=3 denoiser=0 temporal_layers=1
+quality aq3 cbr 720p30 in_to_tree cpu6 aq=3 denoiser=0 temporal_layers=1 source=in_to_tree_420_720p50.y4m fps=30 res=1280x720 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 720p30 ducks_take_off cpu6 aq=3 denoiser=0 temporal_layers=1 source=ducks_take_off_420_720p50.y4m fps=30 res=1280x720 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 720p30 old_town_cross cpu6 aq=3 denoiser=0 temporal_layers=1 source=old_town_cross_420_720p50.y4m fps=30 res=1280x720 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p30 in_to_tree cpu6 aq=3 denoiser=0 temporal_layers=1 source=in_to_tree_420_720p50.y4m fps=30 res=1920x1080 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p30 ducks_take_off cpu6 aq=3 denoiser=0 temporal_layers=1 source=ducks_take_off_420_720p50.y4m fps=30 res=1920x1080 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p30 old_town_cross cpu6 aq=3 denoiser=0 temporal_layers=1 source=old_town_cross_420_720p50.y4m fps=30 res=1920x1080 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p60 in_to_tree cpu6 aq=3 denoiser=0 temporal_layers=1 source=in_to_tree_420_720p50.y4m fps=60 res=1920x1080 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p60 ducks_take_off cpu6 aq=3 denoiser=0 temporal_layers=1 source=ducks_take_off_420_720p50.y4m fps=60 res=1920x1080 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p60 old_town_cross cpu6 aq=3 denoiser=0 temporal_layers=1 source=old_town_cross_420_720p50.y4m fps=60 res=1920x1080 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 720p30 in_to_tree cpu7 aq=3 denoiser=0 temporal_layers=1 source=in_to_tree_420_720p50.y4m fps=30 res=1280x720 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 720p30 ducks_take_off cpu7 aq=3 denoiser=0 temporal_layers=1 source=ducks_take_off_420_720p50.y4m fps=30 res=1280x720 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 720p30 old_town_cross cpu7 aq=3 denoiser=0 temporal_layers=1 source=old_town_cross_420_720p50.y4m fps=30 res=1280x720 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p30 in_to_tree cpu7 aq=3 denoiser=0 temporal_layers=1 source=in_to_tree_420_720p50.y4m fps=30 res=1920x1080 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p30 ducks_take_off cpu7 aq=3 denoiser=0 temporal_layers=1 source=ducks_take_off_420_720p50.y4m fps=30 res=1920x1080 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p30 old_town_cross cpu7 aq=3 denoiser=0 temporal_layers=1 source=old_town_cross_420_720p50.y4m fps=30 res=1920x1080 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p60 in_to_tree cpu7 aq=3 denoiser=0 temporal_layers=1 source=in_to_tree_420_720p50.y4m fps=60 res=1920x1080 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p60 ducks_take_off cpu7 aq=3 denoiser=0 temporal_layers=1 source=ducks_take_off_420_720p50.y4m fps=60 res=1920x1080 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p60 old_town_cross cpu7 aq=3 denoiser=0 temporal_layers=1 source=old_town_cross_420_720p50.y4m fps=60 res=1920x1080 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 720p30 in_to_tree cpu8 aq=3 denoiser=0 temporal_layers=1 source=in_to_tree_420_720p50.y4m fps=30 res=1280x720 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 720p30 ducks_take_off cpu8 aq=3 denoiser=0 temporal_layers=1 source=ducks_take_off_420_720p50.y4m fps=30 res=1280x720 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 720p30 old_town_cross cpu8 aq=3 denoiser=0 temporal_layers=1 source=old_town_cross_420_720p50.y4m fps=30 res=1280x720 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p30 in_to_tree cpu8 aq=3 denoiser=0 temporal_layers=1 source=in_to_tree_420_720p50.y4m fps=30 res=1920x1080 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p30 ducks_take_off cpu8 aq=3 denoiser=0 temporal_layers=1 source=ducks_take_off_420_720p50.y4m fps=30 res=1920x1080 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p30 old_town_cross cpu8 aq=3 denoiser=0 temporal_layers=1 source=old_town_cross_420_720p50.y4m fps=30 res=1920x1080 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p60 in_to_tree cpu8 aq=3 denoiser=0 temporal_layers=1 source=in_to_tree_420_720p50.y4m fps=60 res=1920x1080 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p60 ducks_take_off cpu8 aq=3 denoiser=0 temporal_layers=1 source=ducks_take_off_420_720p50.y4m fps=60 res=1920x1080 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality aq3 cbr 1080p60 old_town_cross cpu8 aq=3 denoiser=0 temporal_layers=1 source=old_town_cross_420_720p50.y4m fps=60 res=1920x1080 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 points=6 layer_guards=1 streams=6 decoder_runs=18 max_clip_bdrate_pct=2.0
+quality_aggregate aq3 cbr 720p30 cpu6 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross layer_gates=1 method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=0.5
+quality_aggregate aq3 cbr 1080p30 cpu6 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross layer_gates=1 method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=0.5
+quality_aggregate aq3 cbr 1080p60 cpu6 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross layer_gates=1 method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=0.5
+quality_aggregate aq3 cbr 720p30 cpu7 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross layer_gates=1 method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=0.5
+quality_aggregate aq3 cbr 1080p30 cpu7 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross layer_gates=1 method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=0.5
+quality_aggregate aq3 cbr 1080p60 cpu7 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross layer_gates=1 method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=0.5
+quality_aggregate aq3 cbr 720p30 cpu8 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross layer_gates=1 method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=0.5
+quality_aggregate aq3 cbr 1080p30 cpu8 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross layer_gates=1 method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=0.5
+quality_aggregate aq3 cbr 1080p60 cpu8 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross layer_gates=1 method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=0.5
+speed aq3 cbr 720p30 cpu6 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75
+speed aq3 cbr 1080p30 cpu6 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75
+speed aq3 cbr 1080p60 cpu6 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75
+speed aq3 cbr 720p30 cpu7 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75
+speed aq3 cbr 1080p30 cpu7 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75
+speed aq3 cbr 1080p60 cpu7 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75
+speed aq3 cbr 720p30 cpu8 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75
+speed aq3 cbr 1080p30 cpu8 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75
+speed aq3 cbr 1080p60 cpu8 aq=3 denoiser=0 temporal_layers=1 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75
+latency aq3 cbr 720p30 in_to_tree cpu6 aq=3 denoiser=0 temporal_layers=1 target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 720p30 ducks_take_off cpu6 aq=3 denoiser=0 temporal_layers=1 target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 720p30 old_town_cross cpu6 aq=3 denoiser=0 temporal_layers=1 target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p30 in_to_tree cpu6 aq=3 denoiser=0 temporal_layers=1 target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p30 ducks_take_off cpu6 aq=3 denoiser=0 temporal_layers=1 target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p30 old_town_cross cpu6 aq=3 denoiser=0 temporal_layers=1 target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p60 in_to_tree cpu6 aq=3 denoiser=0 temporal_layers=1 target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16 p99_budget_ms=25 max_frame_budget_ms=66
+latency aq3 cbr 1080p60 ducks_take_off cpu6 aq=3 denoiser=0 temporal_layers=1 target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16 p99_budget_ms=25 max_frame_budget_ms=66
+latency aq3 cbr 1080p60 old_town_cross cpu6 aq=3 denoiser=0 temporal_layers=1 target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16 p99_budget_ms=25 max_frame_budget_ms=66
+latency aq3 cbr 720p30 in_to_tree cpu7 aq=3 denoiser=0 temporal_layers=1 target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 720p30 ducks_take_off cpu7 aq=3 denoiser=0 temporal_layers=1 target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 720p30 old_town_cross cpu7 aq=3 denoiser=0 temporal_layers=1 target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p30 in_to_tree cpu7 aq=3 denoiser=0 temporal_layers=1 target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p30 ducks_take_off cpu7 aq=3 denoiser=0 temporal_layers=1 target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p30 old_town_cross cpu7 aq=3 denoiser=0 temporal_layers=1 target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p60 in_to_tree cpu7 aq=3 denoiser=0 temporal_layers=1 target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16 p99_budget_ms=25 max_frame_budget_ms=66
+latency aq3 cbr 1080p60 ducks_take_off cpu7 aq=3 denoiser=0 temporal_layers=1 target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16 p99_budget_ms=25 max_frame_budget_ms=66
+latency aq3 cbr 1080p60 old_town_cross cpu7 aq=3 denoiser=0 temporal_layers=1 target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16 p99_budget_ms=25 max_frame_budget_ms=66
+latency aq3 cbr 720p30 in_to_tree cpu8 aq=3 denoiser=0 temporal_layers=1 target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 720p30 ducks_take_off cpu8 aq=3 denoiser=0 temporal_layers=1 target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 720p30 old_town_cross cpu8 aq=3 denoiser=0 temporal_layers=1 target_kbps=1260 fps=30 res=1280x720 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p30 in_to_tree cpu8 aq=3 denoiser=0 temporal_layers=1 target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p30 ducks_take_off cpu8 aq=3 denoiser=0 temporal_layers=1 target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p30 old_town_cross cpu8 aq=3 denoiser=0 temporal_layers=1 target_kbps=2835 fps=30 res=1920x1080 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33 p99_budget_ms=50 max_frame_budget_ms=66
+latency aq3 cbr 1080p60 in_to_tree cpu8 aq=3 denoiser=0 temporal_layers=1 target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16 p99_budget_ms=25 max_frame_budget_ms=66
+latency aq3 cbr 1080p60 ducks_take_off cpu8 aq=3 denoiser=0 temporal_layers=1 target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16 p99_budget_ms=25 max_frame_budget_ms=66
+latency aq3 cbr 1080p60 old_town_cross cpu8 aq=3 denoiser=0 temporal_layers=1 target_kbps=5670 fps=60 res=1920x1080 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16 p99_budget_ms=25 max_frame_budget_ms=66
+oracle aq_gain_parity feature=aq3 mode=vbr cpu=7 aq=0,3 denoiser=0 temporal_layers=1 source=tests/corpus/foreman_cif.y4m frames=64 crop=256x256+48+16 bitrates_bps=25000,50000,100000,250000 requires=gain_rvp9_finite,gain_libvpx_finite,aq_activation max_gain_delta_pp=0.3 implementation=crates/rvp9-encoder/tests/quality_gate.rs
+TOTALS config_rows=3 quality_curves=27 quality_aggregate_groups=9 quality_aggregate_layer_gates=9 quality_clip_layer_guards=27 candidate_streams=162 decoder_runs=486 speed_groups=9 latency_groups=9 latency_rows=27 latency_measured_runs=135 required_oracles=1
+matrix_end
+input_clean_in_to_tree_720p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/in_to_tree_720p30_clean.y4m
+input_clean_in_to_tree_720p30_sha256=3053ddad95a66bb970685412d58ee807813319668a57cd5f8a6d00c07415a895
+input_noisy_in_to_tree_720p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/in_to_tree_720p30_noisy.y4m
+input_noisy_in_to_tree_720p30_sha256=a42044988c85b512fbd64ab807039ba728e71a63f581694895a3ba0e107db507
+input_clean_ducks_take_off_720p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/ducks_take_off_720p30_clean.y4m
+input_clean_ducks_take_off_720p30_sha256=42235814fd03ffba9144d915bda7844902ccd9076bef7143e373fc6de0df170a
+input_noisy_ducks_take_off_720p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/ducks_take_off_720p30_noisy.y4m
+input_noisy_ducks_take_off_720p30_sha256=dbd6de4f4c03a33105537fd2843eded5e6268d3c828b7f564526976b4f35fa1d
+input_clean_old_town_cross_720p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/old_town_cross_720p30_clean.y4m
+input_clean_old_town_cross_720p30_sha256=752413cb08a572c5c571ac93903bcac961ed30a53ece26dcbc18d5fa3cbbc4d8
+input_noisy_old_town_cross_720p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/old_town_cross_720p30_noisy.y4m
+input_noisy_old_town_cross_720p30_sha256=1ba3c54a7621f54aaeedfc968e35d57e9fa2ea706c5c6357c308384a3fc23434
+input_clean_in_to_tree_1080p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/in_to_tree_1080p30_clean.y4m
+input_clean_in_to_tree_1080p30_sha256=c1a5cd4f33bce2156b8501e414a5d7bac43265fbefa555130333bff09d0a2312
+input_noisy_in_to_tree_1080p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/in_to_tree_1080p30_noisy.y4m
+input_noisy_in_to_tree_1080p30_sha256=3ab642f358ffd718a85afb63c29b120fb22ab12ce139176536ae987958efda3d
+input_clean_ducks_take_off_1080p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/ducks_take_off_1080p30_clean.y4m
+input_clean_ducks_take_off_1080p30_sha256=67213e2b7024e9ce99c3be1ee541484193add373cd93e073497b3dc77dd368c0
+input_noisy_ducks_take_off_1080p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/ducks_take_off_1080p30_noisy.y4m
+input_noisy_ducks_take_off_1080p30_sha256=edd7342a81c4d5e566947cfd313e67952becddb93a22e5e76f2938b548284d27
+input_clean_old_town_cross_1080p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/old_town_cross_1080p30_clean.y4m
+input_clean_old_town_cross_1080p30_sha256=76dd63ed6f64784d3ca55b15155883ed9a82e6e0c3daaf380fab5a8420665b35
+input_noisy_old_town_cross_1080p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/old_town_cross_1080p30_noisy.y4m
+input_noisy_old_town_cross_1080p30_sha256=b0542acabd15c650097ee97bf270b73c6f6188b2f3a3a35ac8cbb6de4d63486b
+input_clean_in_to_tree_1080p60_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/in_to_tree_1080p60_clean.y4m
+input_clean_in_to_tree_1080p60_sha256=14f1526c4b111f230c39e2512853ab10962bbde0657d5e81328f84821e2d34ae
+input_noisy_in_to_tree_1080p60_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/in_to_tree_1080p60_noisy.y4m
+input_noisy_in_to_tree_1080p60_sha256=8e77c0195516a1ee60486dd81dacd7628156cd3aebb0189e096a5874ab38310a
+input_clean_ducks_take_off_1080p60_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/ducks_take_off_1080p60_clean.y4m
+input_clean_ducks_take_off_1080p60_sha256=acea253c0793d1e2df4d844649fadccd2ff00a4e24c9194e81ae6fd7b6d42d04
+input_noisy_ducks_take_off_1080p60_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/ducks_take_off_1080p60_noisy.y4m
+input_noisy_ducks_take_off_1080p60_sha256=4b4c4f6a5aa7a42f580939a52c9d80be376b8ecd68379c6a6aeb06f5762baa65
+input_clean_old_town_cross_1080p60_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/old_town_cross_1080p60_clean.y4m
+input_clean_old_town_cross_1080p60_sha256=b97a83f929378012b8e2f117a0fe11398a29496d6b02872a3b53a1b1147e3119
+input_noisy_old_town_cross_1080p60_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/old_town_cross_1080p60_noisy.y4m
+input_noisy_old_town_cross_1080p60_sha256=66734f2771a4cdde6f2ca142d050016afb32ddd99bddef9e916bafda105fd338
+acceptance_inputs=18
+run_fingerprint_sha256=49d7172589a823c36a9c07e0a7076cf388311001149719607ec2e5a27ead473a
+acceptance_inputs_sealed=yes
+quality_curves=27
+quality_rows_reused=0
+quality_rows_encoded_this_invocation=27
+quality_clip_layer_checks=27
+quality_clip_layer_failures=0
+quality_aggregate_groups=9
+quality_aggregate_layer_gates=9
+quality_aggregate_failures=0
+candidate_streams=162
+decoder_runs=486
+required_oracles=1
+aq_oracle_status=PASS
+aq_oracle_exit_code=0
+aq_oracle_gain_rvp9_pct=4.977
+aq_oracle_gain_libvpx_pct=4.714
+aq_oracle_delta_pp=0.263
+aq_oracle_activation=present
+aq_oracle_log_sha256=d674ffd572869c8012d7216be38ba5a4af4c309dbd8de8692106955bc7dc5a17
+aq_oracle_summary_sha256=4cd12cd697e66d828c6a89a9a38e9dccb151439e4f2c0342a074a961afc9889f
+quality_summary_sha256=8058a1b1a708c96bbcc80dd9fc828f8be9bd2b83680777fc8ece63661be5b165
+quality_aggregate_sha256=8af7c88da53be22bdde860cfb5c290c7dce1c14fbcb6c28064bfdf8470970a0c
+cross_decoder_summary_sha256=368bf68edaace733d8d8416fd65ce6bc38e49c3ef8ff411f651225abb34cfb53
+quality_verdict=pass
+ended_utc=2026-10-21T07:55:45Z
+run_end status=pass

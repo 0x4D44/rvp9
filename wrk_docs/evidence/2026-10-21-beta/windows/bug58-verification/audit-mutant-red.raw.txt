@@ -1,0 +1,40 @@
+﻿BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self-muta
+nt\streams\anchor_25k.ivf actual=1683.6 expected=50.508
+BITRATE_AUDIT_ASSERTION 
+stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self-mutant\streams\test_25k.ivf 
+actual=1683.6 expected=50.508
+BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self-muta
+nt\streams\anchor_50k.ivf actual=3121.6 expected=93.648
+BITRATE_AUDIT_ASSERTION 
+stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self-mutant\streams\test_50k.ivf 
+actual=3121.6 expected=93.648
+BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self-muta
+nt\streams\anchor_100k.ivf actual=5651.333 expected=169.54
+BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self-muta
+nt\streams\test_100k.ivf actual=5651.333 expected=169.54
+BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self-muta
+nt\streams\anchor_250k.ivf actual=10386.933 expected=311.608
+BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self-muta
+nt\streams\test_250k.ivf actual=10386.933 expected=311.608
+At C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\audit.ps1:18 char:21
++ if($failures.Count){throw ($failures -join "`n")}
++                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (BITRATE_AUDIT_A...xpected=311.608:String) [], RuntimeException
+    + FullyQualifiedErrorId : BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-wi 
+   ndows-verify-3b31d84b\self-mutant\streams\anchor_25k.ivf actual=1683.6 expected=50.508
+    BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self 
+   -mutant\streams\test_25k.ivf actual=1683.6 expected=50.508
+    BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self 
+   -mutant\streams\anchor_50k.ivf actual=3121.6 expected=93.648
+    BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self 
+   -mutant\streams\test_50k.ivf actual=3121.6 expected=93.648
+    BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self 
+   -mutant\streams\anchor_100k.ivf actual=5651.333 expected=169.54
+    BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self 
+   -mutant\streams\test_100k.ivf actual=5651.333 expected=169.54
+    BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self 
+   -mutant\streams\anchor_250k.ivf actual=10386.933 expected=311.608
+    BITRATE_AUDIT_ASSERTION stream=C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\self 
+   -mutant\streams\test_250k.ivf actual=10386.933 expected=311.608
+ 
+

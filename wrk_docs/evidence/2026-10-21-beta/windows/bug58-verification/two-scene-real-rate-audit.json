@@ -1,0 +1,406 @@
+﻿[
+    {
+        "scene":  "in_to_tree",
+        "retained_identity":  [
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "6DCC7F02F3FF6CC1CC0F7B3A45473549567F750CFBCC224EBF820D469167BB08",
+                                      "retained_sha256":  "6DCC7F02F3FF6CC1CC0F7B3A45473549567F750CFBCC224EBF820D469167BB08",
+                                      "stream":  "anchor_1260k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "5D1E71DDAE1DEE29E9F1F1C787F6D3B557776ADF4DD56B32DC4ACC69D792FC89",
+                                      "retained_sha256":  "5D1E71DDAE1DEE29E9F1F1C787F6D3B557776ADF4DD56B32DC4ACC69D792FC89",
+                                      "stream":  "anchor_2100k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "1B4EFDFAD1976CF4F8C8828597FF27BD3633A86A89631276412EE298EBD70A8A",
+                                      "retained_sha256":  "1B4EFDFAD1976CF4F8C8828597FF27BD3633A86A89631276412EE298EBD70A8A",
+                                      "stream":  "anchor_3360k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "28B33D288B5428D4A35CAAF4F2B4430F19142F18AAF4D26A2144518D178503FA",
+                                      "retained_sha256":  "28B33D288B5428D4A35CAAF4F2B4430F19142F18AAF4D26A2144518D178503FA",
+                                      "stream":  "anchor_420k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "B781098F08F13846C14B94C770E62925A125EDDD60C6E1E468B16B9C2B1F5703",
+                                      "retained_sha256":  "B781098F08F13846C14B94C770E62925A125EDDD60C6E1E468B16B9C2B1F5703",
+                                      "stream":  "anchor_630k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "5283584A6A7BF67B289C69E1E57CB646B6544C7198222375AFE27FA507AECBB9",
+                                      "retained_sha256":  "5283584A6A7BF67B289C69E1E57CB646B6544C7198222375AFE27FA507AECBB9",
+                                      "stream":  "anchor_840k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "B1E719264FE02C3F0F2D77A51E7F44C5BF3A96576119A015F5E24F9BC87563C1",
+                                      "retained_sha256":  "B1E719264FE02C3F0F2D77A51E7F44C5BF3A96576119A015F5E24F9BC87563C1",
+                                      "stream":  "test_1260k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "6C16BA9B28AC02162EBBC4ADC0F602FBEEEF6F102EFD9C43585AF5C3BA4C5105",
+                                      "retained_sha256":  "6C16BA9B28AC02162EBBC4ADC0F602FBEEEF6F102EFD9C43585AF5C3BA4C5105",
+                                      "stream":  "test_2100k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "9E91497E70437D03064CF9236936ACC5277CD7167D8E23FC873CD3C31380B2BB",
+                                      "retained_sha256":  "9E91497E70437D03064CF9236936ACC5277CD7167D8E23FC873CD3C31380B2BB",
+                                      "stream":  "test_3360k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "73DA2A7FFEB41A50353E7217B4E3A5729F12F0DFD2C67B880A7190D3A775D0CB",
+                                      "retained_sha256":  "73DA2A7FFEB41A50353E7217B4E3A5729F12F0DFD2C67B880A7190D3A775D0CB",
+                                      "stream":  "test_420k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "24B3199A3F74A757E83541B954688F763037C8390745C41603F16B3131A95334",
+                                      "retained_sha256":  "24B3199A3F74A757E83541B954688F763037C8390745C41603F16B3131A95334",
+                                      "stream":  "test_630k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "FC927BBED757F3D205FFE597D6F9170E20160EC9B648F7621F987483E0B01245",
+                                      "retained_sha256":  "FC927BBED757F3D205FFE597D6F9170E20160EC9B648F7621F987483E0B01245",
+                                      "stream":  "test_840k.ivf"
+                                  }
+                              ],
+        "rates":  {
+                      "value":  [
+                                    {
+                                        "stream":  "anchor_420k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  795.656,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  795.656,
+                                        "bytes":  198914,
+                                        "sha256":  "28B33D288B5428D4A35CAAF4F2B4430F19142F18AAF4D26A2144518D178503FA"
+                                    },
+                                    {
+                                        "stream":  "test_420k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  490.092,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  490.092,
+                                        "bytes":  122523,
+                                        "sha256":  "73DA2A7FFEB41A50353E7217B4E3A5729F12F0DFD2C67B880A7190D3A775D0CB"
+                                    },
+                                    {
+                                        "stream":  "anchor_630k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  1280.784,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  1280.784,
+                                        "bytes":  320196,
+                                        "sha256":  "B781098F08F13846C14B94C770E62925A125EDDD60C6E1E468B16B9C2B1F5703"
+                                    },
+                                    {
+                                        "stream":  "test_630k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  749.744,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  749.744,
+                                        "bytes":  187436,
+                                        "sha256":  "24B3199A3F74A757E83541B954688F763037C8390745C41603F16B3131A95334"
+                                    },
+                                    {
+                                        "stream":  "anchor_840k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  1691.968,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  1691.968,
+                                        "bytes":  422992,
+                                        "sha256":  "5283584A6A7BF67B289C69E1E57CB646B6544C7198222375AFE27FA507AECBB9"
+                                    },
+                                    {
+                                        "stream":  "test_840k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  1022.392,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  1022.392,
+                                        "bytes":  255598,
+                                        "sha256":  "FC927BBED757F3D205FFE597D6F9170E20160EC9B648F7621F987483E0B01245"
+                                    },
+                                    {
+                                        "stream":  "anchor_1260k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  2419.68,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  2419.68,
+                                        "bytes":  604920,
+                                        "sha256":  "6DCC7F02F3FF6CC1CC0F7B3A45473549567F750CFBCC224EBF820D469167BB08"
+                                    },
+                                    {
+                                        "stream":  "test_1260k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  1582.068,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  1582.068,
+                                        "bytes":  395517,
+                                        "sha256":  "B1E719264FE02C3F0F2D77A51E7F44C5BF3A96576119A015F5E24F9BC87563C1"
+                                    },
+                                    {
+                                        "stream":  "anchor_2100k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  3572.652,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  3572.652,
+                                        "bytes":  893163,
+                                        "sha256":  "5D1E71DDAE1DEE29E9F1F1C787F6D3B557776ADF4DD56B32DC4ACC69D792FC89"
+                                    },
+                                    {
+                                        "stream":  "test_2100k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  2406.144,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  2406.144,
+                                        "bytes":  601536,
+                                        "sha256":  "6C16BA9B28AC02162EBBC4ADC0F602FBEEEF6F102EFD9C43585AF5C3BA4C5105"
+                                    },
+                                    {
+                                        "stream":  "anchor_3360k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  4503.776,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  4503.776,
+                                        "bytes":  1125944,
+                                        "sha256":  "1B4EFDFAD1976CF4F8C8828597FF27BD3633A86A89631276412EE298EBD70A8A"
+                                    },
+                                    {
+                                        "stream":  "test_3360k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  3450.524,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  3450.524,
+                                        "bytes":  862631,
+                                        "sha256":  "9E91497E70437D03064CF9236936ACC5277CD7167D8E23FC873CD3C31380B2BB"
+                                    }
+                                ],
+                      "Count":  12
+                  }
+    },
+    {
+        "scene":  "ducks_take_off",
+        "retained_identity":  [
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "9C1DCC98FDFA2CD1FE28B9FCA3E1A07F8912FE3AA422B105F84C628337753C7C",
+                                      "retained_sha256":  "9C1DCC98FDFA2CD1FE28B9FCA3E1A07F8912FE3AA422B105F84C628337753C7C",
+                                      "stream":  "anchor_1260k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "97063ED99352D52136F486C4C09F41409CDAA75C64DA4ACE2354149F28219378",
+                                      "retained_sha256":  "97063ED99352D52136F486C4C09F41409CDAA75C64DA4ACE2354149F28219378",
+                                      "stream":  "anchor_2100k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "292D00259923FD11812C540FB345CC4771A50BB57C3B199FF80D150F11F435A2",
+                                      "retained_sha256":  "292D00259923FD11812C540FB345CC4771A50BB57C3B199FF80D150F11F435A2",
+                                      "stream":  "anchor_3360k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "AF74F38F78188768B03D278FD93B817F453CA3AE7800F1395BD7DCD4904799EB",
+                                      "retained_sha256":  "AF74F38F78188768B03D278FD93B817F453CA3AE7800F1395BD7DCD4904799EB",
+                                      "stream":  "anchor_420k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "608F01D625CCCF918430A65853B6FB738E4B79CE377882C3BCF534F6B2848626",
+                                      "retained_sha256":  "608F01D625CCCF918430A65853B6FB738E4B79CE377882C3BCF534F6B2848626",
+                                      "stream":  "anchor_630k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "B9C19AC5A1F6895BE6C5540A62008E91ADB74705E0013F445082CA6C0E1B8C74",
+                                      "retained_sha256":  "B9C19AC5A1F6895BE6C5540A62008E91ADB74705E0013F445082CA6C0E1B8C74",
+                                      "stream":  "anchor_840k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "5965542B04B0A9AD390CE6F3F4DC5BCF80D6F405A13F571DCC3D04CF5A48D291",
+                                      "retained_sha256":  "5965542B04B0A9AD390CE6F3F4DC5BCF80D6F405A13F571DCC3D04CF5A48D291",
+                                      "stream":  "test_1260k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "034952DA7DC6D618C45B90853D0EE5408DBF3DE34C429D3A78B67D306BA4F817",
+                                      "retained_sha256":  "034952DA7DC6D618C45B90853D0EE5408DBF3DE34C429D3A78B67D306BA4F817",
+                                      "stream":  "test_2100k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "EC73014716513A146ADF237B11BE662EFAD26972BDB8DD277A181D0977304392",
+                                      "retained_sha256":  "EC73014716513A146ADF237B11BE662EFAD26972BDB8DD277A181D0977304392",
+                                      "stream":  "test_3360k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "7C0F17B78F1EB1250D095C67CEB7B0353428B9F0DD856BBBA8371C2C43D351AE",
+                                      "retained_sha256":  "7C0F17B78F1EB1250D095C67CEB7B0353428B9F0DD856BBBA8371C2C43D351AE",
+                                      "stream":  "test_420k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "D709C881FA99261B4CF418051B5B50A02A0E0E4C503EA88CF1887A13A87AB426",
+                                      "retained_sha256":  "D709C881FA99261B4CF418051B5B50A02A0E0E4C503EA88CF1887A13A87AB426",
+                                      "stream":  "test_630k.ivf"
+                                  },
+                                  {
+                                      "identical":  true,
+                                      "new_sha256":  "DEF8436BA677D81CADAA14B54DA5CD7643736182B494D6961D88D13F5C77F384",
+                                      "retained_sha256":  "DEF8436BA677D81CADAA14B54DA5CD7643736182B494D6961D88D13F5C77F384",
+                                      "stream":  "test_840k.ivf"
+                                  }
+                              ],
+        "rates":  {
+                      "value":  [
+                                    {
+                                        "stream":  "anchor_420k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  1491.236,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  1491.236,
+                                        "bytes":  372809,
+                                        "sha256":  "AF74F38F78188768B03D278FD93B817F453CA3AE7800F1395BD7DCD4904799EB"
+                                    },
+                                    {
+                                        "stream":  "test_420k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  1001.676,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  1001.676,
+                                        "bytes":  250419,
+                                        "sha256":  "7C0F17B78F1EB1250D095C67CEB7B0353428B9F0DD856BBBA8371C2C43D351AE"
+                                    },
+                                    {
+                                        "stream":  "anchor_630k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  1836.94,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  1836.94,
+                                        "bytes":  459235,
+                                        "sha256":  "608F01D625CCCF918430A65853B6FB738E4B79CE377882C3BCF534F6B2848626"
+                                    },
+                                    {
+                                        "stream":  "test_630k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  1205.216,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  1205.216,
+                                        "bytes":  301304,
+                                        "sha256":  "D709C881FA99261B4CF418051B5B50A02A0E0E4C503EA88CF1887A13A87AB426"
+                                    },
+                                    {
+                                        "stream":  "anchor_840k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  2228.588,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  2228.588,
+                                        "bytes":  557147,
+                                        "sha256":  "B9C19AC5A1F6895BE6C5540A62008E91ADB74705E0013F445082CA6C0E1B8C74"
+                                    },
+                                    {
+                                        "stream":  "test_840k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  1358.296,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  1358.296,
+                                        "bytes":  339574,
+                                        "sha256":  "DEF8436BA677D81CADAA14B54DA5CD7643736182B494D6961D88D13F5C77F384"
+                                    },
+                                    {
+                                        "stream":  "anchor_1260k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  2900.684,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  2900.684,
+                                        "bytes":  725171,
+                                        "sha256":  "9C1DCC98FDFA2CD1FE28B9FCA3E1A07F8912FE3AA422B105F84C628337753C7C"
+                                    },
+                                    {
+                                        "stream":  "test_1260k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  1857.088,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  1857.088,
+                                        "bytes":  464272,
+                                        "sha256":  "5965542B04B0A9AD390CE6F3F4DC5BCF80D6F405A13F571DCC3D04CF5A48D291"
+                                    },
+                                    {
+                                        "stream":  "anchor_2100k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  4131.804,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  4131.804,
+                                        "bytes":  1032951,
+                                        "sha256":  "97063ED99352D52136F486C4C09F41409CDAA75C64DA4ACE2354149F28219378"
+                                    },
+                                    {
+                                        "stream":  "test_2100k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  2716.596,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  2716.596,
+                                        "bytes":  679149,
+                                        "sha256":  "034952DA7DC6D618C45B90853D0EE5408DBF3DE34C429D3A78B67D306BA4F817"
+                                    },
+                                    {
+                                        "stream":  "anchor_3360k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  5281.684,
+                                        "frames":  60,
+                                        "clock_rate":  1000,
+                                        "independent_expected_kbps":  5281.684,
+                                        "bytes":  1320421,
+                                        "sha256":  "292D00259923FD11812C540FB345CC4771A50BB57C3B199FF80D150F11F435A2"
+                                    },
+                                    {
+                                        "stream":  "test_3360k.ivf",
+                                        "pass":  true,
+                                        "measured_kbps":  3843.76,
+                                        "frames":  60,
+                                        "clock_rate":  30,
+                                        "independent_expected_kbps":  3843.76,
+                                        "bytes":  960940,
+                                        "sha256":  "EC73014716513A146ADF237B11BE662EFAD26972BDB8DD277A181D0977304392"
+                                    }
+                                ],
+                      "Count":  12
+                  }
+    }
+]

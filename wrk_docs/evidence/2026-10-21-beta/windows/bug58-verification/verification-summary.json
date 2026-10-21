@@ -1,0 +1,13 @@
+﻿{
+    "green_audit_selected":  8,
+    "mutant_audit_failed":  8,
+    "unit_passed":  19,
+    "mutant_binary_sha256":  "E9AFCBE81FCB1502F073E65C403913220D1F8944C56EF921EFEC11B9EF070388",
+    "captured_source_sha256":  "AB4878616A72CD5DCEC504E9D05753590D88121F56C99A98F446B5CD0FEA873F",
+    "unix_only_integration_selected":  0,
+    "green_binary_sha256":  "0735B602F78E496CC32DEFB597DC5DEB15F39EAF85CA41070BAB73ACBFDC8B52",
+    "owner_run":  "verify-20261021T072658Z-fd362310",
+    "fix":  "d872b7216cb7c2ca8f23e494b1ade99b202e22e9",
+    "source_sha256":  "AB4878616A72CD5DCEC504E9D05753590D88121F56C99A98F446B5CD0FEA873F",
+    "head":  "a0b538c709f5466a04dd1687352a6200d110fdd9"
+}

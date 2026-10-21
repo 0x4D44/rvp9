@@ -1,0 +1,82 @@
+﻿[
+    {
+        "stream":  "anchor_25k.ivf",
+        "pass":  false,
+        "measured_kbps":  1683.6,
+        "frames":  60,
+        "clock_rate":  1000,
+        "independent_expected_kbps":  50.508,
+        "bytes":  12627,
+        "sha256":  "FB3ABB105C2307FD14464B235BF57A2D40BCD287B2F10B00A9C1585AF07C3E61"
+    },
+    {
+        "stream":  "test_25k.ivf",
+        "pass":  false,
+        "measured_kbps":  1683.6,
+        "frames":  60,
+        "clock_rate":  1000,
+        "independent_expected_kbps":  50.508,
+        "bytes":  12627,
+        "sha256":  "FB3ABB105C2307FD14464B235BF57A2D40BCD287B2F10B00A9C1585AF07C3E61"
+    },
+    {
+        "stream":  "anchor_50k.ivf",
+        "pass":  false,
+        "measured_kbps":  3121.6,
+        "frames":  60,
+        "clock_rate":  1000,
+        "independent_expected_kbps":  93.648,
+        "bytes":  23412,
+        "sha256":  "41ABB08E999DFF4D0983FA12395DDF7811C1C91D10B9D261D53D2DD90C73D04A"
+    },
+    {
+        "stream":  "test_50k.ivf",
+        "pass":  false,
+        "measured_kbps":  3121.6,
+        "frames":  60,
+        "clock_rate":  1000,
+        "independent_expected_kbps":  93.648,
+        "bytes":  23412,
+        "sha256":  "41ABB08E999DFF4D0983FA12395DDF7811C1C91D10B9D261D53D2DD90C73D04A"
+    },
+    {
+        "stream":  "anchor_100k.ivf",
+        "pass":  false,
+        "measured_kbps":  5651.333,
+        "frames":  60,
+        "clock_rate":  1000,
+        "independent_expected_kbps":  169.54,
+        "bytes":  42385,
+        "sha256":  "45873F51460296AF5F490C081EA6CA4FA85F0662034F8EDF3F943B90EE55B4AE"
+    },
+    {
+        "stream":  "test_100k.ivf",
+        "pass":  false,
+        "measured_kbps":  5651.333,
+        "frames":  60,
+        "clock_rate":  1000,
+        "independent_expected_kbps":  169.54,
+        "bytes":  42385,
+        "sha256":  "45873F51460296AF5F490C081EA6CA4FA85F0662034F8EDF3F943B90EE55B4AE"
+    },
+    {
+        "stream":  "anchor_250k.ivf",
+        "pass":  false,
+        "measured_kbps":  10386.933,
+        "frames":  60,
+        "clock_rate":  1000,
+        "independent_expected_kbps":  311.608,
+        "bytes":  77902,
+        "sha256":  "63523A2DF32D344C06610D2423E994E6C1992F644A5CD5CB22338C67024651D9"
+    },
+    {
+        "stream":  "test_250k.ivf",
+        "pass":  false,
+        "measured_kbps":  10386.933,
+        "frames":  60,
+        "clock_rate":  1000,
+        "independent_expected_kbps":  311.608,
+        "bytes":  77902,
+        "sha256":  "63523A2DF32D344C06610D2423E994E6C1992F644A5CD5CB22338C67024651D9"
+    }
+]

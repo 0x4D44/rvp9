@@ -1,0 +1,10 @@
+group_id,feature,mode,target,cpu_used,aq_mode,noise_sensitivity,temporal_layers,clips,clip_count,layer,mean_bdrate_pct,gate_pct,status
+aq3-cbr-720p30-cpu6-tl0,aq3,cbr,720p30,6,3,0,1,in_to_tree;ducks_take_off;old_town_cross,3,0,-29.990533,0.5,PASS
+aq3-cbr-1080p30-cpu6-tl0,aq3,cbr,1080p30,6,3,0,1,in_to_tree;ducks_take_off;old_town_cross,3,0,-13.459167,0.5,PASS
+aq3-cbr-1080p60-cpu6-tl0,aq3,cbr,1080p60,6,3,0,1,in_to_tree;ducks_take_off;old_town_cross,3,0,-16.135767,0.5,PASS
+aq3-cbr-720p30-cpu7-tl0,aq3,cbr,720p30,7,3,0,1,in_to_tree;ducks_take_off;old_town_cross,3,0,-31.108100,0.5,PASS
+aq3-cbr-1080p30-cpu7-tl0,aq3,cbr,1080p30,7,3,0,1,in_to_tree;ducks_take_off;old_town_cross,3,0,-21.615133,0.5,PASS
+aq3-cbr-1080p60-cpu7-tl0,aq3,cbr,1080p60,7,3,0,1,in_to_tree;ducks_take_off;old_town_cross,3,0,-26.726467,0.5,PASS
+aq3-cbr-720p30-cpu8-tl0,aq3,cbr,720p30,8,3,0,1,in_to_tree;ducks_take_off;old_town_cross,3,0,-34.291633,0.5,PASS
+aq3-cbr-1080p30-cpu8-tl0,aq3,cbr,1080p30,8,3,0,1,in_to_tree;ducks_take_off;old_town_cross,3,0,-24.270767,0.5,PASS
+aq3-cbr-1080p60-cpu8-tl0,aq3,cbr,1080p60,8,3,0,1,in_to_tree;ducks_take_off;old_town_cross,3,0,-32.337000,0.5,PASS

@@ -1,0 +1,14 @@
+{
+  "source": "a0b538c7",
+  "fix": "d872b7216cb7c2ca8f23e494b1ade99b202e22e9",
+  "exit": 0,
+  "curves": 27,
+  "row_statuses": [
+    "PASS"
+  ],
+  "aggregate_groups": 9,
+  "candidate_streams": 162,
+  "decoder_runs": 486,
+  "aq_oracles": 1,
+  "rows_reused": 0
+}

@@ -1,0 +1,56 @@
+   Compiling libc v0.2.186
+   Compiling cpufeatures v0.2.17
+   Compiling sha2 v0.10.9
+   Compiling rvp9-encoder v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-encoder)
+    Finished `release` profile [optimized + debuginfo] target(s) in 59.43s
+     Running tests/quality_gate.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/deps/quality_gate-11757a06e56e5acc)
+
+running 1 test
+test bdrate_gate_stage4b_aq_realcontent ... Stage 4b Exit Gate — AQ.5 Measurement Report
+=============================================
+Source: foreman_cif y4m centre-crop from /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/foreman_cif.y4m → 256x256 @ 29.97002997002997 fps
+Frames: 64    Target bitrates: [25000, 50000, 100000, 250000] bps
+
+Curve 1: rvp9 AqMode::Off
+  rvp9-off   target=   25 kbps  →  actual=   43.3 kbps,  PSNR= 28.28 dB
+  rvp9-off   target=   50 kbps  →  actual=   68.6 kbps,  PSNR= 29.88 dB
+  rvp9-off   target=  100 kbps  →  actual=  126.2 kbps,  PSNR= 32.94 dB
+  rvp9-off   target=  250 kbps  →  actual=  249.8 kbps,  PSNR= 36.47 dB
+Curve 2: rvp9 AqMode::CyclicRefresh
+  rvp9-aq    target=   25 kbps  →  actual=   45.3 kbps,  PSNR= 28.36 dB
+  rvp9-aq    target=   50 kbps  →  actual=   70.5 kbps,  PSNR= 29.80 dB
+  rvp9-aq    target=  100 kbps  →  actual=  125.6 kbps,  PSNR= 32.64 dB
+  rvp9-aq    target=  250 kbps  →  actual=  246.7 kbps,  PSNR= 36.08 dB
+AQ activation: boosted_mi_cells=9536 active_frames=83
+
+libvpx-stock available at: /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxenc
+Curve 3: libvpx --aq-mode=0
+  libvpx-off  target=   25 kbps  →  actual=   45.8 kbps,  PSNR= 28.10 dB
+  libvpx-off  target=   50 kbps  →  actual=   72.1 kbps,  PSNR= 29.87 dB
+  libvpx-off  target=  100 kbps  →  actual=  137.5 kbps,  PSNR= 33.13 dB
+  libvpx-off  target=  250 kbps  →  actual=  288.1 kbps,  PSNR= 36.75 dB
+Curve 4: libvpx --aq-mode=3
+  libvpx-aq   target=   25 kbps  →  actual=   48.5 kbps,  PSNR= 28.09 dB
+  libvpx-aq   target=   50 kbps  →  actual=   74.2 kbps,  PSNR= 30.03 dB
+  libvpx-aq   target=  100 kbps  →  actual=  138.3 kbps,  PSNR= 32.78 dB
+  libvpx-aq   target=  250 kbps  →  actual=  283.3 kbps,  PSNR= 36.76 dB
+
+Curve summaries:
+  rvp9_off  = [(43.340409590409585, 28.284049521179373), (68.60514485514486, 29.875161854409143), (126.20754245754246, 32.94076095279053), (249.8301698301698, 36.46821574885209)]
+  rvp9_aq   = [(45.307192807192806, 28.35828229825213), (70.48201798201798, 29.795490523736277), (125.55944055944056, 32.64013194043842), (246.67582417582418, 36.079395282911136)]
+  libvpx_off= [(45.83916083916084, 28.10258418859916), (72.0516983016983, 29.874306678573394), (137.48751248751248, 33.12688068457516), (288.0981518481518, 36.75233949964348)]
+  libvpx_aq = [(48.52147852147852, 28.09394807643367), (74.2395104895105, 30.031661260490353), (138.32667332667333, 32.7754615627247), (283.30294705294705, 36.76416886383504)]
+
+AQ gain (negative = AQ saves bits at matched PSNR):
+  rvp9   AQ gain : +4.977 %
+  libvpx AQ gain : +4.714 %
+
+Delta (gain_rvp9 - gain_libvpx) : +0.263 %
+Stage 4b literal gate (|delta| <= 0.3 %): PASS
+Stage 4b literal gate (|delta| <= 2.0 %, informational): PASS
+
+Coherence report — max non-monotonic PSNR drop across the two rvp9 curves: 0.00 dB
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 1.72s
+

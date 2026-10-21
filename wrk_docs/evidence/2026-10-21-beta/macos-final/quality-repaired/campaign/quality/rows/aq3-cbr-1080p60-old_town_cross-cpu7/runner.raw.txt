@@ -1,0 +1,20 @@
+=== BD-rate sweep ===
+anchor: /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxenc
+test:   /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/extracted/rvp9-0.2.0-beta.1-aarch64-apple-darwin/rvp9enc
+input:  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/old_town_cross_1080p60_clean.y4m
+reference input: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/inputs/old_town_cross_1080p60_clean.y4m
+artifacts: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/quality/rows/.aq3-cbr-1080p60-old_town_cross-cpu7.attempt.20261021T074751Z-91217/streams
+config: --rt --cpu-used=7 --end-usage=cbr --fps=60/1 --threads=8 --tile-columns=3 --lag-in-frames=0 --tune-content=default --aq-mode=3 --noise-sensitivity=0 --limit=60
+anchor args: --kf-max-dist=60
+test args:   --kf-max-dist=60
+
+target  1900k | anchor   4576k psnr 36.81 | test   2399k psnr 36.24
+target  2850k | anchor   5533k psnr 37.41 | test   3939k psnr 37.36
+target  3780k | anchor   6266k psnr 37.73 | test   4970k psnr 37.85
+target  5670k | anchor   7685k psnr 38.15 | test   6971k psnr 38.38
+target  9450k | anchor  10526k psnr 38.61 | test   9655k psnr 38.83
+target 15120k | anchor  15132k psnr 39.07 | test  13394k psnr 39.25
+
+BD-rate: -25.418%  (anchor → test)
+
+csv: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality-repaired/quality/rows/.aq3-cbr-1080p60-old_town_cross-cpu7.attempt.20261021T074751Z-91217/bdrate.csv

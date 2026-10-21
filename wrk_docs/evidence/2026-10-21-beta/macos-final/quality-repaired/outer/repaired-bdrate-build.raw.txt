@@ -1,0 +1,2 @@
+   Compiling rvp9-bench v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-bench)
+    Finished `release` profile [optimized + debuginfo] target(s) in 5.03s

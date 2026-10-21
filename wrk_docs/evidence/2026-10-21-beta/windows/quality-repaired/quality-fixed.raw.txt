@@ -1,0 +1,54 @@
+Preparing acceptance inputs in /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/in_to_tree_720p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/in_to_tree_720p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/ducks_take_off_720p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/ducks_take_off_720p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/old_town_cross_720p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/old_town_cross_720p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/in_to_tree_1080p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/in_to_tree_1080p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/ducks_take_off_1080p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/ducks_take_off_1080p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/old_town_cross_1080p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/old_town_cross_1080p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/in_to_tree_1080p60_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/in_to_tree_1080p60_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/ducks_take_off_1080p60_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/ducks_take_off_1080p60_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/old_town_cross_1080p60_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/inputs/old_town_cross_1080p60_noisy.y4m
+[quality   1/27] aq3-cbr-720p30-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   2/27] aq3-cbr-720p30-ducks_take_off-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   3/27] aq3-cbr-720p30-old_town_cross-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   4/27] aq3-cbr-1080p30-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   5/27] aq3-cbr-1080p30-ducks_take_off-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   6/27] aq3-cbr-1080p30-old_town_cross-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   7/27] aq3-cbr-1080p60-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   8/27] aq3-cbr-1080p60-ducks_take_off-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   9/27] aq3-cbr-1080p60-old_town_cross-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality  10/27] aq3-cbr-720p30-in_to_tree-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  11/27] aq3-cbr-720p30-ducks_take_off-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  12/27] aq3-cbr-720p30-old_town_cross-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  13/27] aq3-cbr-1080p30-in_to_tree-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  14/27] aq3-cbr-1080p30-ducks_take_off-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  15/27] aq3-cbr-1080p30-old_town_cross-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  16/27] aq3-cbr-1080p60-in_to_tree-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  17/27] aq3-cbr-1080p60-ducks_take_off-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  18/27] aq3-cbr-1080p60-old_town_cross-cpu7 (bdrate, vpxenc anchor, clean input)
+[quality  19/27] aq3-cbr-720p30-in_to_tree-cpu8 (bdrate, vpxenc anchor, clean input)
+[quality  20/27] aq3-cbr-720p30-ducks_take_off-cpu8 (bdrate, vpxenc anchor, clean input)
+[quality  21/27] aq3-cbr-720p30-old_town_cross-cpu8 (bdrate, vpxenc anchor, clean input)
+[quality  22/27] aq3-cbr-1080p30-in_to_tree-cpu8 (bdrate, vpxenc anchor, clean input)
+[quality  23/27] aq3-cbr-1080p30-ducks_take_off-cpu8 (bdrate, vpxenc anchor, clean input)
+[quality  24/27] aq3-cbr-1080p30-old_town_cross-cpu8 (bdrate, vpxenc anchor, clean input)
+[quality  25/27] aq3-cbr-1080p60-in_to_tree-cpu8 (bdrate, vpxenc anchor, clean input)
+[quality  26/27] aq3-cbr-1080p60-ducks_take_off-cpu8 (bdrate, vpxenc anchor, clean input)
+[quality  27/27] aq3-cbr-1080p60-old_town_cross-cpu8 (bdrate, vpxenc anchor, clean input)
+[oracle 1/1] bdrate_gate_stage4b_aq_realcontent
+  rvp9 AQ gain 4.977%, libvpx AQ gain 4.714%, delta 0.263 pp, activation present: PASS
+
+Quality phase qualified 27 curves (0 reused with fresh decoder checks), 27 clip/layer checks, 9 aggregate groups (9 layer gates), 162 candidate streams, 486 decoder runs, 1 oracle.
+Quality phase passed.
+
+Non-spatial v1 acceptance phase "quality" passed.
+Evidence: /c/Users/marti/AppData/Local/Temp/deltic-scratch/bug58-windows-verify-3b31d84b/quality-fixed/manifest.txt

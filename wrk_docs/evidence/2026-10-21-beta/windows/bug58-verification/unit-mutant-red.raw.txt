@@ -1,0 +1,26 @@
+cmd :    Compiling rvp9-core v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\p
+ublic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-core)
+At line:19 char:2
++  cmd /c 'deltic timeout 1200 cargo test --locked -p rvp9-bench --bin  ...
++  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling rv...ates\rvp9-core):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   Compiling rvp9-decoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\publ
+ic-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-encoder)
+   Compiling rvp9-io v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-rv
+p9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-io)
+   Compiling rvp9-bench v0.2.0-beta.1 (C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public
+-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit\crates\rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3.41s
+     Running unittests src\bin\bdrate.rs (C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84
+b\target\debug\deps\bdrate-bcfc1ef898707704.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s
+

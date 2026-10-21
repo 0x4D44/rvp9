@@ -1,0 +1,9 @@
+Remote CRUCIBLE claim attempt refused: GitHub token unavailable; origin unowned, nothing written. No credentials inspected or changed.
+Normal local claim succeeded without identity override:
+Owner run: verify-20261021T072658Z-fd362310
+Branch: task/bug-RVP9-BUG-FLU-00058-run-verify-20261021T072658Z-fd362310
+Lease until: 2026-10-21T11:26:58Z
+Remote independent verification lane: C:\Users\marti\AppData\Local\Temp\deltic-scratch\beta-public-win-e81bd1f0\public-rvp9\.worktrees\public-rvp9\20261021-VER-CDX@CRUCIBLE-verify-bug58-windows-rate-audit
+Registered verification scratch: C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b
+Code fix: d872b7216cb7c2ca8f23e494b1ade99b202e22e9
+Verification lane base: a0b538c7 (contains landed fix and Fixed ledger state)
