@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00058 — BD-rate treats IVF timestamp clocks as frame rates and reports false compression gains
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** bench/bdrate
 - **Raised:** 2026-10-21T07:01:25Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261021T070244Z-d021ee07
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07
-- **Owner base:** 578b145d2050f02c39e418b2b328f2c0eea478f9
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-21T07:02:44Z
-- **Owner until:** 2026-10-21T11:02:44Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-21T07:01:25Z, raised via `deltic bugs new --land` model=gpt-6.1-sol@medium)
+- **State history:** Open (2026-10-21T07:01:25Z, raised via `deltic bugs new --land` model=gpt-6.1-sol@medium) -> Fixed (2026-10-21T07:23:00Z, deltic:auto role=fix run=fix-20261021T070244Z-d021ee07 branch=task/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07 code=d872b7216cb7c2ca8f23e494b1ade99b202e22e9 gate=manual)
 
 ## Observation
 
