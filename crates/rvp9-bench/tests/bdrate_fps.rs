@@ -88,8 +88,11 @@ impl Fixture {
             };
             for target in TARGETS {
                 let artifact = work_dir.join(format!("{role}_{target}k.ivf"));
-                let bytes = fs::metadata(artifact).unwrap().len() as f64;
-                let expected_kbps = bytes * 8.0 * fps.0 as f64 / (1000.0 * fps.1 as f64);
+                let data = fs::read(artifact).unwrap();
+                let bytes = data.len() as f64;
+                let frames = u32::from_le_bytes(data[24..28].try_into().unwrap());
+                let expected_kbps =
+                    bytes * 8.0 * fps.0 as f64 / (1000.0 * fps.1 as f64 * f64::from(frames));
                 let row = csv_text
                     .lines()
                     .find(|line| line.starts_with(&format!("{role},{target},")))
@@ -113,6 +116,67 @@ impl Fixture {
                 );
             }
         }
+    }
+
+    fn with_millisecond_clock() -> Self {
+        let fixture = Self::new();
+        let mut source = b"YUV4MPEG2 W2 H2 F50:1 Ip A1:1 C420jpeg\n".to_vec();
+        for _ in 0..60 {
+            source.extend_from_slice(b"FRAME\n");
+            source.extend_from_slice(&[0, 0, 0, 0, 128, 128]);
+        }
+        fs::write(&fixture.input, source).unwrap();
+        for fps in ["30/1", "24/1", "60/1", "30000/1001"] {
+            let (num, den) = parse_fps(fps);
+            for target in TARGETS {
+                let mut ivf = b"DKIF\0\0\x20\0VP90\x02\0\x02\0".to_vec();
+                ivf.extend_from_slice(&1000u32.to_le_bytes());
+                ivf.extend_from_slice(&1u32.to_le_bytes());
+                ivf.extend_from_slice(&60u32.to_le_bytes());
+                ivf.extend_from_slice(&0u32.to_le_bytes());
+                for frame in 0..60u64 {
+                    ivf.extend_from_slice(&target.to_le_bytes());
+                    ivf.extend_from_slice(
+                        &(frame * 1000 * u64::from(den) / u64::from(num)).to_le_bytes(),
+                    );
+                    ivf.resize(ivf.len() + target as usize, 0);
+                }
+                fs::write(
+                    fixture
+                        .root
+                        .join(format!("{}-{target}.ivf", fps.replace('/', "-"))),
+                    ivf,
+                )
+                .unwrap();
+            }
+        }
+        write_executable(
+            &fixture.encoder,
+            r#"#!/bin/sh
+set -eu
+fps=
+bitrate=
+output=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --fps=*) fps=${1#--fps=} ;;
+        --fps) shift; fps=$1 ;;
+        --target-bitrate=*) bitrate=${1#--target-bitrate=} ;;
+        -o) shift; output=$1 ;;
+    esac
+    shift
+done
+name=$(printf '%s' "$fps" | tr / -)
+cp "$(dirname "$0")/$name-$bitrate.ivf" "$output"
+"#,
+        );
+        // Reuse the deterministic quality levels, repeating the decoded frame.
+        let start = DECODER_SCRIPT.find("printf 'YUV4MPEG2").unwrap();
+        let mut decoder = DECODER_SCRIPT[..start].to_owned();
+        decoder.push_str("printf 'YUV4MPEG2 W2 H2 F30:1 Ip A1:1 C420jpeg\\n' > \"$output\"\n");
+        decoder.push_str("i=0; while [ \"$i\" -lt 60 ]; do printf 'FRAME\\n%b\\200\\200' \"$frame\" >> \"$output\"; i=$((i+1)); done\n");
+        write_executable(&fixture.decoder, &decoder);
+        fixture
     }
 
     fn command(&self, work_dir: &Path, csv: &Path, fps: &str) -> Command {
@@ -186,6 +250,100 @@ fn reports_each_ivfs_effective_frame_rate() {
     fixture.run(0, "30/1", "30/1", "30/1");
     fixture.run(1, "30000/1001", "30000/1001", "30000/1001");
     fixture.run(2, "30/1", "24/1", "60/1");
+}
+
+#[test]
+fn reports_millisecond_ivf_clock_at_effective_frame_cadence() {
+    let fixture = Fixture::with_millisecond_clock();
+    fixture.run(0, "30/1", "30/1", "30/1");
+    fixture.run(1, "30000/1001", "30000/1001", "30000/1001");
+    fixture.run(2, "30/1", "24/1", "60/1");
+    let csv = fs::read_to_string(fixture.root.join("run-0.csv")).unwrap();
+    assert!(
+        csv.lines().any(|row| row == "bdrate_pct,0.0000"),
+        "self comparison must have zero BD-rate: {csv}"
+    );
+}
+
+#[test]
+fn split_last_role_fps_override_matches_output_timing() {
+    let fixture = Fixture::with_millisecond_clock();
+    let work_dir = fixture.root.join("split-fps");
+    let csv = fixture.root.join("split-fps.csv");
+    let mut command = fixture.command(&work_dir, &csv, "30/1");
+    command.args([
+        "--anchor-arg=--fps=60/1",
+        "--anchor-arg=--fps",
+        "--anchor-arg=24/1",
+        "--test-arg=--fps=24/1",
+        "--test-arg=--fps",
+        "--test-arg=60/1",
+    ]);
+    let output =
+        rvp9_bench::process::run(&mut command, "split role FPS", Duration::from_secs(30)).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let csv = fs::read_to_string(csv).unwrap();
+    for (role, fps) in [("anchor", 24.0), ("test", 60.0)] {
+        let bytes = fs::metadata(work_dir.join(format!("{role}_100k.ivf")))
+            .unwrap()
+            .len() as f64;
+        let row = csv
+            .lines()
+            .find(|line| line.starts_with(&format!("{role},100,")))
+            .unwrap();
+        let actual: f64 = row.split(',').nth(2).unwrap().parse().unwrap();
+        assert!(
+            (actual - bytes * 8.0 * fps / (60.0 * 1000.0)).abs() < 0.0005,
+            "wrong effective {role} FPS: {row}"
+        );
+    }
+}
+
+#[test]
+fn rejects_invalid_packet_timing_without_csv() {
+    for (index, kind) in ["jump", "backwards", "zero-clock", "truncated"]
+        .into_iter()
+        .enumerate()
+    {
+        let fixture = Fixture::with_millisecond_clock();
+        let template = fixture.root.join("30-1-100.ivf");
+        let mut data = fs::read(&template).unwrap();
+        match kind {
+            "jump" => data[36..44].copy_from_slice(&1000u64.to_le_bytes()),
+            "backwards" => data[148..156].copy_from_slice(&0u64.to_le_bytes()),
+            "zero-clock" => data[16..20].fill(0),
+            "truncated" => {
+                data.pop();
+            }
+            _ => unreachable!(),
+        }
+        fs::write(template, data).unwrap();
+        let work_dir = fixture.root.join(format!("invalid-timing-{index}"));
+        let csv = fixture.root.join(format!("invalid-timing-{index}.csv"));
+        let output = rvp9_bench::process::run(
+            &mut fixture.command(&work_dir, &csv, "30/1"),
+            "invalid IVF timing regression",
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        assert!(
+            !output.status.success(),
+            "bdrate accepted invalid {kind} timing"
+        );
+        assert!(
+            !csv.exists(),
+            "bdrate published CSV for invalid {kind} timing"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("IVF"),
+            "missing IVF context for {kind}: {stderr}"
+        );
+    }
 }
 
 #[test]

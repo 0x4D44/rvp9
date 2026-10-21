@@ -1,0 +1,24 @@
+   Compiling rvp9-core v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 5.50s
+     Running tests/bdrate_fps.rs (target/debug/deps/bdrate_fps-67af74a041bc80dc)
+
+running 1 test
+
+thread 'rejects_invalid_packet_timing_without_csv' (375172310) panicked at crates/rvp9-bench/tests/bdrate_fps.rs:333:9:
+bdrate accepted invalid backwards timing
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test rejects_invalid_packet_timing_without_csv ... FAILED
+
+failures:
+
+failures:
+    rejects_invalid_packet_timing_without_csv
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 1.14s
+
+error: test failed, to rerun pass `-p rvp9-bench --test bdrate_fps`

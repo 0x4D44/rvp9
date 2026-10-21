@@ -1,0 +1,98 @@
+[
+  {
+    "stream": "anchor_50k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 95.828,
+    "expected": 95.828,
+    "sha256": "499b22f0a78cf2cbf0764fe389592c017c09f2e354db9b3e4eee3cd4c303296c"
+  },
+  {
+    "stream": "test_50k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 95.828,
+    "expected": 95.828,
+    "sha256": "499b22f0a78cf2cbf0764fe389592c017c09f2e354db9b3e4eee3cd4c303296c"
+  },
+  {
+    "stream": "anchor_100k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 172.636,
+    "expected": 172.636,
+    "sha256": "83112ffeacd70363d0746927fd9e1cde259fecccd096618c88cc1dbc10a8bec6"
+  },
+  {
+    "stream": "test_100k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 172.636,
+    "expected": 172.636,
+    "sha256": "83112ffeacd70363d0746927fd9e1cde259fecccd096618c88cc1dbc10a8bec6"
+  },
+  {
+    "stream": "anchor_200k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 289.7,
+    "expected": 289.7,
+    "sha256": "8e264bfde434120f127a5edf852173a161e82ad85d089073a54cf0fff86ca628"
+  },
+  {
+    "stream": "test_200k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 289.7,
+    "expected": 289.7,
+    "sha256": "8e264bfde434120f127a5edf852173a161e82ad85d089073a54cf0fff86ca628"
+  },
+  {
+    "stream": "anchor_400k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 470.892,
+    "expected": 470.892,
+    "sha256": "b9a8d085ec4cf8ad0a846d36e7352ab4a06dcd471187a32723c18847f7f8dced"
+  },
+  {
+    "stream": "test_400k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 470.892,
+    "expected": 470.892,
+    "sha256": "b9a8d085ec4cf8ad0a846d36e7352ab4a06dcd471187a32723c18847f7f8dced"
+  },
+  {
+    "stream": "anchor_800k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 752.408,
+    "expected": 752.408,
+    "sha256": "48abf6f3b31a510d49973a1bf5cf2dd41ecc33a55b37492e30d4a56ca2d0dcc2"
+  },
+  {
+    "stream": "test_800k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 752.408,
+    "expected": 752.408,
+    "sha256": "48abf6f3b31a510d49973a1bf5cf2dd41ecc33a55b37492e30d4a56ca2d0dcc2"
+  },
+  {
+    "stream": "anchor_1200k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 998.152,
+    "expected": 998.152,
+    "sha256": "1b6b0c1eefe5ac6d4e4763f17e7170ce264b4f1e889a6e972139e7d5ec1a8440"
+  },
+  {
+    "stream": "test_1200k.ivf",
+    "clock": 1000,
+    "frames": 60,
+    "measured": 998.152,
+    "expected": 998.152,
+    "sha256": "1b6b0c1eefe5ac6d4e4763f17e7170ce264b4f1e889a6e972139e7d5ec1a8440"
+  }
+]

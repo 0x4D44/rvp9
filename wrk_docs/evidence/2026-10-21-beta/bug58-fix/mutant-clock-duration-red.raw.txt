@@ -1,0 +1,49 @@
+   Compiling rvp9-core v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 7.11s
+     Running unittests src/bin/bdrate.rs (target/debug/deps/bdrate-6db4e5a67f795c06)
+
+running 23 tests
+test process_test_support::fake_child ... ok
+test tests::default_artifacts_stay_in_the_temp_directory_under_a_process_unique_prefix ... ok
+test tests::effective_fps_tracks_last_override_and_refuses_invalid_rates ... ok
+test tests::encoder_command_keeps_matched_and_role_specific_arguments_separate ... ok
+test tests::measured_bdrate_keeps_full_rank_fits_with_repeated_observations ... ok
+test tests::measured_bdrate_matches_high_precision_narrow_psnr_reference ... ok
+test tests::measured_bdrate_rejects_failed_psnr_and_insufficient_points ... ok
+test tests::csv_writer_rejects_missing_bdrate_without_creating_output ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_anchor_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_both_curves_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_test_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_realistic_psnr_with_overlap ... ok
+test tests::parser_accepts_a_separate_quality_reference_input ... ok
+test tests::parser_accepts_inline_role_specific_arguments ... ok
+test tests::parser_defaults_the_work_directory_to_none_and_accepts_an_override ... ok
+test tests::parser_preserves_repeated_role_specific_arguments ... ok
+test tests::usage_advertises_retained_artifact_inputs ... ok
+test tests::prepare_artifacts_reports_an_unusable_work_directory ... ok
+test tests::retained_artifacts_are_never_overwritten ... ok
+test tests::measured_rates_use_cfr_duration_for_quantized_clocks_and_real_header_sizes ... FAILED
+test tests::work_directory_artifacts_are_created_deterministic_and_collision_free ... ok
+test tests::external_encoder_timeout ... ok
+test tests::external_decoder_timeout ... ok
+
+failures:
+
+---- tests::measured_rates_use_cfr_duration_for_quantized_clocks_and_real_header_sizes stdout ----
+
+thread 'tests::measured_rates_use_cfr_duration_for_quantized_clocks_and_real_header_sizes' (375149243) panicked at crates/rvp9-bench/src/bin/bdrate.rs:752:13:
+clock 1000/1, fps (30, 1): 26521.866666666665 != 795.656
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::measured_rates_use_cfr_duration_for_quantized_clocks_and_real_header_sizes
+
+test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
+error: test failed, to rerun pass `-p rvp9-bench --bin bdrate`

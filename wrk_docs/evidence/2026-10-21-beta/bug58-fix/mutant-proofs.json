@@ -1,0 +1,27 @@
+[
+  {
+    "mutation": "Original pre-fix source unchanged; added60frame1000Hz IVFclock test",
+    "log": "millisecond-red.raw.txt",
+    "assertion": "anchor100 measured2019.2kbps vs60.576kbps expected;1selected failure"
+  },
+  {
+    "mutation": "Restore clock-as-FPS duration line only",
+    "log": "mutant-clock-duration-red.raw.txt",
+    "assertion": "realTree bytefixture26521.866666666665 vs795.656;1selected unit failure"
+  },
+  {
+    "mutation": "Restore clock-as-FPS duration line only",
+    "log": "mutant-clock-integration-red.raw.txt",
+    "assertion": "millisecond-clock and split-last-override integration assertions fail;5selected,2fail"
+  },
+  {
+    "mutation": "Disable PTS floor/ceil+monotonic consistency rejection",
+    "log": "mutant-pts-validation-red.raw.txt",
+    "assertion": "bdrate accepted invalid backwards timing;1selected failure"
+  },
+  {
+    "mutation": "Ignore role-specific FPS arguments",
+    "log": "mutant-fps-overrides-red.raw.txt",
+    "assertion": "effectiveFPS30/1 vs30000/1001 expected;1selected failure"
+  }
+]

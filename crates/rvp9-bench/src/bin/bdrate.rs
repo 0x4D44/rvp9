@@ -378,24 +378,85 @@ fn decode_and_psnr_with_timeout(
     rvp9_bench::mean_y_psnr(source_y4m, &y4m_out).unwrap_or(f64::NAN)
 }
 
-/// File size of `ivf` in kilobits, divided by its encoded duration in seconds.
-fn measured_bitrate_kbps(ivf: &Path, frames: u32) -> Result<f64, String> {
-    let reader = rvp9_harness::container::PacketReader::open(ivf)
-        .map_err(|error| format!("could not read IVF header for {}: {error}", ivf.display()))?;
-    let (fps_num, fps_den) = reader.framerate().ok_or_else(|| {
-        format!(
+/// Match the last FPS argument actually passed to this encoder role.
+fn effective_frame_rate(default: &str, extra_args: &[String]) -> Result<(u32, u32), String> {
+    let mut fps = default;
+    let mut args = extra_args.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--fps" {
+            fps = args
+                .next()
+                .ok_or("effective encoder framerate: --fps requires a value")?;
+        } else if let Some(value) = arg.strip_prefix("--fps=") {
+            fps = value;
+        }
+    }
+    let parsed = fps
+        .split_once('/')
+        .and_then(|(num, den)| Some((num.parse::<u32>().ok()?, den.parse::<u32>().ok()?)));
+    match parsed {
+        Some((num, den)) if num != 0 && den != 0 => Ok((num, den)),
+        _ => Err(format!("invalid effective encoder framerate: {fps}")),
+    }
+}
+
+/// Measure a CFR encode using its effective encoder FPS contract. An IVF clock
+/// describes timestamp ticks, not frames: libvpx commonly uses 1000 ticks/s.
+/// Validate every packet timestamp against floor/ceil tick quantization of the
+/// contract before trusting it. The final frame lasts one full CFR period,
+/// including for single-frame clips and fractional rates.
+fn measured_bitrate_kbps(ivf: &Path, frames: u32, fps: (u32, u32)) -> Result<f64, String> {
+    let data = std::fs::read(ivf)
+        .map_err(|error| format!("could not read IVF {}: {error}", ivf.display()))?;
+    let packets = rvp9_harness::container::read_ivf_packets(&data)
+        .map_err(|error| format!("invalid IVF {}: {error}", ivf.display()))?;
+    let clock_rate = u32::from_le_bytes(data[16..20].try_into().expect("validated IVF header"));
+    let clock_scale = u32::from_le_bytes(data[20..24].try_into().expect("validated IVF header"));
+    if clock_rate == 0 || clock_scale == 0 {
+        return Err(format!(
             "IVF {} has a missing or zero framerate in its timebase",
             ivf.display()
-        )
-    })?;
-    if frames == 0 {
-        return Err(format!("IVF {} contains no frames", ivf.display()));
+        ));
     }
-    let bytes = std::fs::metadata(ivf)
-        .map_err(|error| format!("could not read IVF size for {}: {error}", ivf.display()))?
-        .len() as f64;
-    let duration_s = f64::from(frames) * f64::from(fps_den) / f64::from(fps_num);
-    Ok((bytes * 8.0 / 1000.0) / duration_s)
+    if frames == 0 || packets.len() != frames as usize {
+        return Err(format!(
+            "IVF {} has no frames or an inconsistent packet count",
+            ivf.display()
+        ));
+    }
+    if fps.0 == 0 || fps.1 == 0 {
+        return Err("effective encoder framerate must be nonzero".to_owned());
+    }
+    let mut first_pts = None;
+    let mut previous_pts = 0;
+    for (index, packet) in packets.iter().enumerate() {
+        let pts = u64::from_le_bytes(
+            data[packet.start - 8..packet.start]
+                .try_into()
+                .expect("validated IVF packet"),
+        );
+        let first = *first_pts.get_or_insert(pts);
+        let elapsed = pts
+            .checked_sub(first)
+            .ok_or_else(|| format!("IVF {} timestamp precedes its first packet", ivf.display()))?;
+        // u128 keeps all products exact even at u32 FPS/clock limits. Repeated
+        // timestamps are legitimate when the clock is coarser than one frame.
+        let numerator = index as u128 * u128::from(clock_rate) * u128::from(fps.1);
+        let denominator = u128::from(clock_scale) * u128::from(fps.0);
+        let floor = numerator / denominator;
+        let ceil = numerator.div_ceil(denominator);
+        if pts < previous_pts || !(floor..=ceil).contains(&u128::from(elapsed)) {
+            return Err(format!(
+                "IVF {} timestamp at packet {index} is inconsistent with effective encoder framerate {}/{} (relative ticks {elapsed}, expected {floor}..={ceil})",
+                ivf.display(),
+                fps.0,
+                fps.1
+            ));
+        }
+        previous_pts = pts;
+    }
+    let duration_s = f64::from(frames) * f64::from(fps.1) / f64::from(fps.0);
+    Ok(data.len() as f64 * 8.0 / 1000.0 / duration_s)
 }
 
 /// Bjontegaard delta rate, cubic polynomial fit on log-bitrate vs PSNR.
@@ -488,6 +549,20 @@ fn main() -> ExitCode {
         timeout: rvp9_bench::process::DEFAULT_TIMEOUT,
     };
 
+    let role_fps = |role, extra: &[String]| {
+        effective_frame_rate(&args.fps, extra).map_err(|error| format!("{role}: {error}"))
+    };
+    let (anchor_fps, test_fps) = match (
+        role_fps("anchor", &args.anchor_args),
+        role_fps("test", &args.test_args),
+    ) {
+        (Ok(anchor), Ok(test)) => (anchor, test),
+        (Err(error), _) | (_, Err(error)) => {
+            eprintln!("error: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let mut anchor_rd: Vec<RdPoint> = Vec::new();
     let mut test_rd: Vec<RdPoint> = Vec::new();
 
@@ -522,14 +597,14 @@ fn main() -> ExitCode {
         let a_frames = rvp9_bench::count_ivf_frames(&a_ivf);
         let t_frames = rvp9_bench::count_ivf_frames(&t_ivf);
 
-        let a_br = match measured_bitrate_kbps(&a_ivf, a_frames) {
+        let a_br = match measured_bitrate_kbps(&a_ivf, a_frames, anchor_fps) {
             Ok(bitrate) => bitrate,
             Err(error) => {
                 eprintln!("error: anchor bitrate at target {br}k: {error}");
                 return ExitCode::FAILURE;
             }
         };
-        let t_br = match measured_bitrate_kbps(&t_ivf, t_frames) {
+        let t_br = match measured_bitrate_kbps(&t_ivf, t_frames, test_fps) {
             Ok(bitrate) => bitrate,
             Err(error) => {
                 eprintln!("error: test bitrate at target {br}k: {error}");
@@ -619,6 +694,68 @@ fn write_csv(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn effective_fps_tracks_last_override_and_refuses_invalid_rates() {
+        let extra = ["--fps=60/1", "--fps", "24/1", "--fps=30000/1001"].map(str::to_owned);
+        assert_eq!(effective_frame_rate("30/1", &extra).unwrap(), (30000, 1001));
+        assert_eq!(effective_frame_rate("30/1", &extra[..3]).unwrap(), (24, 1));
+        for invalid in ["0/1", "30/0", "not-fps", "1/2/3", "4294967296/1"] {
+            assert!(
+                effective_frame_rate(invalid, &[]).is_err(),
+                "accepted {invalid}"
+            );
+        }
+        assert!(effective_frame_rate("30/1", &["--fps".to_owned()]).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn measured_rates_use_cfr_duration_for_quantized_clocks_and_real_header_sizes() {
+        let fixture = crate::process_test_support::Fixture::new();
+        let path = fixture.dir.join("clock.ivf");
+        // The first two sizes/clock pairs reproduce retained beta Tree outputs:
+        // pinned libvpx milliseconds vs candidate frame ticks, each60frames30fps.
+        for (clock, scale, fps, frames, bytes, offset) in [
+            (1000u32, 1u32, (30u32, 1u32), 60u32, 198914usize, 0u64),
+            (30, 1, (30, 1), 60, 122523, 0),
+            (1000, 1, (30000, 1001), 60, 198914, 73),
+            (1000, 1, (30000, 1001), 1, 400, 73),
+            (1, 1, (60, 1), 60, 4000, 0),
+            (
+                u32::MAX,
+                u32::MAX,
+                (u32::MAX, u32::MAX),
+                60,
+                4000,
+                u64::MAX - 100,
+            ),
+        ] {
+            let mut data = b"DKIF\0\0\x20\0VP90\0\x05\xd0\x02".to_vec();
+            data.extend_from_slice(&clock.to_le_bytes());
+            data.extend_from_slice(&scale.to_le_bytes());
+            data.extend_from_slice(&frames.to_le_bytes());
+            data.extend_from_slice(&0u32.to_le_bytes());
+            let payload_bytes = bytes - 32 - frames as usize * 12;
+            for index in 0..frames {
+                let size = payload_bytes / frames as usize
+                    + usize::from((index as usize) < payload_bytes % frames as usize);
+                data.extend_from_slice(&(size as u32).to_le_bytes());
+                let pts = u128::from(index) * u128::from(clock) * u128::from(fps.1)
+                    / (u128::from(scale) * u128::from(fps.0));
+                data.extend_from_slice(&(offset + u64::try_from(pts).unwrap()).to_le_bytes());
+                data.resize(data.len() + size, 0);
+            }
+            std::fs::write(&path, data).unwrap();
+            let rate = measured_bitrate_kbps(&path, frames, fps).unwrap();
+            let expected = bytes as f64 * 8.0 * f64::from(fps.0)
+                / (1000.0 * f64::from(frames) * f64::from(fps.1));
+            assert!(
+                (rate - expected).abs() < 1e-9,
+                "clock {clock}/{scale}, fps {fps:?}: {rate} != {expected}"
+            );
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn external_encoder_timeout() {

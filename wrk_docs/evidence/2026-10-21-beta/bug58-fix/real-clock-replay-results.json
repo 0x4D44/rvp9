@@ -1,0 +1,254 @@
+[
+  {
+    "scene": "in_to_tree",
+    "command": [
+      "deltic",
+      "timeout",
+      "600",
+      "/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/target/debug/bdrate",
+      "--anchor-encoder",
+      "/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/.scratch/real-replay-in_to_tree/replay-anchor",
+      "--test-encoder",
+      "/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/.scratch/real-replay-in_to_tree/replay-test",
+      "--decoder",
+      "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec",
+      "--input",
+      "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/in_to_tree_720p30_clean.y4m",
+      "--fps",
+      "30/1",
+      "--bitrates",
+      "420,630,840,1260,2100,3360",
+      "--work-dir",
+      "/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/.scratch/real-replay-in_to_tree/artifacts",
+      "--csv",
+      "/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/.scratch/real-replay-in_to_tree/bdrate.csv"
+    ],
+    "elapsed_seconds": 8.553803083021194,
+    "exit_code": 0,
+    "rates": [
+      {
+        "stream": "anchor_420k.ivf",
+        "bytes": 198914,
+        "sha256": "28b33d288b5428d4a35caaf4f2b4430f19142f18aaf4d26a2144518d178503fa",
+        "measured_kbps": 795.656,
+        "independent_expected_kbps": 795.656,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_420k.ivf",
+        "bytes": 122523,
+        "sha256": "73da2a7ffeb41a50353e7217b4e3a5729f12f0dfd2c67b880a7190d3a775d0cb",
+        "measured_kbps": 490.092,
+        "independent_expected_kbps": 490.092,
+        "clock_rate": 30
+      },
+      {
+        "stream": "anchor_630k.ivf",
+        "bytes": 320196,
+        "sha256": "b781098f08f13846c14b94c770e62925a125eddd60c6e1e468b16b9c2b1f5703",
+        "measured_kbps": 1280.784,
+        "independent_expected_kbps": 1280.784,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_630k.ivf",
+        "bytes": 187436,
+        "sha256": "24b3199a3f74a757e83541b954688f763037c8390745c41603f16b3131a95334",
+        "measured_kbps": 749.744,
+        "independent_expected_kbps": 749.744,
+        "clock_rate": 30
+      },
+      {
+        "stream": "anchor_840k.ivf",
+        "bytes": 422992,
+        "sha256": "5283584a6a7bf67b289c69e1e57cb646b6544c7198222375afe27fa507aecbb9",
+        "measured_kbps": 1691.968,
+        "independent_expected_kbps": 1691.968,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_840k.ivf",
+        "bytes": 255598,
+        "sha256": "fc927bbed757f3d205ffe597d6f9170e20160ec9b648f7621f987483e0b01245",
+        "measured_kbps": 1022.392,
+        "independent_expected_kbps": 1022.392,
+        "clock_rate": 30
+      },
+      {
+        "stream": "anchor_1260k.ivf",
+        "bytes": 604920,
+        "sha256": "6dcc7f02f3ff6cc1cc0f7b3a45473549567f750cfbcc224ebf820d469167bb08",
+        "measured_kbps": 2419.68,
+        "independent_expected_kbps": 2419.68,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_1260k.ivf",
+        "bytes": 395517,
+        "sha256": "b1e719264fe02c3f0f2d77a51e7f44c5bf3a96576119a015f5e24f9bc87563c1",
+        "measured_kbps": 1582.068,
+        "independent_expected_kbps": 1582.068,
+        "clock_rate": 30
+      },
+      {
+        "stream": "anchor_2100k.ivf",
+        "bytes": 893163,
+        "sha256": "5d1e71ddae1dee29e9f1f1c787f6d3b557776adf4dd56b32dc4acc69d792fc89",
+        "measured_kbps": 3572.652,
+        "independent_expected_kbps": 3572.652,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_2100k.ivf",
+        "bytes": 601536,
+        "sha256": "6c16ba9b28ac02162ebbc4adc0f602fbeeef6f102efd9c43585af5c3ba4c5105",
+        "measured_kbps": 2406.144,
+        "independent_expected_kbps": 2406.144,
+        "clock_rate": 30
+      },
+      {
+        "stream": "anchor_3360k.ivf",
+        "bytes": 1125944,
+        "sha256": "1b4efdfad1976cf4f8c8828597ff27bd3633a86a89631276412ee298ebd70a8a",
+        "measured_kbps": 4503.776,
+        "independent_expected_kbps": 4503.776,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_3360k.ivf",
+        "bytes": 862631,
+        "sha256": "9e91497e70437d03064cf9236936acc5277cd7167d8e23fc873cd3c31380b2bb",
+        "measured_kbps": 3450.524,
+        "independent_expected_kbps": 3450.524,
+        "clock_rate": 30
+      }
+    ],
+    "csv": "role,target_kbps,measured_kbps,psnr_db\nanchor,420,795.656,32.9833\ntest,420,490.092,31.9128\nanchor,630,1280.784,33.6457\ntest,630,749.744,32.9486\nanchor,840,1691.968,34.0822\ntest,840,1022.392,33.6198\nanchor,1260,2419.680,34.6825\ntest,1260,1582.068,34.5929\nanchor,2100,3572.652,35.4185\ntest,2100,2406.144,35.6021\nanchor,3360,4503.776,36.1193\ntest,3360,3450.524,36.3554\nbdrate_pct,-28.1376\n"
+  },
+  {
+    "scene": "ducks_take_off",
+    "command": [
+      "deltic",
+      "timeout",
+      "600",
+      "/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/target/debug/bdrate",
+      "--anchor-encoder",
+      "/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/.scratch/real-replay-ducks_take_off/replay-anchor",
+      "--test-encoder",
+      "/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/.scratch/real-replay-ducks_take_off/replay-test",
+      "--decoder",
+      "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec",
+      "--input",
+      "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/ducks_take_off_720p30_clean.y4m",
+      "--fps",
+      "30/1",
+      "--bitrates",
+      "420,630,840,1260,2100,3360",
+      "--work-dir",
+      "/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/.scratch/real-replay-ducks_take_off/artifacts",
+      "--csv",
+      "/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/.scratch/real-replay-ducks_take_off/bdrate.csv"
+    ],
+    "elapsed_seconds": 8.595419499906711,
+    "exit_code": 0,
+    "rates": [
+      {
+        "stream": "anchor_420k.ivf",
+        "bytes": 372809,
+        "sha256": "af74f38f78188768b03d278fd93b817f453ca3ae7800f1395bd7dcd4904799eb",
+        "measured_kbps": 1491.236,
+        "independent_expected_kbps": 1491.236,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_420k.ivf",
+        "bytes": 250419,
+        "sha256": "7c0f17b78f1eb1250d095c67ceb7b0353428b9f0dd856bbba8371c2c43d351ae",
+        "measured_kbps": 1001.676,
+        "independent_expected_kbps": 1001.676,
+        "clock_rate": 30
+      },
+      {
+        "stream": "anchor_630k.ivf",
+        "bytes": 459235,
+        "sha256": "608f01d625cccf918430a65853b6fb738e4b79ce377882c3bcf534f6b2848626",
+        "measured_kbps": 1836.94,
+        "independent_expected_kbps": 1836.94,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_630k.ivf",
+        "bytes": 301304,
+        "sha256": "d709c881fa99261b4cf418051b5b50a02a0e0e4c503ea88cf1887a13a87ab426",
+        "measured_kbps": 1205.216,
+        "independent_expected_kbps": 1205.216,
+        "clock_rate": 30
+      },
+      {
+        "stream": "anchor_840k.ivf",
+        "bytes": 557147,
+        "sha256": "b9c19ac5a1f6895be6c5540a62008e91adb74705e0013f445082ca6c0e1b8c74",
+        "measured_kbps": 2228.588,
+        "independent_expected_kbps": 2228.588,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_840k.ivf",
+        "bytes": 339574,
+        "sha256": "def8436ba677d81cadaa14b54da5cd7643736182b494d6961d88d13f5c77f384",
+        "measured_kbps": 1358.296,
+        "independent_expected_kbps": 1358.296,
+        "clock_rate": 30
+      },
+      {
+        "stream": "anchor_1260k.ivf",
+        "bytes": 725171,
+        "sha256": "9c1dcc98fdfa2cd1fe28b9fca3e1a07f8912fe3aa422b105f84c628337753c7c",
+        "measured_kbps": 2900.684,
+        "independent_expected_kbps": 2900.684,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_1260k.ivf",
+        "bytes": 464272,
+        "sha256": "5965542b04b0a9ad390ce6f3f4dc5bcf80d6f405a13f571dcc3d04cf5a48d291",
+        "measured_kbps": 1857.088,
+        "independent_expected_kbps": 1857.088,
+        "clock_rate": 30
+      },
+      {
+        "stream": "anchor_2100k.ivf",
+        "bytes": 1032951,
+        "sha256": "97063ed99352d52136f486c4c09f41409cdaa75c64da4ace2354149f28219378",
+        "measured_kbps": 4131.804,
+        "independent_expected_kbps": 4131.804,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_2100k.ivf",
+        "bytes": 679149,
+        "sha256": "034952da7dc6d618c45b90853d0ee5408dbf3de34c429d3a78b67d306ba4f817",
+        "measured_kbps": 2716.596,
+        "independent_expected_kbps": 2716.596,
+        "clock_rate": 30
+      },
+      {
+        "stream": "anchor_3360k.ivf",
+        "bytes": 1320421,
+        "sha256": "292d00259923fd11812c540fb345cc4771a50bb57c3b199ff80d150f11f435a2",
+        "measured_kbps": 5281.684,
+        "independent_expected_kbps": 5281.684,
+        "clock_rate": 1000
+      },
+      {
+        "stream": "test_3360k.ivf",
+        "bytes": 960940,
+        "sha256": "ec73014716513a146adf237b11be662efad26972bdb8dd277a181d0977304392",
+        "measured_kbps": 3843.76,
+        "independent_expected_kbps": 3843.76,
+        "clock_rate": 30
+      }
+    ],
+    "csv": "role,target_kbps,measured_kbps,psnr_db\nanchor,420,1491.236,23.2417\ntest,420,1001.676,23.4045\nanchor,630,1836.940,23.4243\ntest,630,1205.216,23.7869\nanchor,840,2228.588,24.0316\ntest,840,1358.296,23.8968\nanchor,1260,2900.684,24.8628\ntest,1260,1857.088,24.7717\nanchor,2100,4131.804,26.3109\ntest,2100,2716.596,26.0915\nanchor,3360,5281.684,27.7973\ntest,3360,3843.760,27.7902\nbdrate_pct,-32.9993\n"
+  }
+]

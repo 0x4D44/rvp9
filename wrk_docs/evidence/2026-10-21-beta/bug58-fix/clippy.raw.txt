@@ -1,0 +1,26 @@
+    Blocking waiting for file lock on build directory
+   Compiling rvp9-core v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-core)
+    Checking typenum v1.20.1
+   Compiling rvp9-decoder v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-decoder)
+    Checking static_assertions v1.1.0
+   Compiling rvp9-harness v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-harness)
+    Checking memchr v2.8.0
+    Checking itoa v1.0.18
+    Checking cfg-if v1.0.4
+    Checking crossbeam-utils v0.8.21
+    Checking serde_core v1.0.228
+    Checking libc v0.2.186
+    Checking zmij v1.0.21
+    Checking crossbeam-channel v0.5.15
+    Checking cpufeatures v0.2.17
+    Checking generic-array v0.14.7
+    Checking block-buffer v0.10.4
+    Checking crypto-common v0.1.7
+    Checking digest v0.10.7
+    Checking sha2 v0.10.9
+    Checking serde_json v1.0.149
+    Checking serde v1.0.228
+    Checking rvp9-encoder v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-encoder)
+    Checking rvp9-io v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-io)
+    Checking rvp9-bench v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-bench)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 24.65s

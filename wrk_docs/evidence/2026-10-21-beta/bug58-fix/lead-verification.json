@@ -1,0 +1,12 @@
+{
+  "source_sha256": "ab4878616a72cd5dcec504e9d05753590d88121f56c99a98f446b5cd0fea873f",
+  "lead_observed_focused_command": "deltic timeout 180 cargo test --locked --offline -p rvp9-bench --bin bdrate --test bdrate_fps -- --test-threads=1 </dev/null",
+  "unit_passed": 23,
+  "integration_passed": 5,
+  "failed": 0,
+  "ignored": 0,
+  "lead_actual_replay_command": "python3.12 .scratch/replay-real-clock.py --output-root .scratch/lead-clock-replay --bdrate target/debug/bdrate",
+  "lead_actual_replay": "Tree and Ducks each passed all12 actual-role rate assertions",
+  "independent_static_reviewer": "beta_release_tooling",
+  "review_result": "No Blocker or Issue. Header declared-count validation is a preexisting scope caveat; release matrix independently validates displayed frame/byte counts."
+}

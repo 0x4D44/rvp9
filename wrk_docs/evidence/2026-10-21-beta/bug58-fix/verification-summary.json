@@ -1,0 +1,19 @@
+{
+  "fix_source_sha256": "ab4878616a72cd5dcec504e9d05753590d88121f56c99a98f446b5cd0fea873f",
+  "test_source_sha256": "0a0046b22b8388cf2e4829d2d6d27b03bd9dbaf10f177659e962d801e26f2319",
+  "unit_tests": 23,
+  "integration_tests": 5,
+  "focused_test_exit": 0,
+  "clippy_exit": 0,
+  "fmt_exit": 0,
+  "self_comparison_bdrate_pct": 0.0,
+  "self_comparison_all12_millisecond_clock_rates_independently_checked": true,
+  "retained_real_two_scene_all24_rates_independently_checked": true,
+  "retained_real_corrected_bdrate_pct": {
+    "in_to_tree": -28.1376,
+    "ducks_take_off": -32.9993
+  },
+  "audit": "Before the fix, only bdrate.rs called PacketReader::framerate for measured bitrate in bench/harness. bdrate-svc.rs1057 uses explicitVideoInfo FPS; encoder quality_gate.rs423 and harness e1_block_stats.rs1333 use passed frame cadence, not IVFclock. No other clock-as-FPS acceptance path found in searched bench/harness/encoder qualitygate. No scope expansion.",
+  "independent_replay_command": "python3.12 .scratch/replay-real-clock.py --output-root .scratch/independent-clock-replay --bdrate target/debug/bdrate",
+  "git_head": "2c669baa75d1452e17fea5dcd4ffba93ca1fe30d"
+}

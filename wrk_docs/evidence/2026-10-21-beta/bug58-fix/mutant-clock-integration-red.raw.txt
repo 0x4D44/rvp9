@@ -1,0 +1,49 @@
+   Compiling rvp9-core v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-io)
+   Compiling rvp9-bench v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 5.12s
+     Running tests/bdrate_fps.rs (target/debug/deps/bdrate_fps-67af74a041bc80dc)
+
+running 5 tests
+test rejects_zero_ivf_timebase_components ... ok
+test reports_millisecond_ivf_clock_at_effective_frame_cadence ... FAILED
+test split_last_role_fps_override_matches_output_timing ... FAILED
+test rejects_invalid_packet_timing_without_csv ... ok
+test reports_each_ivfs_effective_frame_rate ... ok
+
+failures:
+
+---- reports_millisecond_ivf_clock_at_effective_frame_cadence stdout ----
+
+thread 'reports_millisecond_ivf_clock_at_effective_frame_cadence' (375161878) panicked at crates/rvp9-bench/tests/bdrate_fps.rs:101:17:
+anchor/100 measured 900.267 kbps; expected 27.008000 from 6752 bytes at 30/1 fps
+CSV:
+role,target_kbps,measured_kbps,psnr_db
+anchor,100,900.267,36.0896
+test,100,900.267,36.0896
+anchor,200,1700.267,38.5884
+test,200,1700.267,38.5884
+anchor,400,3300.267,42.1102
+test,400,3300.267,42.1102
+anchor,800,6500.267,48.1308
+test,800,6500.267,48.1308
+bdrate_pct,0.0000
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- split_last_role_fps_override_matches_output_timing stdout ----
+
+thread 'split_last_role_fps_override_matches_output_timing' (375161879) panicked at crates/rvp9-bench/tests/bdrate_fps.rs:299:9:
+wrong effective anchor FPS: anchor,100,900.267,36.0896
+
+
+failures:
+    reports_millisecond_ivf_clock_at_effective_frame_cadence
+    split_last_role_fps_override_matches_output_timing
+
+test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.93s
+
+error: test failed, to rerun pass `-p rvp9-bench --test bdrate_fps`

@@ -1,0 +1,35 @@
+   Compiling rvp9-core v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-encoder)
+   Compiling rvp9-bench v0.2.0-beta.1 (/Users/md/worktrees/rvp9/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07/crates/rvp9-bench)
+warning: unused variable: `extra_args`
+   --> crates/rvp9-bench/src/bin/bdrate.rs:382:40
+    |
+382 | fn effective_frame_rate(default: &str, extra_args: &[String]) -> Result<(u32, u32), String> {
+    |                                        ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_extra_args`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rvp9-bench` (bin "bdrate" test) generated 1 warning (run `cargo fix --bin "bdrate" -p rvp9-bench --tests` to apply 1 suggestion)
+    Finished `test` profile [optimized + debuginfo] target(s) in 5.40s
+     Running unittests src/bin/bdrate.rs (target/debug/deps/bdrate-6db4e5a67f795c06)
+
+running 1 test
+
+thread 'tests::effective_fps_tracks_last_override_and_refuses_invalid_rates' (375191659) panicked at crates/rvp9-bench/src/bin/bdrate.rs:701:9:
+assertion `left == right` failed
+  left: (30, 1)
+ right: (30000, 1001)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::effective_fps_tracks_last_override_and_refuses_invalid_rates ... FAILED
+
+failures:
+
+failures:
+    tests::effective_fps_tracks_last_override_and_refuses_invalid_rates
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-bench --bin bdrate`
