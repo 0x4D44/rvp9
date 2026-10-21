@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00058 — BD-rate treats IVF timestamp clocks as frame rates and reports false compression gains
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** bench/bdrate
 - **Raised:** 2026-10-21T07:01:25Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** verify
-- **Owner run:** verify-20261021T072658Z-fd362310
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00058-run-verify-20261021T072658Z-fd362310
-- **Owner base:** a0b538c709f5466a04dd1687352a6200d110fdd9
-- **Owner fingerprint:** sha256:aecafeb0f275d49a1dce34e16957ba807fef1d5fde0cfbc6edcaff93979ac752
-- **Owner since:** 2026-10-21T07:26:58Z
-- **Owner until:** 2026-10-21T11:26:58Z
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-21T07:01:25Z, raised via `deltic bugs new --land` model=gpt-6.1-sol@medium) -> Fixed (2026-10-21T07:23:00Z, deltic:auto role=fix run=fix-20261021T070244Z-d021ee07 branch=task/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07 code=d872b7216cb7c2ca8f23e494b1ade99b202e22e9 gate=manual)
+- **State history:** Open (2026-10-21T07:01:25Z, raised via `deltic bugs new --land` model=gpt-6.1-sol@medium) -> Fixed (2026-10-21T07:23:00Z, deltic:auto role=fix run=fix-20261021T070244Z-d021ee07 branch=task/bug-RVP9-BUG-FLU-00058-run-fix-20261021T070244Z-d021ee07 code=d872b7216cb7c2ca8f23e494b1ade99b202e22e9 gate=manual) -> Closed (2026-10-21T07:32:33Z, deltic:manual role=verify run=verify-20261021T072658Z-fd362310 verified_fix_run=fix-20261021T070244Z-d021ee07 verdict=close)
 
 ## Observation
 
@@ -33,5 +33,9 @@ Evidence fingerprint: `manual:v1:bd-rate-treats-ivf-timestamp-clocks-as-frame-ra
 ## Fix
 
 <unfixed — raised only>
+
+### Verification summary (2026-10-21T07:32:33Z, deltic:auto run=verify-20261021T072658Z-fd362310 verified_fix_run=fix-20261021T070244Z-d021ee07 verdict=close)
+
+Verifier note: Manual verify: Independent Windows verify d872b721: 19 units passed; real libvpx selfcompare 60f/30fps, four rates/eight millisecond-clock streams gave 0% and each matched bytes*8/1000/2. Reversing only duration to frames*clock_scale/clock_rate made all eight BITRATE_AUDIT_ASSERTION checks fail (1683.6 vs 50.508 first point), despite selfcompare0%. Captured-byte restore, empty scoped diff, rebuild and eight-point audit passed. Unix-only0-test selection excluded as proof. Evidence: wrk_docs/evidence/2026-10-21-beta/windows/bug58-verification.
 
 ## Notes
