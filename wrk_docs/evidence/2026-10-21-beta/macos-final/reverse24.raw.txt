@@ -1,0 +1,27 @@
+Preparing deterministic 128x64, 12-frame Y4M source in /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/reverse24
+[01/24] cpu6-cbr-baseline
+[02/24] cpu6-cbr-aq3
+[03/24] cpu6-cbr-denoiser
+[04/24] cpu6-cbr-combined
+[05/24] cpu6-vbr-baseline
+[06/24] cpu6-vbr-aq3
+[07/24] cpu6-vbr-denoiser
+[08/24] cpu6-vbr-combined
+[09/24] cpu7-cbr-baseline
+[10/24] cpu7-cbr-aq3
+[11/24] cpu7-cbr-denoiser
+[12/24] cpu7-cbr-combined
+[13/24] cpu7-vbr-baseline
+[14/24] cpu7-vbr-aq3
+[15/24] cpu7-vbr-denoiser
+[16/24] cpu7-vbr-combined
+[17/24] cpu8-cbr-baseline
+[18/24] cpu8-cbr-aq3
+[19/24] cpu8-cbr-denoiser
+[20/24] cpu8-cbr-combined
+[21/24] cpu8-vbr-baseline
+[22/24] cpu8-vbr-aq3
+[23/24] cpu8-vbr-denoiser
+[24/24] cpu8-vbr-combined
+Reverse reference-decoder qualification passed: 24/24 streams.
+Evidence: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/reverse24/qualification.txt

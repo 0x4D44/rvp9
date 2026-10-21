@@ -1,0 +1,15 @@
+--- qualify-alpha-encoder.sh
++++ encoder32-artifact-runner.sh
+@@ -85,9 +85,9 @@
+ fi
+ manifest="$work_dir/qualification.txt"
+ 
+-cargo build --release --locked -p rvp9-cli --bins
+-rvp9enc="$repo_root/target/release/rvp9enc$exe_suffix"
+-rvp9dec="$repo_root/target/release/rvp9dec$exe_suffix"
++# Actual extracted beta artifacts supplied; no source build in this adapted runner.
++rvp9enc="/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/extracted/rvp9-0.2.0-beta.1-aarch64-apple-darwin/rvp9enc"
++rvp9dec="/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/extracted/rvp9-0.2.0-beta.1-aarch64-apple-darwin/rvp9dec"
+ for binary in "$rvp9enc" "$rvp9dec"; do
+     if [ ! -x "$binary" ]; then
+         echo "expected release binary: $binary" >&2

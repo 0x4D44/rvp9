@@ -1,0 +1,31 @@
+Preparing acceptance inputs in /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/in_to_tree_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/in_to_tree_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/ducks_take_off_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/ducks_take_off_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/old_town_cross_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/old_town_cross_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/in_to_tree_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/in_to_tree_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/ducks_take_off_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/ducks_take_off_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/old_town_cross_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/old_town_cross_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/in_to_tree_1080p60_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/in_to_tree_1080p60_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/ducks_take_off_1080p60_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/ducks_take_off_1080p60_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/old_town_cross_1080p60_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/inputs/old_town_cross_1080p60_noisy.y4m
+[quality   1/27] aq3-cbr-720p30-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   2/27] aq3-cbr-720p30-ducks_take_off-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   3/27] aq3-cbr-720p30-old_town_cross-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   4/27] aq3-cbr-1080p30-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   5/27] aq3-cbr-1080p30-ducks_take_off-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   6/27] aq3-cbr-1080p30-old_town_cross-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   7/27] aq3-cbr-1080p60-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   8/27] aq3-cbr-1080p60-ducks_take_off-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality   9/27] aq3-cbr-1080p60-old_town_cross-cpu6 (bdrate, vpxenc anchor, clean input)
+[quality  10/27] aq3-cbr-720p30-in_to_tree-cpu7 (bdrate, vpxenc anchor, clean input)
+Terminated: 15
+interrupted attempt retained for inspection: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/quality/quality/rows/.aq3-cbr-720p30-in_to_tree-cpu7.attempt.20261021T070536Z-92385

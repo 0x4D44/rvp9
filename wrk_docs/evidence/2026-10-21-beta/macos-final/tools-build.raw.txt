@@ -1,0 +1,28 @@
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling version_check v0.9.5
+   Compiling unicode-ident v1.0.24
+   Compiling rvp9-core v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-core)
+   Compiling generic-array v0.14.7
+   Compiling serde_core v1.0.228
+   Compiling typenum v1.20.1
+   Compiling zmij v1.0.21
+   Compiling syn v2.0.117
+   Compiling libc v0.2.186
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-decoder v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-decoder)
+   Compiling memchr v2.8.0
+   Compiling rvp9-harness v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-harness)
+   Compiling itoa v1.0.18
+   Compiling rvp9-io v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-encoder)
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling cpufeatures v0.2.17
+   Compiling cfg-if v1.0.4
+   Compiling sha2 v0.10.9
+   Compiling rvp9-bench v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-bench)
+    Finished `release` profile [optimized + debuginfo] target(s) in 35.15s

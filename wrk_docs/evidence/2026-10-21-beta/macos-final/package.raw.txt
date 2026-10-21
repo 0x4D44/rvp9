@@ -1,0 +1,12 @@
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-io v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-beta.1 (/Users/md/language/rvp9/crates/rvp9-cli)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 03s
+Created /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/dist/rvp9-0.2.0-beta.1-aarch64-apple-darwin.tar.gz
+Artifact manifest: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/dist/rvp9-0.2.0-beta.1-aarch64-apple-darwin/BUILD-METADATA.txt
+5582686fee7e86770f3994bfdda8cd0f5c9cd54a21863f286a21f9fc6f9188f4  rvp9-0.2.0-beta.1-aarch64-apple-darwin.tar.gz

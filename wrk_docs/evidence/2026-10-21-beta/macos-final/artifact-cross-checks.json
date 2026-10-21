@@ -1,0 +1,56 @@
+[
+  {
+    "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+    "kind": "adapted artifact runner; all acceptance assertions unchanged",
+    "command": [
+      "deltic",
+      "timeout",
+      "3600",
+      "bash",
+      "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/encoder32-artifact-runner.sh"
+    ],
+    "env_overrides": {
+      "RVP9_ALPHA_SOURCE_DIR": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus",
+      "RVP9_ALPHA_LIBVPX_SOURCE": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx",
+      "RVP9_ALPHA_VPXDEC": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec",
+      "RVP9_ALPHA_WORK_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/encoder32",
+      "RVP9_REFERENCE_DECODER_LIBVPX_SOURCE": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx",
+      "RVP9_REFERENCE_DECODER_VPXENC": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxenc",
+      "RVP9_REFERENCE_DECODER_VPXDEC": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec",
+      "RVP9_REFERENCE_DECODER_RVP9DEC": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/extracted/rvp9-0.2.0-beta.1-aarch64-apple-darwin/rvp9dec",
+      "RVP9_REFERENCE_DECODER_WORK_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/reverse24"
+    },
+    "runner_sha256": "74afa82e9f6f0e8cc7f20551c64ddcd2eed599486d086cc0acd1f38f0ee37098",
+    "started_epoch": 1792565799.10658,
+    "exit_code": 0,
+    "ended_epoch": 1792565958.6738508,
+    "raw_sha256": "6f951d8f839bbf0aaeec6be4c2197ead57705ef9c1cab94442b3ee6253b3a911"
+  },
+  {
+    "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+    "kind": "adapted artifact runner; all acceptance assertions unchanged",
+    "command": [
+      "deltic",
+      "timeout",
+      "3600",
+      "bash",
+      "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/reverse24-artifact-runner.sh"
+    ],
+    "env_overrides": {
+      "RVP9_ALPHA_SOURCE_DIR": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus",
+      "RVP9_ALPHA_LIBVPX_SOURCE": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx",
+      "RVP9_ALPHA_VPXDEC": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec",
+      "RVP9_ALPHA_WORK_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/encoder32",
+      "RVP9_REFERENCE_DECODER_LIBVPX_SOURCE": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx",
+      "RVP9_REFERENCE_DECODER_VPXENC": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxenc",
+      "RVP9_REFERENCE_DECODER_VPXDEC": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec",
+      "RVP9_REFERENCE_DECODER_RVP9DEC": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/extracted/rvp9-0.2.0-beta.1-aarch64-apple-darwin/rvp9dec",
+      "RVP9_REFERENCE_DECODER_WORK_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/reverse24"
+    },
+    "runner_sha256": "d91310e72b4ac6d952833286d5c7e0cfdee704ec56c43aca8390b16e96665ecb",
+    "started_epoch": 1792565958.6785479,
+    "exit_code": 0,
+    "ended_epoch": 1792565966.092961,
+    "raw_sha256": "30d0a746a7247bf0f3ff24971be6e795f51d00bc84e4da4ffc7840bdc84b6cca"
+  }
+]

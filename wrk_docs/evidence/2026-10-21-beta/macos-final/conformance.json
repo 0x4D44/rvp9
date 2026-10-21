@@ -1,0 +1,90 @@
+[
+  {
+    "name": "conformance-s0-t1",
+    "command": [
+      "deltic",
+      "timeout",
+      "1800",
+      "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/conformance",
+      "--vectors-dir",
+      "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/conformance/vectors",
+      "--official",
+      "--strict",
+      "--threads",
+      "1"
+    ],
+    "RVP9_FORCE_SCALAR": "absent",
+    "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+    "binary_sha256": "bc51a5693ce76719c79c9af3c6c0a19808367b35b7b327574ee57d18f83ff6fe",
+    "started_epoch": 1792565628.758197,
+    "exit_code": 0,
+    "ended_epoch": 1792565679.11374,
+    "raw_sha256": "56181d97af82d212ab964d4c65835d8d028b5cf6e0af3b80b001aaee4254182d"
+  },
+  {
+    "name": "conformance-s0-t2",
+    "command": [
+      "deltic",
+      "timeout",
+      "1800",
+      "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/conformance",
+      "--vectors-dir",
+      "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/conformance/vectors",
+      "--official",
+      "--strict",
+      "--threads",
+      "2"
+    ],
+    "RVP9_FORCE_SCALAR": "absent",
+    "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+    "binary_sha256": "bc51a5693ce76719c79c9af3c6c0a19808367b35b7b327574ee57d18f83ff6fe",
+    "started_epoch": 1792565679.115351,
+    "exit_code": 0,
+    "ended_epoch": 1792565735.6588428,
+    "raw_sha256": "6b6404bed71e36df0824f44ce3d5d194b9892809e694293610d2c9300ff2da1c"
+  },
+  {
+    "name": "conformance-s1-t1",
+    "command": [
+      "deltic",
+      "timeout",
+      "1800",
+      "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/conformance",
+      "--vectors-dir",
+      "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/conformance/vectors",
+      "--official",
+      "--strict",
+      "--threads",
+      "1"
+    ],
+    "RVP9_FORCE_SCALAR": "1",
+    "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+    "binary_sha256": "bc51a5693ce76719c79c9af3c6c0a19808367b35b7b327574ee57d18f83ff6fe",
+    "started_epoch": 1792565735.660703,
+    "exit_code": 0,
+    "ended_epoch": 1792565841.023621,
+    "raw_sha256": "56181d97af82d212ab964d4c65835d8d028b5cf6e0af3b80b001aaee4254182d"
+  },
+  {
+    "name": "conformance-s1-t2",
+    "command": [
+      "deltic",
+      "timeout",
+      "1800",
+      "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/conformance",
+      "--vectors-dir",
+      "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/conformance/vectors",
+      "--official",
+      "--strict",
+      "--threads",
+      "2"
+    ],
+    "RVP9_FORCE_SCALAR": "1",
+    "source_commit": "15bf7162c9fb92a5165fab652460bd42da03a6e6",
+    "binary_sha256": "bc51a5693ce76719c79c9af3c6c0a19808367b35b7b327574ee57d18f83ff6fe",
+    "started_epoch": 1792565841.025465,
+    "exit_code": 0,
+    "ended_epoch": 1792565973.7414331,
+    "raw_sha256": "6b6404bed71e36df0824f44ce3d5d194b9892809e694293610d2c9300ff2da1c"
+  }
+]

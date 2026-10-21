@@ -1,0 +1,11 @@
+--- qualify-reference-decoder.sh
++++ reverse24-artifact-runner.sh
+@@ -137,7 +137,7 @@
+     exit 1
+ fi
+ 
+-cargo build --release --locked -p rvp9-cli --bin rvp9dec
++# Actual extracted beta decoder supplied through the existing environment override.
+ if [ ! -x "$rvp9dec" ]; then
+     echo "expected release decoder binary: $rvp9dec" >&2
+     exit 1
