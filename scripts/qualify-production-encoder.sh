@@ -109,6 +109,12 @@
 # 2.5 GB (1080p60 single-layer) or 4.5 GB (three-layer); its exact hidden attempt
 # directory is evidence to inspect or move aside after the campaign.
 #
+# --profile beta-cbr selects a narrower beta contract: CBR/AQ3/denoiser0,
+# CPU6/7/8 and one temporal layer, all three scenes at all three targets.
+# It preserves the quality/speed gates and uses strict 33/16 ms p50 budgets.
+# Inputs remain derived from the canonical 720p50 scenes, not native 1080p60.
+# --artifact-manifest binds both portable release binaries without claiming PGO.
+#
 # The script builds nothing. It validates and hashes the exact binaries it is
 # handed, and it requires the PGO manifest that produced the encoder under test
 # so the acceptance artifact cannot silently drift from the source tree.
@@ -127,13 +133,36 @@
 
 set -euo pipefail
 
+# Select the named contract before its immutable constants are initialized.
+# Strip the option at the entry point so dry oracles accept the same profile.
+QUALIFICATION_PROFILE="full"
+profile_seen=no
+profile_pending=no
+for profile_arg in "$@"; do
+    if [ "$profile_pending" = yes ]; then
+        case "$profile_arg" in full|beta-cbr) QUALIFICATION_PROFILE="$profile_arg" ;;
+            *) printf 'unknown --profile: %s\n' "$profile_arg" >&2; exit 1 ;; esac
+        profile_pending=no
+    elif [ "$profile_arg" = --profile ]; then
+        [ "$profile_seen" = no ] || { printf '%s\n' '--profile may be passed only once' >&2; exit 1; }
+        profile_seen=yes
+        profile_pending=yes
+    fi
+done
+[ "$profile_pending" = no ] || { printf '%s\n' '--profile requires a value' >&2; exit 1; }
+readonly QUALIFICATION_PROFILE
+profile_value() {
+    if [ "$QUALIFICATION_PROFILE" = beta-cbr ]; then printf '%s' "$2";
+    else printf '%s' "$1"; fi
+}
+
 # ---------------------------------------------------------------------------
 # Fixed acceptance constants
 # ---------------------------------------------------------------------------
 
 readonly PLAN_SCHEMA=1
 readonly PLAN_VERSION=1
-readonly MATRIX_NAME="production-v1-nonspatial"
+readonly MATRIX_NAME="$(profile_value production-v1-nonspatial beta-cbr)"
 
 readonly PINNED_LIBVPX_REVISION="12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
 
@@ -179,18 +208,18 @@ readonly QUALITY_RECEIPT_SCHEMA=2
 # Expected totals. These are asserted against what the iterators actually
 # produce, so any matrix edit fails loudly instead of quietly rescoping the
 # release contract.
-readonly EXPECTED_CONFIG_ROWS=25
-readonly EXPECTED_QUALITY_CURVES=200
-readonly EXPECTED_QUALITY_AGGREGATE_GROUPS=75
-readonly EXPECTED_QUALITY_AGGREGATE_LAYER_GATES=129
-readonly EXPECTED_QUALITY_CLIP_LAYER_GUARDS=344
-readonly EXPECTED_CANDIDATE_STREAMS=2640
-readonly EXPECTED_DECODER_RUNS=7920
-readonly EXPECTED_PREPARED_INPUTS=16
-readonly EXPECTED_SPEED_GROUPS=75
-readonly EXPECTED_LATENCY_GROUPS=75
-readonly EXPECTED_LATENCY_ROWS=200
-readonly EXPECTED_LATENCY_MEASURED_RUNS=1000
+readonly EXPECTED_CONFIG_ROWS="$(profile_value 25 3)"
+readonly EXPECTED_QUALITY_CURVES="$(profile_value 200 27)"
+readonly EXPECTED_QUALITY_AGGREGATE_GROUPS="$(profile_value 75 9)"
+readonly EXPECTED_QUALITY_AGGREGATE_LAYER_GATES="$(profile_value 129 9)"
+readonly EXPECTED_QUALITY_CLIP_LAYER_GUARDS="$(profile_value 344 27)"
+readonly EXPECTED_CANDIDATE_STREAMS="$(profile_value 2640 162)"
+readonly EXPECTED_DECODER_RUNS="$(profile_value 7920 486)"
+readonly EXPECTED_PREPARED_INPUTS="$(profile_value 16 18)"
+readonly EXPECTED_SPEED_GROUPS="$(profile_value 75 9)"
+readonly EXPECTED_LATENCY_GROUPS="$(profile_value 75 9)"
+readonly EXPECTED_LATENCY_ROWS="$(profile_value 200 27)"
+readonly EXPECTED_LATENCY_MEASURED_RUNS="$(profile_value 1000 135)"
 readonly EXPECTED_REQUIRED_ORACLES=1
 
 # ---------------------------------------------------------------------------
@@ -325,6 +354,13 @@ Cargo.toml Cargo.lock .cargo/config.toml"
 
 # fps|width|height|threads|tile_columns|speed_kbps|p50_budget_ms|p99_budget_ms
 target_spec() {
+    if [ "$QUALIFICATION_PROFILE" = beta-cbr ]; then
+        case "$1" in
+            720p30) printf '30|1280|720|1|0|1260|33|50\n'; return ;;
+            1080p30) printf '30|1920|1080|4|2|2835|33|50\n'; return ;;
+            1080p60) printf '60|1920|1080|8|3|5670|16|25\n'; return ;;
+        esac
+    fi
     case "$1" in
         720p30)  printf '30|1280|720|1|0|1260|33.333|50\n' ;;
         1080p30) printf '30|1920|1080|4|2|2835|33.333|50\n' ;;
@@ -334,6 +370,11 @@ target_spec() {
 }
 
 target_clips() {
+    if [ "$QUALIFICATION_PROFILE" = beta-cbr ]; then
+        case "$1" in
+            720p30|1080p30|1080p60) printf 'in_to_tree ducks_take_off old_town_cross\n'; return ;;
+        esac
+    fi
     case "$1" in
         720p30|1080p30) printf 'in_to_tree ducks_take_off old_town_cross\n' ;;
         1080p60)        printf 'in_to_tree old_town_cross\n' ;;
@@ -432,6 +473,11 @@ streams_per_point() {
 
 # feature|mode|cpu|aq|denoiser|temporal_layers -- the configuration spine.
 emit_configs() {
+    if [ "$QUALIFICATION_PROFILE" = beta-cbr ]; then
+        local beta_cpu
+        for beta_cpu in $CPUS; do printf 'aq3|cbr|%s|3|0|1\n' "$beta_cpu"; done
+        return
+    fi
     local feature mode cpu aq denoiser layers
     for feature in $FEATURES; do
         aq="$(feature_aq_mode "$feature")"
@@ -2266,6 +2312,19 @@ Usage:
                  exercise the speed and latency recording, classification, and
                  abort paths against stubbed child observations, in OS temp
 
+Profile selection:
+  --profile full|beta-cbr  default full. beta-cbr qualifies only profile-0 CBR,
+                         CPU6/7/8, AQ3, denoiser0, one temporal layer; all three
+                         canonical scenes at 720p30/1080p30/1080p60. The 1080p
+                         and 60fps inputs are derived from 720p50 sources.
+  --artifact-manifest PATH
+                         beta-cbr only: portable-release BUILD-METADATA.txt
+                         with source_commit, rvp9enc_path, rvp9enc_sha256,
+                         rvp9dec_path, rvp9dec_sha256 and build_kind=portable-release;
+                         relative binary paths resolve beside this file.
+                         Requires explicit --test-encoder and --rvp9dec;
+                         mutually exclusive with --pgo-manifest.
+
 Real-run options:
   --work-dir PATH        required; outside the repo, with an existing parent;
                          absent or empty unless --resume is explicit
@@ -2275,7 +2334,8 @@ Real-run options:
                          interrupted groups are retained and measured again.
   --phase PHASE          required; no phase is assumed. All four execute:
                          quality, speed, latency, and the all fan-out.
-  --pgo-manifest PATH    required; the manifest scripts/build-encoder-pgo.sh
+  --pgo-manifest PATH    required for full (beta may use --artifact-manifest);
+                         the manifest scripts/build-encoder-pgo.sh
                          wrote beside the rvp9enc under test. Its
                          optimized_binary= and optimized_binary_sha256= must
                          match the --test-encoder.
@@ -2312,6 +2372,7 @@ phase=""
 work_dir=""
 resume="no"
 opt_pgo_manifest=""
+opt_artifact_manifest=""
 opt_source_dir=""
 opt_test_encoder=""
 opt_vpxenc=""
@@ -2344,6 +2405,7 @@ parse_args() {
             --phase)           phase="$2" ;;
             --work-dir)        work_dir="$2" ;;
             --pgo-manifest)    opt_pgo_manifest="$2" ;;
+            --artifact-manifest) opt_artifact_manifest="$2" ;;
             --source-dir)      opt_source_dir="$2" ;;
             --test-encoder)    opt_test_encoder="$2" ;;
             --vpxenc)          opt_vpxenc="$2" ;;
@@ -2385,7 +2447,12 @@ parse_args() {
         usage >&2
         fail "--work-dir is required for a real run"
     fi
-    if [ -z "$opt_pgo_manifest" ]; then
+    if [ -n "$opt_artifact_manifest" ]; then
+        [ "$QUALIFICATION_PROFILE" = beta-cbr ] || fail "--artifact-manifest requires --profile beta-cbr"
+        [ -z "$opt_pgo_manifest" ] || fail "choose exactly one of --pgo-manifest and --artifact-manifest"
+        [ -n "$opt_test_encoder" ] || fail "--artifact-manifest requires explicit --test-encoder"
+        [ -n "$opt_rvp9dec" ] || fail "--artifact-manifest requires explicit --rvp9dec"
+    elif [ -z "$opt_pgo_manifest" ]; then
         usage >&2
         fail "--pgo-manifest is required for a real run: the qualification records which source commit produced the encoder under test"
     fi
@@ -2554,12 +2621,57 @@ rebuild the PGO encoder (scripts/build-encoder-pgo.sh) or qualify the commit it 
     fi
 }
 
+# Portable artifacts have their own vocabulary; no PGO claim is implied.
+# Internal source/binary variables are shared with timing and receipt code.
+validate_artifact_manifest() {
+    local recorded recorded_sha actual_sha path drifted="" decoder_recorded decoder_sha
+    [ -f "$opt_artifact_manifest" ] || fail "--artifact-manifest is not a file: $opt_artifact_manifest"
+    pgo_manifest_sha256="$(sha256_file "$opt_artifact_manifest")"
+    for path in build_kind source_commit rvp9enc_path rvp9enc_sha256 rvp9dec_path rvp9dec_sha256; do
+        [ "$(manifest_key_count "$path" "$opt_artifact_manifest")" -eq 1 ] ||
+            fail "artifact manifest requires exactly one $path field"
+    done
+    [ "$(manifest_field build_kind < "$opt_artifact_manifest")" = portable-release ] ||
+        fail "--artifact-manifest requires build_kind=portable-release"
+    pgo_source_commit="$(manifest_field source_commit < "$opt_artifact_manifest")"
+    case "$pgo_source_commit" in ''|*[!0-9a-f]*) fail "artifact source_commit must be a full lowercase commit SHA" ;; esac
+    [ "${#pgo_source_commit}" -eq 40 ] || fail "artifact source_commit must be a full commit SHA"
+    git cat-file -e "${pgo_source_commit}^{commit}" 2>/dev/null ||
+        fail "artifact source_commit is not a commit in this repository"
+    recorded="$(manifest_field rvp9enc_path < "$opt_artifact_manifest")"
+    [ -n "$recorded" ] || fail "artifact manifest lacks rvp9enc_path"
+    case "$recorded" in /*) ;; *) recorded="$(dirname "$opt_artifact_manifest")/$recorded" ;; esac
+    pgo_optimized_binary="$(canonical_file "$recorded")" || fail "artifact encoder path does not resolve"
+    [ "$pgo_optimized_binary" = "$(canonical_file "$test_encoder")" ] ||
+        fail "artifact manifest describes a different binary than --test-encoder"
+    recorded_sha="$(manifest_field rvp9enc_sha256 < "$opt_artifact_manifest")"
+    case "$recorded_sha" in ''|*[!0-9a-f]*) fail "artifact rvp9enc_sha256 must be lowercase SHA-256" ;; esac
+    [ "${#recorded_sha}" -eq 64 ] || fail "artifact rvp9enc_sha256 must contain 64 hex digits"
+    actual_sha="$(sha256_file "$test_encoder")"
+    [ "$actual_sha" = "$recorded_sha" ] || fail "artifact encoder hash does not match its manifest"
+    pgo_optimized_binary_sha256="$recorded_sha"
+    decoder_recorded="$(manifest_field rvp9dec_path < "$opt_artifact_manifest")"
+    [ -n "$decoder_recorded" ] || fail "artifact manifest lacks rvp9dec_path"
+    case "$decoder_recorded" in /*) ;; *) decoder_recorded="$(dirname "$opt_artifact_manifest")/$decoder_recorded" ;; esac
+    [ "$(canonical_file "$decoder_recorded")" = "$(canonical_file "$rvp9dec")" ] ||
+        fail "artifact manifest describes a different binary than --rvp9dec"
+    decoder_sha="$(manifest_field rvp9dec_sha256 < "$opt_artifact_manifest")"
+    case "$decoder_sha" in ''|*[!0-9a-f]*) fail "artifact rvp9dec_sha256 must be lowercase SHA-256" ;; esac
+    [ "${#decoder_sha}" -eq 64 ] || fail "artifact rvp9dec_sha256 must contain 64 hex digits"
+    [ "$(sha256_file "$rvp9dec")" = "$decoder_sha" ] || fail "artifact decoder hash does not match its manifest"
+    for path in $PGO_GUARDED_PATHS crates/rvp9-decoder/src crates/rvp9-decoder/Cargo.toml; do
+        if ! git diff --quiet "$pgo_source_commit" HEAD -- "$path"; then drifted="$drifted $path"; fi
+    done
+    [ -z "$drifted" ] || fail "encoder-shipped paths changed since artifact source commit:$drifted"
+}
+
 resolve_environment() {
     local tool required_commands corpus_key corpus_file libvpx_root
     local expected_sha actual_sha expected_header actual_header
 
     work_dir="$(absolute_path "$work_dir")"
     opt_pgo_manifest="$(absolute_path "$opt_pgo_manifest")"
+    opt_artifact_manifest="$(absolute_path "$opt_artifact_manifest")"
     opt_source_dir="$(absolute_path "$opt_source_dir")"
     opt_libvpx_source="$(absolute_path "$opt_libvpx_source")"
     opt_test_encoder="$(absolute_path "$opt_test_encoder")"
@@ -2636,9 +2748,13 @@ resolve_environment() {
 
     require_executable "--test-encoder" "$test_encoder"
     require_executable "--vpxenc" "$vpxenc"
-    require_executable "--temporal-anchor" "$temporal_anchor"
+    if [ "$QUALIFICATION_PROFILE" = full ]; then
+        require_executable "--temporal-anchor" "$temporal_anchor"
+    fi
     require_executable "--bdrate" "$bdrate_bin"
-    require_executable "--bdrate-svc" "$bdrate_svc_bin"
+    if [ "$QUALIFICATION_PROFILE" = full ]; then
+        require_executable "--bdrate-svc" "$bdrate_svc_bin"
+    fi
     require_executable "--encode-headtohead" "$headtohead_bin"
     require_executable "--realtime" "$realtime_bin"
     require_executable "--rvp9dec" "$rvp9dec"
@@ -2649,8 +2765,12 @@ resolve_environment() {
     require_executable "--ffmpeg" "$ffmpeg_bin"
     require_help_flag "--bdrate" "$bdrate_bin" "--work-dir"
     require_help_flag "--bdrate" "$bdrate_bin" "--reference-input"
-    require_help_flag "--bdrate-svc" "$bdrate_svc_bin" "--work-dir"
-    require_help_flag "--bdrate-svc" "$bdrate_svc_bin" "--svc-kind"
+    if [ "$QUALIFICATION_PROFILE" = full ]; then
+        require_help_flag "--bdrate-svc" "$bdrate_svc_bin" "--work-dir"
+    fi
+    if [ "$QUALIFICATION_PROFILE" = full ]; then
+        require_help_flag "--bdrate-svc" "$bdrate_svc_bin" "--svc-kind"
+    fi
 
     # The timing runners are probed for the exact flags this script depends on.
     # A stale encode-headtohead without --max-load1 would silently measure an
@@ -2666,7 +2786,11 @@ resolve_environment() {
     require_help_flag "--realtime" "$realtime_bin" "--budget-ms"
     require_help_flag "--realtime" "$realtime_bin" "--temporal-layers"
 
-    validate_pgo_manifest
+    if [ -n "$opt_artifact_manifest" ]; then
+        validate_artifact_manifest
+    else
+        validate_pgo_manifest
+    fi
 
     # The pinned checkout must be a standalone repository at the exact
     # revision. Without the containment check an uninitialized submodule
@@ -2884,24 +3008,38 @@ write_manifest_header() {
 
     # The PGO provenance chain: which manifest, which source commit, and the
     # proof that no encoder-shipped path moved since.
-    manifest_kv pgo_manifest_path "$pgo_manifest"
-    manifest_kv pgo_manifest_sha256 "$pgo_manifest_sha256"
-    manifest_kv pgo_source_commit "$pgo_source_commit"
-    manifest_kv pgo_optimized_binary "$pgo_optimized_binary"
-    manifest_kv pgo_optimized_binary_sha256 "$pgo_optimized_binary_sha256"
-    manifest_kv pgo_optimized_binary_is_test_encoder "yes"
-    manifest_kv pgo_guarded_paths "$(printf '%s' "$PGO_GUARDED_PATHS" | tr -s ' \n' ';')"
-    manifest_kv pgo_guarded_paths_unchanged_since_source_commit "yes"
+    if [ -n "$opt_artifact_manifest" ]; then
+        manifest_kv artifact_manifest_path "$opt_artifact_manifest"
+        manifest_kv artifact_manifest_sha256 "$pgo_manifest_sha256"
+        manifest_kv artifact_source_commit "$pgo_source_commit"
+        manifest_kv artifact_binary "$pgo_optimized_binary"
+        manifest_kv artifact_binary_sha256 "$pgo_optimized_binary_sha256"
+        manifest_kv artifact_build_kind portable-release
+        manifest_kv artifact_guarded_paths_unchanged_since_source_commit yes
+    else
+        manifest_kv pgo_manifest_path "$pgo_manifest"
+        manifest_kv pgo_manifest_sha256 "$pgo_manifest_sha256"
+        manifest_kv pgo_source_commit "$pgo_source_commit"
+        manifest_kv pgo_optimized_binary "$pgo_optimized_binary"
+        manifest_kv pgo_optimized_binary_sha256 "$pgo_optimized_binary_sha256"
+        manifest_kv pgo_optimized_binary_is_test_encoder "yes"
+        manifest_kv pgo_guarded_paths "$(printf '%s' "$PGO_GUARDED_PATHS" | tr -s ' \n' ';')"
+        manifest_kv pgo_guarded_paths_unchanged_since_source_commit "yes"
+    fi
 
     manifest_artifact qualification_script \
         "$repo_root/scripts/qualify-production-encoder.sh"
     manifest_artifact test_encoder "$test_encoder"
     manifest_artifact vpxenc "$vpxenc"
-    manifest_artifact temporal_anchor "$temporal_anchor"
+    if [ "$QUALIFICATION_PROFILE" = full ]; then
+        manifest_artifact temporal_anchor "$temporal_anchor"
+    fi
     manifest_artifact libvpx_config_h "$libvpx_config_h"
     manifest_artifact libvpx_config_mk "$libvpx_config_mk"
     manifest_artifact bdrate "$bdrate_bin"
-    manifest_artifact bdrate_svc "$bdrate_svc_bin"
+    if [ "$QUALIFICATION_PROFILE" = full ]; then
+        manifest_artifact bdrate_svc "$bdrate_svc_bin"
+    fi
     manifest_artifact encode_headtohead "$headtohead_bin"
     manifest_artifact realtime "$realtime_bin"
     manifest_artifact rvp9dec "$rvp9dec"
@@ -3024,8 +3162,13 @@ run_fingerprint_payload() {
     printf 'host=%s\n' "$(uname -a)"
     printf 'plan_sha256=%s\n' "$(print_plan | shasum -a 256 | awk '{ print $1 }')"
     printf 'noise_filter=%s\n' "$NOISE_FILTER"
-    printf 'pgo_manifest=%s|%s\n' "$pgo_manifest" "$pgo_manifest_sha256"
-    printf 'pgo_source_commit=%s\n' "$pgo_source_commit"
+    if [ -n "$opt_artifact_manifest" ]; then
+        printf 'artifact_manifest=%s|%s\n' "$opt_artifact_manifest" "$pgo_manifest_sha256"
+        printf 'artifact_source_commit=%s\n' "$pgo_source_commit"
+    else
+        printf 'pgo_manifest=%s|%s\n' "$pgo_manifest" "$pgo_manifest_sha256"
+        printf 'pgo_source_commit=%s\n' "$pgo_source_commit"
+    fi
     printf 'libvpx_revision=%s\n' "$libvpx_revision"
 
     for path in \
@@ -3036,6 +3179,8 @@ run_fingerprint_payload() {
         "$rvp9dec" "$vpxdec" \
         "$ffmpeg_bin"
     do
+        if [ "$QUALIFICATION_PROFILE" = beta-cbr ] &&
+            { [ "$path" = "$temporal_anchor" ] || [ "$path" = "$bdrate_svc_bin" ]; }; then continue; fi
         printf 'artifact=%s|%s\n' "$path" "$(sha256_file "$path")"
     done
 
@@ -5601,6 +5746,42 @@ timing_self_test() {
 # Entry point
 # ---------------------------------------------------------------------------
 
+beta_self_test() {
+    local plan target
+    selftest_failures=0
+    plan="$(print_plan)"
+    expect_equal "beta profile identity" "$MATRIX_NAME" beta-cbr
+    expect_equal "beta config rows" "$(emit_configs | wc -l | tr -d ' ')" 3
+    expect_equal "beta exact configs" "$(emit_configs)" "$(printf 'aq3|cbr|6|3|0|1\naq3|cbr|7|3|0|1\naq3|cbr|8|3|0|1')"
+    expect_equal "beta curves" "$(totals_field "$plan" quality_curves)" 27
+    expect_equal "beta streams" "$(totals_field "$plan" candidate_streams)" 162
+    expect_equal "beta decoder runs" "$(totals_field "$plan" decoder_runs)" 486
+    expect_equal "beta groups" "$(totals_field "$plan" speed_groups)" 9
+    expect_equal "beta latency rows" "$(totals_field "$plan" latency_rows)" 27
+    expect_equal "beta latency measurements" "$(totals_field "$plan" latency_measured_runs)" 135
+    expect_equal "beta AQ oracle" "$(totals_field "$plan" required_oracles)" 1
+    for target in $TARGETS; do
+        expect_equal "beta $target three clips" "$(target_clips "$target")" 'in_to_tree ducks_take_off old_town_cross'
+        expect_equal "beta $target quality rows" "$(count_by_field "$plan" quality 4 "$target")" 9
+        expect_equal "beta $target aggregate groups" "$(count_by_field "$plan" quality_aggregate 4 "$target")" 3
+        expect_equal "beta $target latency rows" "$(count_by_field "$plan" latency 4 "$target")" 9
+    done
+    expect_equal "beta 30fps latency spec" "$(target_spec 1080p30)" '30|1920|1080|4|2|2835|33|50'
+    expect_equal "beta 720p latency spec" "$(target_spec 720p30)" '30|1280|720|1|0|1260|33|50'
+    expect_equal "beta 60fps latency spec" "$(target_spec 1080p60)" '60|1920|1080|8|3|5670|16|25'
+    expect_equal "beta aggregate ceiling" "$(quality_aggregate_bdrate_limit aq3 cbr)" 0.5
+    expect_equal "beta clip ceiling" "$(quality_clip_bdrate_limit aq3 cbr)" 2.0
+    expect_equal "beta speed/load ceilings" "$MAX_RATIO/$MAX_LOAD1" '1.05/0.75'
+    expect_equal "beta max frame ceiling" "$AQ_MAX_FRAME_MS" 66
+    expect_equal "beta artifact accepted" "$(parse_args_error --phase quality --work-dir /w --artifact-manifest /m --test-encoder /e --rvp9dec /d)" accepted
+    expect_equal "beta manifests exclusive" "$(parse_args_error --phase quality --work-dir /w --artifact-manifest /m --test-encoder /e --pgo-manifest /p)" 'choose exactly one of --pgo-manifest and --artifact-manifest'
+    expect_equal "beta explicit encoder required" "$(parse_args_error --phase quality --work-dir /w --artifact-manifest /m)" '--artifact-manifest requires explicit --test-encoder'
+    expect_equal "beta explicit decoder required" "$(parse_args_error --phase quality --work-dir /w --artifact-manifest /m --test-encoder /e)" '--artifact-manifest requires explicit --rvp9dec'
+    expect_equal "beta prepared inputs" "$EXPECTED_PREPARED_INPUTS" 18
+    [ "$selftest_failures" -eq 0 ] || fail "beta self-test: $selftest_failures failures"
+    printf 'beta-cbr self-test passed\n'
+}
+
 main() {
     case "${1-}" in
         --help|-h)
@@ -5614,16 +5795,18 @@ main() {
             ;;
         --self-test)
             [ "$#" -eq 1 ] || fail "--self-test must be the only argument"
-            self_test
+            if [ "$QUALIFICATION_PROFILE" = beta-cbr ]; then beta_self_test; else self_test; fi
             return 0
             ;;
         --self-test-resume)
             [ "$#" -eq 1 ] || fail "--self-test-resume must be the only argument"
+            [ "$QUALIFICATION_PROFILE" = full ] || fail "--self-test-resume requires --profile full; use beta-cbr --self-test and scripts/test-beta-profile.sh"
             resume_self_test
             return 0
             ;;
         --self-test-timing)
             [ "$#" -eq 1 ] || fail "--self-test-timing must be the only argument"
+            [ "$QUALIFICATION_PROFILE" = full ] || fail "--self-test-timing requires --profile full; use beta-cbr --self-test and scripts/test-beta-profile.sh"
             timing_self_test
             return 0
             ;;
@@ -5672,4 +5855,12 @@ main() {
         "$phase" "$manifest"
 }
 
-main "$@"
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    # Preserve argument boundaries, including paths containing spaces.
+    profile_entry_args=()
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = --profile ]; then shift 2;
+        else profile_entry_args+=("$1"); shift; fi
+    done
+    main ${profile_entry_args[@]+"${profile_entry_args[@]}"}
+fi

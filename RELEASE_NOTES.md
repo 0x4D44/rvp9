@@ -1,3 +1,37 @@
+# RVP9 v0.2.0-beta.1 candidate
+
+Qualification is in progress. This candidate has not been published.
+
+The beta targets native macOS Apple Silicon and Windows x86-64. Its bounded
+encoder surface is 8-bit profile-0 I420, one-pass realtime CBR, CPU-used 6–8,
+cyclic-refresh AQ3, denoising off and one temporal/spatial layer. The qualified
+configurations cover 720p30 with one thread, 1080p30 with four threads and
+1080p60 with eight threads, at the recorded bitrate grids.
+
+VBR, AQ0, denoising and temporal/spatial SVC remain experimental. Frame
+dropping, an external rate-control plug-in interface, high bit depth, slow
+presets, altref and two-pass encoding are outside this beta. This is not a
+stable production-parity or general libwebrtc integration release.
+
+The qualification corpus contains Tree, Ducks and Old Town, all originating at
+720p50; scaling/frame-rate conversion supplies derived 1080p/60fps workloads.
+These scenes do not establish broad conferencing, screen-sharing or livestream
+coverage. The long-duration billion-iteration fuzz and 72-hour soak remain
+explicitly deferred.
+
+Since alpha.4, the code includes fixes for malformed-container handling,
+SIMD footprint validation and convolution reads, scalar dispatch on Arm,
+Miri transform compilation, BD-rate numerical accuracy, qualification evidence
+validation, package contents and public API documentation. Fix closure does
+not replace current-candidate qualification.
+
+Portable CLI archives will include their exact source/toolchain metadata,
+executable hashes and legal notices. Native PGO measurements do not qualify
+these plain portable artifacts. The acceptance contract is
+[recorded in the repository](<wrk_docs/2026.10.21 - PLAN - beta 1 qualification.md>).
+
+---
+
 # RVP9 v0.2.0-alpha.4
 
 This fourth public evaluation build is an x86-64 encoder performance release.

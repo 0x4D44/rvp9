@@ -5,45 +5,39 @@ An open-source Rust implementation of the VP9 video codec, following the
 decoder. RVP9 targets production-grade real-time encoding for WebRTC and
 livestreaming.
 
-> **Status:** `v0.2.0-alpha.4` is an 8-bit real-time preview. It is ready for
-> evaluation, not a production-parity release. See [`PLAN.md`](./PLAN.md) for
-> the remaining work and [`notes/divergence-ledger.md`](./notes/divergence-ledger.md)
-> for deliberate departures from libvpx.
+> **Status:** `v0.2.0-beta.1` is being qualified. The published alpha remains an
+> evaluation build. No beta or stable production-parity claim applies until the
+> [beta acceptance contract](<wrk_docs/2026.10.21 - PLAN - beta 1 qualification.md>)
+> has passed on the actual release artifacts.
+>
+> **Beta candidate scope:** native macOS Apple Silicon and Windows x86-64;
+> 8-bit profile-0, single-stream realtime CBR at CPU-used 6–8, cyclic-refresh
+> AQ3, denoising off, and the specified 720p30/1080p30/1080p60 configurations.
+> The three test scenes originate at 720p50; higher-resolution and 60fps inputs
+> are derived workloads. This does not establish broad conferencing or
+> livestream coverage. See the contract for exact bitrates, threads and gates.
 
-> **Platform coverage:** Alpha.4 release qualification covers Windows x86-64.
-> Earlier releases were qualified on macOS Apple Silicon (AArch64); the full
-> macOS release matrix was not rerun for alpha.4. The current final-release
-> candidate (`fb5c0c91`) has fresh native conformance, 32-row encoder and
-> 24-row reverse-reference checks on both platforms. Windows conformance also
-> passed forced-scalar; macOS scalar dispatch remains unqualified. At exact
-> product source `fb5c0c91`, the locked macOS Apple Silicon workspace suite
-> passed 3,579 tests, failed none and ignored 64; the Windows workspace suite
-> remains unqualified. The candidate remains on hold: production quality,
-> speed, latency, full-corpus, complete safety and extracted-package tests
-> remain open. See
-> [`RELEASE_NOTES.md`](./RELEASE_NOTES.md) for alpha.4 and the
-> [current readiness report](<wrk_docs/2026.10.15 - STATUS - final release readiness.md>)
-> for candidate evidence and limits.
+## Available features and qualified scope
 
-## Alpha scope
-
-The alpha encoder supports one-pass real-time VP9 at CPU-used 6, 7, and 8,
+The encoder supports one-pass real-time VP9 at CPU-used 6, 7, and 8,
 with VBR or CBR rate control, cyclic-refresh AQ mode 3, denoising, two- or
 three-layer temporal SVC, and two- or three-layer spatial SVC. The
-production-quality acceptance surface is single-stream CBR, denoiser CBR,
-and spatial CBR, targeting 720p30, 1080p30, and 1080p60. Final candidate
-qualification remains pending. VBR and temporal SVC are experimental in
-v0.2.0. It emits 8-bit profile-0 IVF streams.
+longer-term production-quality acceptance surface includes single-stream,
+denoiser and spatial CBR. Beta qualification remains pending. Only
+single-stream CBR with AQ3 and
+denoising off is in the beta acceptance surface. VBR, AQ0, denoising and
+temporal/spatial SVC remain available but experimental for this beta. It emits
+8-bit profile-0 IVF streams.
 
 Historical alpha qualification passed all 4,816 displayed frames across all
 307 pinned official vectors with one- and two-thread decoding. Native x86
-qualification also exercised forced-scalar dispatch. On Apple Silicon the
-current scalar environment switch retains NEON, so scalar coverage remains
-unproved (`RVP9-BUG-FLU-00043`). These results do not qualify later source changes.
+qualification also exercised forced-scalar dispatch. Arm scalar routing was subsequently repaired and independently verified
+(`RVP9-BUG-FLU-00043`); fresh four-mode conformance remains part of beta
+qualification. Historical results do not qualify later source changes.
 
 Historical alpha qualification also decoded every stream in the 32-row encoder
 matrix byte-exactly under `rvp9dec`, pinned libvpx `vpxdec`, and ffmpeg.
-The final candidate has passed the current-source conformance, encoder and
+The earlier `fb5c0c91` candidate passed conformance, encoder and
 reverse-reference gates on both platforms. These commands reproduce those
 checks on a prepared local worktree with the pinned vectors, corpus and
 reference binaries:
@@ -63,8 +57,9 @@ relative-speed, and latency gates. Single-stream and denoiser CBR keep the
 `+0.5%` aggregate quality gate and `+2.0%` important-clip guard. The explicit
 experimental ceilings are `+15.0%` for single-stream/AQ/denoiser VBR, `+5.0%`
 for temporal CBR, `+35.0%` for temporal VBR, and `+25.0%` for spatial VBR.
-Spatial CBR remains on the strict production-quality path. This alpha does not
-claim final compression parity across the complete v1 matrix.
+Spatial CBR retains its strict future production-quality target. Experimental
+modes remain outside this beta's qualified surface. Neither this candidate nor
+the published alpha claims final parity across the complete v1 matrix.
 
 ## Project goals
 
@@ -124,8 +119,8 @@ rvp9/
 
 ## Quick start
 
-The documented corpus fetch is incomplete: it omits Foreman and returns HTTP
-404 for Parkrun (RVP9-BUG-FLU-00036). The [local qualification runbook's corpus
+The corpus fetch omits Foreman; the Parkrun source-name defect has been
+fixed (RVP9-BUG-FLU-00036). The [local qualification runbook's corpus
 instructions](wrk_docs/2026.10.15%20-%20RUN%20-%20local%20release%20qualification.md#pin-tools-and-fixtures)
 include the required Foreman hash and recovery steps.
 

@@ -1,0 +1,113 @@
+qualify-production-encoder timing self-test
+[speed  1/75] baseline-cbr-720p30-cpu6 (3 clips, vpxenc anchor, clean input)
+ok    a passing baseline speed group records PASS = PASS,none
+ok    a baseline speed group is anchored on pinned vpxenc = vpxenc//var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-qualify-timing.DyqLsG/bin/vpxenc
+ok    the rvp9 test arm is driven through the vpxenc surface = vpxenc//var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-qualify-timing.DyqLsG/bin/rvp9enc
+ok    the test arm is recorded at the PGO source commit = pgo-source-commit-stub
+ok    the anchor arm is recorded at the pinned libvpx revision = libvpx-rev-stub
+ok    a single-layer speed group omits --temporal-layers = no
+ok    a baseline speed group encodes the clean input = yes
+ok    a baseline speed group passes the whole 720p30 corpus = 3
+ok    every speed group states the host-load limit = 0.75
+ok    every speed group states the declared pairing = 1/5/2
+[speed  2/75] temporal_t2-vbr-1080p60-cpu8 (2 clips, temporal-svc anchor, clean input)
+ok    a T2 speed group is anchored on the pinned temporal adapter = temporal-svc//var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-qualify-timing.DyqLsG/bin/vpx_temporal_svc_reference
+ok    a T2 speed group passes two temporal layers = 2
+ok    a 1080p60 speed group passes the two-clip corpus = 2
+[speed  3/75] temporal_t3-cbr-720p30-cpu7 (3 clips, temporal-svc anchor, clean input)
+ok    a T3 speed group passes three temporal layers = 3
+[speed  4/75] denoiser-vbr-1080p30-cpu7 (3 clips, vpxenc anchor, noisy input)
+ok    a denoiser speed group encodes the noisy input on both arms = yes
+ok    a denoiser speed group never encodes the clean input = no
+ok    a denoiser speed group enables the denoiser = 1
+ok    a denoiser speed group omits --temporal-layers = no
+[speed  5/75] aq3-vbr-720p30-cpu7 (3 clips, vpxenc anchor, clean input)
+ok    an aq3 speed group passes AQ mode 3 = 3
+[speed  6/75] baseline-vbr-720p30-cpu6 (3 clips, vpxenc anchor, clean input)
+ok    a speed group at exactly 1.05x passes = PASS,none
+[speed  7/75] baseline-cbr-1080p30-cpu6 (3 clips, vpxenc anchor, clean input)
+  SPEED MISS baseline-cbr-1080p30-cpu6: separate 1.050001x, paired 1.000000x exceed 1.05x (over-ratio:separate)
+ok    a speed group just past 1.05x records a separate-ratio miss = FAIL,over-ratio:separate
+[speed  8/75] baseline-cbr-1080p60-cpu6 (2 clips, vpxenc anchor, clean input)
+  SPEED MISS baseline-cbr-1080p60-cpu6: separate 1.000000x, paired 1.050001x exceed 1.05x (over-ratio:paired)
+ok    a paired-ratio miss is recorded and named = FAIL,over-ratio:paired
+[speed  9/75] baseline-cbr-1080p30-cpu7 (3 clips, vpxenc anchor, clean input)
+  SPEED MISS baseline-cbr-1080p30-cpu7: separate 1.100000x, paired 1.200000x exceed 1.05x (over-ratio:separate+paired)
+ok    both ratios missing is named as both = over-ratio:separate+paired
+ok    the speed phase kept measuring past every miss = 9
+ok    three speed groups were recorded as misses = 3
+ok    every measured speed group is in the census = 9
+ok    a speed group with no summary.csv aborts = refused
+ok    a host-load refusal aborts and is named = refused
+ok    an unstable test-arm hash aborts = refused
+ok    an unstable anchor-arm hash aborts = refused
+ok    a refusal contradicting its own passing ratios aborts = refused
+ok    a success contradicting its own missing ratios aborts = refused
+[latency   1/200] baseline-cbr-720p30-in_to_tree-cpu6 (clean input, max frame budget none)
+ok    a passing latency row records PASS = PASS,none
+ok    the median is taken over the five measured runs, not all six = 11.000000,21.000000
+ok    a latency row runs one warmup and five measured runs = warmup,measured,measured,measured,measured,measured,
+ok    a single-layer latency row omits --temporal-layers = no
+ok    a baseline latency row encodes the clean input = /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-qualify-timing.DyqLsG/work/inputs/in_to_tree_720p30_clean.y4m
+ok    a latency row states both frame budgets = 33.333/50
+ok    every latency run is measured through the PGO encoder = /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-qualify-timing.DyqLsG/bin/rvp9enc
+ok    a non-AQ row records no max-frame budget = none
+ok    all six encodes hashed identically = 1
+[latency   2/200] temporal_t3-vbr-1080p60-old_town_cross-cpu8 (clean input, max frame budget none)
+ok    a T3 latency row passes three temporal layers = 3
+ok    a 1080p60 latency row states the 60fps budgets = 16.667/25
+[latency   3/200] denoiser-cbr-1080p30-ducks_take_off-cpu7 (noisy input, max frame budget none)
+ok    a denoiser latency row encodes the noisy input = /var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-qualify-timing.DyqLsG/work/inputs/ducks_take_off_1080p30_noisy.y4m
+ok    a denoiser latency row enables the denoiser = 1
+[latency   4/200] aq3-vbr-720p30-in_to_tree-cpu7 (clean input, max frame budget 66)
+ok    an AQ3 row at exactly 66 ms passes = 66.000000,66,PASS,none
+[latency   5/200] aq3-vbr-1080p30-in_to_tree-cpu7 (clean input, max frame budget 66)
+  LATENCY MISS aq3-vbr-1080p30-in_to_tree-cpu7: median p50 11.000000/33.333 ms, median p99 21.000000/50 ms, max frame 66.000001/66 ms (over-max-frame)
+ok    one measured frame past 66 ms fails the AQ3 row = 66.000001,FAIL,over-max-frame
+[latency   6/200] aq3-vbr-1080p60-old_town_cross-cpu7 (clean input, max frame budget 66)
+ok    a warmup spike does not gate an AQ3 row = 1.000000,PASS
+[latency   7/200] aq3-vbr-1080p30-ducks_take_off-cpu7 (clean input, max frame budget 66)
+  LATENCY MISS aq3-vbr-1080p30-ducks_take_off-cpu7: median p50 11.000000/33.333 ms, median p99 21.000000/50 ms, max frame 90.000000/66 ms (over-max-frame)
+ok    a single spiking run is not medianed away = 90.000000,FAIL,over-max-frame
+[latency   8/200] baseline-cbr-1080p30-in_to_tree-cpu8 (clean input, max frame budget none)
+ok    a non-AQ row records its max frame without gating on it = 90.000000,none,PASS
+[latency   9/200] baseline-vbr-720p30-ducks_take_off-cpu6 (clean input, max frame budget none)
+ok    a row sitting exactly on both budgets passes = PASS,none
+[latency  10/200] baseline-vbr-720p30-old_town_cross-cpu6 (clean input, max frame budget none)
+  LATENCY MISS baseline-vbr-720p30-old_town_cross-cpu6: median p50 33.334000/33.333 ms, median p99 50.000000/50 ms, max frame 1.000000/none ms (over-budget:p50)
+ok    a p50 median past budget records a p50 miss = FAIL,over-budget:p50
+[latency  11/200] baseline-vbr-1080p30-old_town_cross-cpu6 (clean input, max frame budget none)
+  LATENCY MISS baseline-vbr-1080p30-old_town_cross-cpu6: median p50 10.000000/33.333 ms, median p99 51.000000/50 ms, max frame 1.000000/none ms (over-budget:p99)
+ok    a p99 median past budget records a p99 miss = FAIL,over-budget:p99
+[latency  12/200] baseline-vbr-1080p60-old_town_cross-cpu6 (clean input, max frame budget none)
+  LATENCY MISS baseline-vbr-1080p60-old_town_cross-cpu6: median p50 40.000000/16.667 ms, median p99 51.000000/25 ms, max frame 1.000000/none ms (over-budget:p50+p99)
+ok    both budgets missed is named as both = over-budget:p50+p99
+ok    the latency phase kept measuring past every miss = 12
+ok    every latency row contributed five measured runs = 60
+ok    five latency rows were recorded as misses = 5
+ok    every measured latency row is in the census = 12
+ok    every latency run is in the raw census = 72
+ok    an encoder failure aborts the latency row = refused
+ok    an invalid-timing-CSV exit aborts the latency row = refused
+ok    unstable output across the six encodes aborts the row = refused
+ok    a missing per-frame timing CSV aborts the row = refused
+ok    an interrupted speed phase leaves one sealed group = interrupted
+ok    the interrupted speed phase retains exactly one completed batch = 1
+ok    the second speed group's partial attempt remains on disk = retained
+ok    speed resumes by reusing its sealed group and retrying the partial group = completed
+ok    resumed speed publishes both groups exactly once = 3
+ok    resumed speed preserves the failed attempt and writes a fresh retry = preserved
+ok    an interrupted latency phase leaves one sealed group = interrupted
+ok    the interrupted latency phase retains exactly one completed batch = 1
+ok    the interrupted latency group is preserved without a receipt = retained
+ok    latency resumes by reusing its sealed group and retrying the partial group = completed
+ok    resumed latency publishes all six rows exactly once = 7
+ok    resumed latency keeps five measured runs per row = 36
+ok    resumed latency preserves the failed attempt and writes a fresh retry = preserved
+ok    a load of exactly 0.75 is accepted = 0.750000
+ok    a load past 0.75 fails closed = refused
+ok    an unreadable load fails closed = refused
+ok    every timing self-test path stayed under its own temp root = 
+ok    the timing self-test did actually write into its temp root = wrote
+
+timing filesystem self-test passed

@@ -1,0 +1,16 @@
+PASS default full print-plan byte-for-byte unchanged
+RED matrix-count: detected (exit 1)
+
+RED artifact-encoder-hash: detected (exit 1)
+ok relative artifact path and exact SHA accepted
+FAIL: accepted wrong binary SHA
+RED artifact-decoder-hash: detected (exit 1)
+ok relative artifact path and exact SHA accepted
+FAIL: accepted wrong decoder SHA
+GREEN --self-test: passed
+GREEN scripts/test-beta-profile.sh: passed
+PASS explicit refusal: unknown --profile: invalid
+PASS explicit refusal: --profile may be passed only once
+PASS explicit refusal: --self-test-resume requires --profile full; use beta-cbr --self-test and scripts/test-beta-profile.sh
+PASS explicit refusal: --self-test-timing requires --profile full; use beta-cbr --self-test and scripts/test-beta-profile.sh
+PASS explicit refusal: --artifact-manifest requires --profile beta-cbr

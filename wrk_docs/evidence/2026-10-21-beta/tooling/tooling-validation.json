@@ -1,0 +1,13 @@
+{
+  "kind": "stub and invariant tests only; no codec or timing qualification",
+  "script_sha256": {
+    "scripts/qualify-production-encoder.sh": "79ee179d1acc8600fa5861ab6cb3d23b0c163fcb2308774d1d8d71c36e5d7cba",
+    "scripts/package-beta.sh": "6407d19ca3d36a8e9056a5cee90ccf9a456d43ff54f199c1fc328a9405dd86e7",
+    "scripts/test-beta-profile.sh": "993304f9a07c5c6495d50609c712c00b3d78f4ed40e21dfc6dbd0fa6524d2386"
+  },
+  "notes": [
+    "default full printed plan is byte-identical to prior HEAD",
+    "red/green observed for beta row count and encoder/decoder SHA guards",
+    "packager harness tested simulated macOS/Windows and refusals; lead replay passed"
+  ]
+}

@@ -1,0 +1,13 @@
+ok relative artifact path and exact SHA accepted
+ok rejected duplicate source commit
+ok rejected different decoder path
+ok rejected wrong decoder SHA
+ok rejected different binary path
+ok rejected wrong binary SHA
+ok rejected short SHA
+ok rejected moving source ref
+ok rejected unknown source commit
+ok rejected wrong build kind
+ok rejected binary changed after manifest
+ok rejected encoder source drift
+beta portable artifact checks passed
