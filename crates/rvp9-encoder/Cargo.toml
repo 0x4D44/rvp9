@@ -25,13 +25,13 @@ highbitdepth = ["rvp9-core/highbitdepth"]
 runtime-profiling = []
 
 [dependencies]
-rvp9-core = { version = "0.2.0-alpha.4", path = "../rvp9-core" }
+rvp9-core = { version = "0.2.0-beta.1", path = "../rvp9-core" }
 
 [dev-dependencies]
 # Used by unit and integration tests that round-trip encoder output through
 # the real decoder (no production-time dependency). The version survives
 # Cargo's registry-package normalization; the path selects the workspace crate.
-rvp9-decoder = { version = ">=0.2.0-alpha.4, <0.3.0", path = "../rvp9-decoder" }
+rvp9-decoder = { version = "=0.2.0-beta.1", path = "../rvp9-decoder" }
 # F12.0 — BD-rate computation pulled in by the `bdrate_gate`
 # integration test (gated `#[ignore]` so it doesn't run on every
 # `cargo test`).
