@@ -52,5 +52,11 @@
     "local_file": "quality-fixed-quality-completed-aq-oracle-summary.csv",
     "local_sha256": "4cd12cd697e66d828c6a89a9a38e9dccb151439e4f2c0342a074a961afc9889f",
     "transform": "none"
+  },
+  "quality-all324-rate-audit.json": {
+    "remote_original_sha256": "482ada0176ea1cc7493d41efa11b50fa1f21e0980fba13d3a4d17d38023dad1d",
+    "local_file": "quality-all324-rate-audit.json",
+    "local_sha256": "482ada0176ea1cc7493d41efa11b50fa1f21e0980fba13d3a4d17d38023dad1d",
+    "transform": "none"
   }
 }

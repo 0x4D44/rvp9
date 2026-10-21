@@ -1,0 +1,51 @@
+ROOTS
+C:\language
+
+FullName        
+--------        
+C:\language\rvp9
+
+
+D:\worktrees
+C:\worktrees
+
+FullName         
+--------         
+C:\worktrees\rvp9
+
+
+C:\language\rvp9
+origin	https://github.com/0x4D44/rvp9.git (fetch)
+origin	https://github.com/0x4D44/rvp9.git (push)
+fb5c0c917038db6c640b3dbc7c2b84b567233333
+C:/language/rvp9                                                              fb5c0c91 [main]
+C:/worktrees/rvp9/20261017-TSK-HUM@NMI-final-candidate-windows-qualification  fb5c0c91 [task/20261017-TSK-HUM@NMI-final-candidate-windows-qualification]
+fb5c0c917038db6c640b3dbc7c2b84b567233333
+
+Name       Source                                               
+----       ------                                               
+git.exe    C:\Program Files\Git\cmd\git.exe                     
+cargo.exe  c:\users\ano\.cargo\bin\cargo.exe                    
+rustc.exe  c:\users\ano\.cargo\bin\rustc.exe                    
+deltic.exe C:\Users\ano\AppData\Local\Programs\Deltic\deltic.exe
+ffmpeg.exe C:\ProgramData\chocolatey\bin\ffmpeg.exe             
+
+
+True
+rustc 1.98.1 (48a229cea 2026-09-01)
+binary: rustc
+commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+commit-date: 2026-09-01
+host: x86_64-pc-windows-msvc
+release: 1.98.1
+LLVM version: 22.1.8
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1792553232,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_process_names": [],
+  "heavy_processes_low_priority": 23,
+  "own_measurements": 0
+}

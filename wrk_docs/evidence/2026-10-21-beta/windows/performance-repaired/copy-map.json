@@ -1,0 +1,86 @@
+{
+  "performance-quiet-start.log": {
+    "remote_original_sha256": "133fdcb3e817d32317777611c96c79c2cfd108b9aa04dfb47c60477a17ac85b6",
+    "local_file": "performance-quiet-start.raw.txt",
+    "local_sha256": "90cc2c569246aeca6e9c18191c41b086e8ad80197ea857c2e76ea8ab001e1a87",
+    "transform": "UTF-16LE to UTF-8, CRLF to LF"
+  },
+  "performance-preflight-load.json": {
+    "remote_original_sha256": "c33ecbe6f9b5e1284f2dc692fa3a01a624558ddc39c31c63ee3e2ad8239b74eb",
+    "local_file": "performance-preflight-load.json",
+    "local_sha256": "c33ecbe6f9b5e1284f2dc692fa3a01a624558ddc39c31c63ee3e2ad8239b74eb",
+    "transform": "none"
+  },
+  "quality-fixed-identity.json": {
+    "remote_original_sha256": "c0d5b361bee032fd341b43e2e39f5208b9fe729683383ebe7d7bfb47047ef10b",
+    "local_file": "quality-fixed-identity.json",
+    "local_sha256": "c0d5b361bee032fd341b43e2e39f5208b9fe729683383ebe7d7bfb47047ef10b",
+    "transform": "none"
+  },
+  "extracted-artifact-identity.json": {
+    "remote_original_sha256": "7fa431c5a0ae00069e5bd7eb52fa894d3534be23753168327fe27ea870328b30",
+    "local_file": "extracted-artifact-identity.json",
+    "local_sha256": "7fa431c5a0ae00069e5bd7eb52fa894d3534be23753168327fe27ea870328b30",
+    "transform": "none"
+  },
+  "performance-retry2-quiet.log": {
+    "remote_original_sha256": "2f31b3972cd356db74b513802f3eef52a4307eccc50e0b08a7ae86d32b0339c7",
+    "local_file": "performance-retry2-quiet.raw.txt",
+    "local_sha256": "34ba61f2e4ec0910480afcc07d58adcdec919b03044c950b61d3e0bcc6872d57",
+    "transform": "UTF-16LE to UTF-8, CRLF to LF"
+  },
+  "performance-retry2-load.json": {
+    "remote_original_sha256": "dea24b5f56fd5ac6f30e28ea870510c6f2b382c5556e3768f0d23abe9553ec6a",
+    "local_file": "performance-retry2-load.json",
+    "local_sha256": "dea24b5f56fd5ac6f30e28ea870510c6f2b382c5556e3768f0d23abe9553ec6a",
+    "transform": "none"
+  },
+  "performance-retry3-quiet.log": {
+    "remote_original_sha256": "cdc7d774ff370bf5ac3931db55b82fb7555151281faac85ba16396834bcb1dfd",
+    "local_file": "performance-retry3-quiet.raw.txt",
+    "local_sha256": "ae1fc80a32306f1de9e33b6c844e4d9df0b32745d5a7fc2d86057c4eb14728eb",
+    "transform": "UTF-16LE to UTF-8, CRLF to LF"
+  },
+  "performance-retry3-drain.json": {
+    "remote_original_sha256": "27f125306f790cc75a433e6bf9fd2ab85fd6d913d7866cbd89fd9cbae6455cf2",
+    "local_file": "performance-retry3-drain.json",
+    "local_sha256": "27f125306f790cc75a433e6bf9fd2ab85fd6d913d7866cbd89fd9cbae6455cf2",
+    "transform": "none"
+  },
+  "performance-retry3-load.json": {
+    "remote_original_sha256": "d7d6fd8337729a60a1c947dc09e29b482c34c49fafbf47b0c2d58d1c0110bc28",
+    "local_file": "performance-retry3-load.json",
+    "local_sha256": "d7d6fd8337729a60a1c947dc09e29b482c34c49fafbf47b0c2d58d1c0110bc28",
+    "transform": "none"
+  },
+  "performance-retry4-quiet.log": {
+    "remote_original_sha256": "be30ff576a3426973077b3ad513daa0adf22995dc74308092eb031fb08988a9d",
+    "local_file": "performance-retry4-quiet.raw.txt",
+    "local_sha256": "68778c1cf70e5a6492cc07910c2e99989527a6c5a43d586f3f084d379931db02",
+    "transform": "UTF-16LE to UTF-8, CRLF to LF"
+  },
+  "performance-retry4-drain.json": {
+    "remote_original_sha256": "12b2b4a1ddc919910e571b9bbf8a299cad4faa967aa352a819cfb1f8748d246e",
+    "local_file": "performance-retry4-drain.json",
+    "local_sha256": "12b2b4a1ddc919910e571b9bbf8a299cad4faa967aa352a819cfb1f8748d246e",
+    "transform": "none"
+  },
+  "performance-retry4-load.json": {
+    "remote_original_sha256": "df415a162ee70ab2f0479c52691190c6c2a14a9b8750728a05ce4028f9d81916",
+    "local_file": "performance-retry4-load.json",
+    "local_sha256": "df415a162ee70ab2f0479c52691190c6c2a14a9b8750728a05ce4028f9d81916",
+    "transform": "none"
+  },
+  "performance-evening-quiet.log": {
+    "remote_original_sha256": "6d98711cee5ea43fc8ac370372828a62aa53ad8f0e86f04caa0a58ff594c84d6",
+    "local_file": "performance-evening-quiet.raw.txt",
+    "local_sha256": "08108e5a4fa3741bdda1fc0b2612f8d22fb8df0ddb82a486ba90615b146f1c28",
+    "transform": "UTF-16LE to UTF-8, CRLF to LF"
+  },
+  "performance-evening-load.json": {
+    "remote_original_sha256": "8ea10629986a5d57dc65aeea3100e57044be1233a0e8435031e43aa5c64062f7",
+    "local_file": "performance-evening-load.json",
+    "local_sha256": "8ea10629986a5d57dc65aeea3100e57044be1233a0e8435031e43aa5c64062f7",
+    "transform": "none"
+  }
+}

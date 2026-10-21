@@ -1,0 +1,13 @@
+{
+  "status": "HOST_LOAD_REFUSED_BEFORE_TIMING",
+  "busy_logical_cores": 1.10981947681982,
+  "maximum": 0.75,
+  "quiet_released": true,
+  "speed_groups_started": 0,
+  "latency_groups_started": 0,
+  "retry2_busy_logical_cores": 10.3218509436181,
+  "retry2_quiet_released": true,
+  "retry3_busy_logical_cores": 1.54752187523718,
+  "retry3_quiet_released": true,
+  "retry3_bounded_drain_minutes": 3
+}

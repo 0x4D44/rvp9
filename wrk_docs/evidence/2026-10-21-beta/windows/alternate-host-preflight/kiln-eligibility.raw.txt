@@ -1,0 +1,35 @@
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1790624290,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_process_names": [],
+  "heavy_processes_low_priority": 0,
+  "own_measurements": 0
+}
+{
+    "samples":  [
+                    29.583894341496297,
+                    35.908535642447873,
+                    28.753896178366944,
+                    29.859535022125204,
+                    35.714606163889307,
+                    37.908379074978818,
+                    32.675914965758388,
+                    31.465102477943919,
+                    32.90020686745472,
+                    33.886013613549181,
+                    33.666481262740533,
+                    46.548315721640307
+                ],
+    "pass":  false,
+    "busy_logical_cores":  8.17741762664783,
+    "metric":  "windows_60s_mean_busy_logical_cores",
+    "logical_cores":  24,
+    "timing_evidence":  false,
+    "host":  "KILN",
+    "limit":  0.75,
+    "mean_percent":  34.072573444365958,
+    "sample_count":  12
+}

@@ -1,0 +1,20 @@
+Preparing acceptance inputs in /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/in_to_tree_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/in_to_tree_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/ducks_take_off_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/ducks_take_off_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/old_town_cross_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/old_town_cross_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/in_to_tree_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/in_to_tree_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/ducks_take_off_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/ducks_take_off_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/old_town_cross_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/old_town_cross_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/in_to_tree_1080p60_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/in_to_tree_1080p60_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/ducks_take_off_1080p60_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/ducks_take_off_1080p60_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/old_town_cross_1080p60_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/speed-final/inputs/old_town_cross_1080p60_noisy.y4m
+host one-minute load 47.63 exceeds 0.75 at 'speed-start-20261021T080337Z-7796'; a timing measurement on a loaded host is not evidence

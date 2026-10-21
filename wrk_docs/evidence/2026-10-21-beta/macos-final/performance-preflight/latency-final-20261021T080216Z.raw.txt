@@ -1,0 +1,1 @@
+--bdrate is stale or incompatible; --help does not advertise --reference-input: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/bdrate

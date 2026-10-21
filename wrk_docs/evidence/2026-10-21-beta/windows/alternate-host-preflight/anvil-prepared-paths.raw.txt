@@ -1,0 +1,9 @@
+origin	https://github.com/0x4D44/rvp9.git (fetch)
+origin	https://github.com/0x4D44/rvp9.git (push)
+62c7e13a1e26effa04874141cb43263d05e80221
+D:/language/rvp9-postfix-main  62c7e13a [main]
+RUST195
+
+1.95.0-x86_64-pc-windows-msvc
+
+

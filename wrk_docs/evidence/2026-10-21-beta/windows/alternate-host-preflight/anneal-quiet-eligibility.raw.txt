@@ -1,0 +1,42 @@
+quiet window granted until 09:39 (local) for "RVP9 beta timing eligibility on alternate host".
+New heavy builds and other sessions' measurements are refused while it is live; the holder may launch measurements.
+When it ends the box stays open for max(10 min, 2 x time held) before the next grant; end early with `deltic quiet end`.
+Wait for the heavy workload count to reach zero before measuring.
+0 heavy workload processes still running.
+2 more heavy workload processes run at low priority (not counted).
+quiet_exit=0
+drain time=2026-10-21T09:19:06.7845656+01:00 heavy=0 low=2
+drain time=2026-10-21T09:19:21.8182940+01:00 heavy=0 low=2
+drain time=2026-10-21T09:19:36.8652156+01:00 heavy=0 low=2
+drain time=2026-10-21T09:19:51.9107603+01:00 heavy=0 low=2
+drain time=2026-10-21T09:20:06.9512573+01:00 heavy=0 low=4
+drain time=2026-10-21T09:20:22.0004282+01:00 heavy=0 low=4
+drain time=2026-10-21T09:20:37.0379641+01:00 heavy=0 low=4
+drain time=2026-10-21T09:20:52.0841490+01:00 heavy=0 low=4
+drain time=2026-10-21T09:21:07.1308071+01:00 heavy=0 low=4
+drain time=2026-10-21T09:21:22.1643930+01:00 heavy=0 low=4
+drain time=2026-10-21T09:21:37.2091721+01:00 heavy=0 low=4
+drain time=2026-10-21T09:21:52.2373688+01:00 heavy=0 low=4
+{
+    "timing_evidence":  false,
+    "host":  "ANNEAL-quiet",
+    "pass":  false,
+    "samples":  [
+                    14.675450195660334,
+                    5.4316626469374523,
+                    100,
+                    100,
+                    60.427328844477344,
+                    15.069204349787169,
+                    11.994598146419266,
+                    4.3925097407031988,
+                    13.159089939271285,
+                    7.7351678815881453,
+                    13.411071802534003,
+                    1.7263619781134887
+                ],
+    "limit":  0.75,
+    "busy_logical_cores":  6.9604489105098342
+}
+quiet window ended; the next grant is no earlier than 09:33 (local).
+quiet_probe_exit=75

@@ -1,0 +1,19 @@
+{
+  "as_of_utc": "2026-10-21T20:02:30Z",
+  "status": "HOST_LOAD_REFUSED_BEFORE_TIMING",
+  "load_observations": [
+    32.43,
+    31.98,
+    37.53,
+    39.03,
+    36.87,
+    36.35,
+    33.04
+  ],
+  "maximum": 0.75,
+  "quiet_released": true,
+  "speed_groups_started": 0,
+  "latency_groups_started": 0,
+  "source_for_prepared_speed_resume": "ae592b41c31dee4288ce17435170390c8b00f1f4",
+  "prior_latency_probe_failure": "Cause unconfirmed; direct capability reprobe exits0 with requiredflag. No latency result is claimed."
+}

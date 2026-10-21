@@ -1,0 +1,31 @@
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1792553232,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_process_names": [],
+  "heavy_processes_low_priority": 29,
+  "own_measurements": 0
+}
+{
+    "timing_evidence":  false,
+    "host":  "NMI-repeat",
+    "pass":  false,
+    "samples":  [
+                    90.155098130342665,
+                    83.415080804500164,
+                    84.746279138528664,
+                    73.929496374044263,
+                    74.49333910702353,
+                    90.523176062569476,
+                    87.2291325667824,
+                    79.360783470277511,
+                    76.6823043945988,
+                    71.489115971998658,
+                    80.619417396806028,
+                    78.2309262799516
+                ],
+    "limit":  0.75,
+    "busy_logical_cores":  22.653730159606557
+}

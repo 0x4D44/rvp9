@@ -1,0 +1,10 @@
+Usage: bdrate --anchor-encoder PATH --test-encoder PATH --decoder PATH \
+  --input INPUT.y4m [--reference-input CLEAN.y4m] [options]
+
+Options:
+--cpu-used N --bitrates LIST --end-usage cbr|vbr --fps NUM/DEN
+--threads N --tile-columns N --lag-in-frames N --tune-content NAME
+--aq-mode N --noise-sensitivity N --limit N
+--anchor-arg ARG --test-arg ARG
+--work-dir PATH   retain deterministic anchor/test IVF and decoded Y4M files
+--csv PATH        write machine-readable measurements

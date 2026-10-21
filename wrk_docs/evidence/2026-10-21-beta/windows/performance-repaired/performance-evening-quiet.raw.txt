@@ -1,0 +1,5 @@
+quiet window granted until 21:20 (local) for "RVP9 beta evening timing qualification".
+New heavy builds and other sessions' measurements are refused while it is live; the holder may launch measurements.
+When it ends the box stays open for max(10 min, 2 x time held) before the next grant; end early with `deltic quiet end`.
+Wait for the heavy workload count to reach zero before measuring.
+0 heavy workload processes still running.

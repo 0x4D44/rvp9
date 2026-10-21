@@ -1,0 +1,11 @@
+C:\language
+C:\worktrees
+
+Name       Source                                                 
+----       ------                                                 
+git.exe    C:\Program Files\Git\cmd\git.exe                       
+cargo.exe  C:\Users\marti\.cargo\bin\cargo.exe                    
+rustc.exe  C:\Users\marti\.cargo\bin\rustc.exe                    
+deltic.exe C:\Users\marti\AppData\Local\Programs\Deltic\deltic.exe
+
+

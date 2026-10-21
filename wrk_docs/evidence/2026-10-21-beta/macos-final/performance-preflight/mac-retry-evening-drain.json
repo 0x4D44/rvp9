@@ -1,0 +1,142 @@
+[
+  {
+    "observed_utc": "2026-10-21T20:00:24.376873+00:00",
+    "quiet": {
+      "live": true,
+      "holder": {
+        "reason": "RVP9 beta Mac strict timing eligibility retry",
+        "granted_at": 1792612804,
+        "expires_at": 1792614004
+      },
+      "open_after": 1792578861,
+      "queue": [],
+      "heavy_processes": 0,
+      "heavy_process_names": [],
+      "heavy_processes_low_priority": 17,
+      "own_measurements": 0
+    },
+    "load": 32.43,
+    "maximum": 0.75,
+    "eligible": false
+  },
+  {
+    "observed_utc": "2026-10-21T20:00:44.514745+00:00",
+    "quiet": {
+      "live": true,
+      "holder": {
+        "reason": "RVP9 beta Mac strict timing eligibility retry",
+        "granted_at": 1792612804,
+        "expires_at": 1792614004
+      },
+      "open_after": 1792578861,
+      "queue": [],
+      "heavy_processes": 0,
+      "heavy_process_names": [],
+      "heavy_processes_low_priority": 24,
+      "own_measurements": 0
+    },
+    "load": 31.98,
+    "maximum": 0.75,
+    "eligible": false
+  },
+  {
+    "observed_utc": "2026-10-21T20:01:04.554748+00:00",
+    "quiet": {
+      "live": true,
+      "holder": {
+        "reason": "RVP9 beta Mac strict timing eligibility retry",
+        "granted_at": 1792612804,
+        "expires_at": 1792614004
+      },
+      "open_after": 1792578861,
+      "queue": [],
+      "heavy_processes": 0,
+      "heavy_process_names": [],
+      "heavy_processes_low_priority": 19,
+      "own_measurements": 0
+    },
+    "load": 37.53,
+    "maximum": 0.75,
+    "eligible": false
+  },
+  {
+    "observed_utc": "2026-10-21T20:01:24.769377+00:00",
+    "quiet": {
+      "live": true,
+      "holder": {
+        "reason": "RVP9 beta Mac strict timing eligibility retry",
+        "granted_at": 1792612804,
+        "expires_at": 1792614004
+      },
+      "open_after": 1792578861,
+      "queue": [],
+      "heavy_processes": 0,
+      "heavy_process_names": [],
+      "heavy_processes_low_priority": 19,
+      "own_measurements": 0
+    },
+    "load": 39.03,
+    "maximum": 0.75,
+    "eligible": false
+  },
+  {
+    "observed_utc": "2026-10-21T20:01:44.891316+00:00",
+    "quiet": {
+      "live": true,
+      "holder": {
+        "reason": "RVP9 beta Mac strict timing eligibility retry",
+        "granted_at": 1792612804,
+        "expires_at": 1792614004
+      },
+      "open_after": 1792578861,
+      "queue": [],
+      "heavy_processes": 0,
+      "heavy_process_names": [],
+      "heavy_processes_low_priority": 17,
+      "own_measurements": 0
+    },
+    "load": 36.87,
+    "maximum": 0.75,
+    "eligible": false
+  },
+  {
+    "observed_utc": "2026-10-21T20:02:05.037602+00:00",
+    "quiet": {
+      "live": true,
+      "holder": {
+        "reason": "RVP9 beta Mac strict timing eligibility retry",
+        "granted_at": 1792612804,
+        "expires_at": 1792614004
+      },
+      "open_after": 1792578861,
+      "queue": [],
+      "heavy_processes": 0,
+      "heavy_process_names": [],
+      "heavy_processes_low_priority": 12,
+      "own_measurements": 0
+    },
+    "load": 36.35,
+    "maximum": 0.75,
+    "eligible": false
+  },
+  {
+    "observed_utc": "2026-10-21T20:02:25.575995+00:00",
+    "quiet": {
+      "live": true,
+      "holder": {
+        "reason": "RVP9 beta Mac strict timing eligibility retry",
+        "granted_at": 1792612804,
+        "expires_at": 1792614004
+      },
+      "open_after": 1792578861,
+      "queue": [],
+      "heavy_processes": 0,
+      "heavy_process_names": [],
+      "heavy_processes_low_priority": 14,
+      "own_measurements": 0
+    },
+    "load": 33.04,
+    "maximum": 0.75,
+    "eligible": false
+  }
+]

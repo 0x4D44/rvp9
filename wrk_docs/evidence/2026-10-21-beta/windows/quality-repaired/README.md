@@ -5,3 +5,5 @@ Fresh unchanged beta-CBR profile execution at source `a0b538c7` containing integ
 This is a fresh 27-curve campaign, including all three clips at all three targets and CPU6/7/8. No invalid pre-fix quality rows were resumed. The repaired release helper was built before this run. Quality passed with exit 0: all 27 curves/clip checks and nine aggregate layer gates passed; 162 candidate streams completed 486 decoder runs, and the AQ oracle passed with activation evidence. No rows were reused.
 
 Registered output root: `C:\Users\marti\AppData\Local\Temp\deltic-scratch\bug58-windows-verify-3b31d84b\quality-fixed`. Every candidate stream is cross-decoded by actual staged rvp9dec, pinned vpxdec and ffmpeg under the checked-in contract. Independent native rate verification and old-duration assertion proof reside in sibling `bug58-verification/`.
+
+Additional independent audit checked every one of the 324 actual role streams (27 curves × six points × two roles): packet count 60, target FPS 30/60 and file bytes reproduce every CSV rate to its printed precision. All 324 passed; see `quality-all324-rate-audit.json`.

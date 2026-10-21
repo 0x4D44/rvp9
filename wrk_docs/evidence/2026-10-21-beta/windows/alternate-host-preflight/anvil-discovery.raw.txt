@@ -1,0 +1,37 @@
+D:\language
+
+FullName                     
+--------                     
+D:\language\rvp9-postfix-main
+
+
+C:\language
+D:\worktrees
+
+FullName                      
+--------                      
+D:\worktrees\rvp9-postfix-main
+
+
+C:\worktrees
+
+Name       Source                                                                                                      
+----       ------                                                                                                      
+git.exe    C:\Program Files\Git\cmd\git.exe                                                                            
+cargo.exe  C:\Users\marti\.cargo\bin\cargo.exe                                                                         
+rustc.exe  C:\Users\marti\.cargo\bin\rustc.exe                                                                         
+deltic.exe C:\Users\marti\AppData\Local\Programs\Deltic\deltic.exe                                                     
+ffmpeg.exe C:\Users\marti\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\...
+
+
+True
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1792242538,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_process_names": [],
+  "heavy_processes_low_priority": 15,
+  "own_measurements": 0
+}

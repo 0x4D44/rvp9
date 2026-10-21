@@ -1,0 +1,6 @@
+quiet window granted until 09:33 (local) for "RVP9 beta retry with bounded existing-work drain".
+New heavy builds and other sessions' measurements are refused while it is live; the holder may launch measurements.
+When it ends the box stays open for max(10 min, 2 x time held) before the next grant; end early with `deltic quiet end`.
+Wait for the heavy workload count to reach zero before measuring.
+0 heavy workload processes still running.
+2 more heavy workload processes run at low priority (not counted).

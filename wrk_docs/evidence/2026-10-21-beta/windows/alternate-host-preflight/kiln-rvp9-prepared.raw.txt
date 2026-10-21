@@ -1,0 +1,48 @@
+D:\language\rvp9
+origin	https://github.com/0x4D44/rvp9 (fetch)
+origin	https://github.com/0x4D44/rvp9 (push)
+c4b88ba1539167ceb9addeb33e2b962983b3c87a
+D:/language/rvp9                                           c4b88ba1 [master]
+D:/language/rvp9/.claude/worktrees/agent-a0d1b754e694636bb f3206b36 [worktree-agent-a0d1b754e694636bb] locked
+D:/language/rvp9/.claude/worktrees/agent-a51c88c8c83259b1a 3f8684d3 [worktree-agent-a51c88c8c83259b1a] locked
+D:/language/rvp9/.claude/worktrees/agent-a8287863bec2da677 f3206b36 [worktree-agent-a8287863bec2da677] locked
+D:/language/rvp9/.claude/worktrees/agent-a9966f02f329c94d5 3f8684d3 [worktree-agent-a9966f02f329c94d5] locked
+D:/language/rvp9/.claude/worktrees/agent-afb441ec4edcb5678 f3206b36 [worktree-agent-afb441ec4edcb5678] locked
+D:/language/rvp9/wrk_worktrees/archimedes-trace            0f318b8e [wrk/m17b-archimedes-trace]
+D:/language/rvp9/wrk_worktrees/maxwell-witness             0f318b8e [wrk/m17b-maxwell-witness]
+D:\language\rvp9-2
+origin	https://github.com/0x4D44/rvp9-2.git (fetch)
+origin	https://github.com/0x4D44/rvp9-2.git (push)
+75c9cc8c035c652a3354c150af42803d813257cf
+D:/language/rvp9-2                        75c9cc8c [main]
+C:/worktrees/rvp9-2/cr-decode-mt-liveness 877376b9 [task/cr-decode-mt-liveness]
+C:/worktrees/rvp9-2/fdct16-kiln           edd62aa9 [task/fdct16-kiln-benchmark]
+
+
+FullName : D:\language\rvp9-2\build\libvpx\vpxdec.exe
+Length   : 5542677
+
+FullName : D:\language\rvp9-2\build\libvpx\vpxenc.exe
+Length   : 5671968
+
+
+
+
+
+FullName : D:\language\rvp9-2\tests\corpus\foreman_320x256_60f.y4m
+Length   : 7373204
+
+FullName : D:\language\rvp9-2\tests\corpus\foreman_cif.y4m
+Length   : 45621044
+
+FullName : D:\language\rvp9-2\tests\corpus\testsrc_1080p30.y4m
+Length   : 466560960
+
+FullName : D:\language\rvp9-2\tests\corpus\testsrc_1080p60.y4m
+Length   : 933121860
+
+FullName : D:\language\rvp9-2\tests\corpus\testsrc_720p30.y4m
+Length   : 207360959
+
+
+

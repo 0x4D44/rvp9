@@ -1,0 +1,16 @@
+{
+  "observed_utc": "2026-10-21T20:02:26.178831+00:00",
+  "command": [
+    "deltic",
+    "timeout",
+    "30",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-beta-final-macos-81301c61/target/aarch64-apple-darwin/release/bdrate",
+    "--help"
+  ],
+  "exit": 0,
+  "reference_input_advertised": true,
+  "binary_sha256": "2f6f71b69ae06a4a7b1f45d825221220b7f2db33277edfb2167a4f5c6da14420",
+  "prior_latency_attempt": "latency-final-20261021T080216Z.raw.txt",
+  "prior_failure": "capability probe did not detect --reference-input; cause unconfirmed, current direct probe passes",
+  "timing_claim": false
+}

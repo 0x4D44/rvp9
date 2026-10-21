@@ -1,0 +1,26 @@
+{"path":"C:\\worktrees\\rvp9\\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\\build\\libvpx\\vpxdec.exe","sha256":"91EB8AB65F62F1D63D750878B20B6B75A2882F75814E623AB54ACF22B9AD02B6","bytes":4268881}
+{"path":"C:\\worktrees\\rvp9\\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\\build\\libvpx\\vpxenc.exe","sha256":"88BA702DE16AF47327490A7D016002FD05169E074C6C6657B9E9FF7A8D4A135D","bytes":4431431}
+{"path":"C:\\worktrees\\rvp9\\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\\build\\libvpx\\vpx_temporal_svc_reference.exe","sha256":"32E59085AD9E81F199475EB3DF3278632E02C8E5E52EC287B334F89340D193BE","bytes":3425483}
+{"path":"C:\\worktrees\\rvp9\\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\\tests\\corpus\\ducks_take_off_420_720p50.y4m","sha256":"0E09AA923CE72E2F6D1C978C3C1CC8DD9588D2EDE819081F040213E361970EFC","bytes":691203035}
+{"path":"C:\\worktrees\\rvp9\\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\\tests\\corpus\\in_to_tree_420_720p50.y4m","sha256":"81166517A3054C789923535B5DA23FBBB9BBD7FD4C28DAC83918AC351E121E74","bytes":691203035}
+{"path":"C:\\worktrees\\rvp9\\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\\tests\\corpus\\old_town_cross_420_720p50.y4m","sha256":"0FBC2EC0C552AD693528B2E49409C7449880B9230055A7696346473D1AAF4123","bytes":691203035}
+REFERENCE_VERSION
+
+    vp9    - WebM Project VP9 Encoder v1.14.1 (default)
+
+        Use --codec to switch to a non-default encoder.
+
+REFERENCE_CONFIG
+LIBVPX_SOURCE_IDENTITY
+C:/worktrees/rvp9/20261017-TSK-HUM@NMI-final-candidate-windows-qualification
+fb5c0c917038db6c640b3dbc7c2b84b567233333
+LOCAL_TOOLCHAIN_195_PRESENT
+
+1.95.0-x86_64-pc-windows-msvc
+GIT_BASH_TOOLS
+/usr/bin/core_perl/shasum
+/c/ProgramData/chocolatey/bin/ffmpeg
+/c/users/ano/.cargo/bin/cargo
+/c/Users/ano/AppData/Local/Programs/Deltic/deltic
+
+

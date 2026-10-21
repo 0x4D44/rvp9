@@ -1,0 +1,21 @@
+﻿{
+    "checks":  [
+                   {
+                       "extracted_sha256":  "084DF45E21AF614854C8BA80BF7E3C6F6C0679BEA4661C31146BAFCF70AF375D",
+                       "identical":  true,
+                       "qualified_staged_sha256":  "084DF45E21AF614854C8BA80BF7E3C6F6C0679BEA4661C31146BAFCF70AF375D",
+                       "file":  "rvp9enc.exe",
+                       "version":  "rvp9enc 0.2.0-beta.1"
+                   },
+                   {
+                       "extracted_sha256":  "4C54613CF35DB61E6E37E6CCBB656A02AA6CFDEFBED2B93F6CC52EE36F2D0C56",
+                       "identical":  true,
+                       "qualified_staged_sha256":  "4C54613CF35DB61E6E37E6CCBB656A02AA6CFDEFBED2B93F6CC52EE36F2D0C56",
+                       "file":  "rvp9dec.exe",
+                       "version":  "rvp9dec 0.2.0-beta.1"
+                   }
+               ],
+    "archive_sha256":  "F4ABF8F0C889EF6275C1E2313EE18CBE9E3689EDDAF30AAE4382A2029A8DB8DE",
+    "archive":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\beta-final-win-914ede5e\\dist\\rvp9-0.2.0-beta.1-x86_64-pc-windows-msvc.tar.gz",
+    "extracted_stage":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\bug58-windows-verify-3b31d84b\\extracted-artifact\\rvp9-0.2.0-beta.1-x86_64-pc-windows-msvc"
+}

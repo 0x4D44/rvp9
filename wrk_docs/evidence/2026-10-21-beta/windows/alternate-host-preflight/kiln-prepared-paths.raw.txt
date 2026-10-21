@@ -1,0 +1,33 @@
+D:\language
+
+FullName          
+--------          
+D:\language\rvp9  
+D:\language\rvp9-2
+
+
+C:\language
+D:\worktrees
+
+FullName           
+--------           
+D:\worktrees\rvp9-2
+
+
+C:\worktrees
+
+FullName           
+--------           
+C:\worktrees\rvp9-2
+
+
+
+Name       Source                                                        
+----       ------                                                        
+git.exe    C:\Program Files\Git\cmd\git.exe                              
+cargo.exe  C:\Users\marti\.cargo\bin\cargo.exe                           
+rustc.exe  C:\Users\marti\.cargo\bin\rustc.exe                           
+deltic.exe C:\Users\marti\AppData\Local\Programs\Deltic\deltic.exe       
+ffmpeg.exe C:\Users\marti\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe
+
+
